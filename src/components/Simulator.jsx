@@ -71,7 +71,7 @@ const Simulator = forwardRef(function Simulator({ profile, onTelemetry, onSafety
     scene.background = new THREE.Color(0x2c3437)
     scene.fog = new THREE.Fog(0x2c3437, 24, 58)
     const crownReach = profile.family === 'reach' && profile.manufacturer === 'Crown'
-    const defaultViewPitch = crownReach ? -.22 : -.16
+    const defaultViewPitch = profile.family === 'order-picker' ? -.22 : crownReach ? -.22 : -.16
     const camera = new THREE.PerspectiveCamera(crownReach ? 68 : 72, mount.clientWidth / mount.clientHeight, .035, 90)
     camera.rotation.order = 'YXZ'
     const renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: 'high-performance' })
@@ -444,7 +444,7 @@ const Simulator = forwardRef(function Simulator({ profile, onTelemetry, onSafety
     <section className={`simulator-shell simulator-${profile.family} ${running ? 'running' : ''}`}>
       <div className="simulator-canvas" ref={mountRef} />
       <div className="sim-topbar"><span><Crosshair size={15} /> Operator eye view</span><span>{profile.manufacturer} {profile.model}</span><span className={xrSupported ? 'online' : 'offline'}>{xrSupported ? 'WebXR ready' : 'Desktop first-person'}</span></div>
-      <div className="machine-status"><span>{profile.stance}</span><strong>{activeControl}</strong><i className={presence ? 'engaged' : ''}>{profile.family === 'pallet' && profile.stance.includes('Walk') ? 'Walkie control zone' : presence ? 'Presence engaged · Control to release' : 'Presence released · Control to engage'}</i></div>
+      <div className="machine-status"><span>{profile.stance}</span><strong>{activeControl}</strong><i className={presence ? 'engaged' : ''}>{profile.family === 'pallet' && profile.stance.includes('Walk') ? 'Walkie control zone' : presence ? 'Presence engaged / Control to release' : 'Presence released / Control to engage'}</i></div>
       <div className="stability-meter"><span>Stability</span><div><i style={{ height: `${stability}%` }} /></div><b>{stability > 55 ? 'STABLE' : 'CAUTION'}</b></div>
       <div className="sim-reticle" aria-hidden="true"><i /><i /></div>
       <div className="sim-hints">

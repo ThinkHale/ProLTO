@@ -16,7 +16,7 @@ export const equipmentProfiles = {
     guidance: 'RR 5725-45 36V benchmark. Rated travel and hydraulic values follow Crown specifications. Site limits still govern operation.',
   },
   'Raymond:reach': {
-    manufacturer: 'Raymond', family: 'reach', model: '7000 Series', capacity: 4500, maxLift: 444,
+    manufacturer: 'Raymond', family: 'reach', model: '7500 Universal Stance', capacity: 4500, maxLift: 444,
     maxSpeed: 7.5, safeSpeed: 4.5, stance: 'Universal stance', steerRatio: 1.2,
     driveUnit: 'rear', control: 'Single-axis control handle', color: 0xd94a3a,
     functions: ['Travel speed and direction', 'Lift / lower', 'Reach / retract', 'Tilt', 'Sideshift'],
@@ -30,7 +30,7 @@ export const equipmentProfiles = {
     guidance: 'Use the operator restraint system and remain within the platform. Travel and lift permissions change with height.',
   },
   'Raymond:order-picker': {
-    manufacturer: 'Raymond', family: 'order-picker', model: '5000 Series', capacity: 3000, maxLift: 390,
+    manufacturer: 'Raymond', family: 'order-picker', model: '5300', capacity: 3000, maxLift: 240,
     maxSpeed: 7.5, safeSpeed: 4, stance: 'Elevating operator platform', steerRatio: 1.05,
     driveUnit: 'rear', control: 'Travel / lift multifunction handle', color: 0xd94a3a,
     functions: ['Travel speed and direction', 'Platform lift / lower', 'Deadman brake', 'Horn'],
@@ -52,7 +52,7 @@ export const equipmentProfiles = {
   },
   'Crown:counterbalance': {
     manufacturer: 'Crown', family: 'counterbalance', model: 'SC 6200', capacity: 4000, maxLift: 312,
-    maxSpeed: 10.5, safeSpeed: 5, stance: 'Seated, three-wheel', steerRatio: 0.82,
+    maxSpeed: 10.5, safeSpeed: 5, stance: 'Seated, four-wheel', steerRatio: 0.72,
     driveUnit: 'front', control: 'Steering wheel + hydraulic levers', color: 0xd9d7cf,
     functions: ['Accelerator / brake', 'Lift / lower', 'Tilt', 'Sideshift', 'Horn'],
     guidance: 'Use the operator restraint. Rear steering causes counterweight swing. Keep the load upgrade on grades.',
