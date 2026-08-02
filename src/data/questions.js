@@ -1,0 +1,58 @@
+export const knowledgeQuestions = [
+  {
+    id: 'training', domain: 'OSHA knowledge',
+    prompt: 'Which combination is required in an OSHA-compliant powered industrial truck operator training program?',
+    choices: ['Online instruction only', 'Formal instruction, practical training, and workplace performance evaluation', 'A written exam and driver license', 'Manufacturer video and supervisor approval'],
+    answer: 1,
+    explanation: '29 CFR 1910.178(l) requires formal instruction, practical training, and evaluation of performance in the workplace.',
+  },
+  {
+    id: 'unattended', domain: 'Shutdown',
+    prompt: 'Before leaving a powered industrial truck unattended, what is required?',
+    choices: ['Leave forks six inches high so they are visible', 'Lower load-engaging means, neutralize controls, shut off power, and set brakes', 'Park against a rack and sound the horn', 'Only turn off the key'],
+    answer: 1,
+    explanation: 'The load-engaging means must be fully lowered, controls neutralized, power shut off, and brakes set.',
+  },
+  {
+    id: 'visibility', domain: 'Situational awareness',
+    prompt: 'A load blocks your forward view. What is the generally safe response on level ground?',
+    choices: ['Raise the load until you can see under it', 'Travel in reverse while looking in the direction of travel when conditions permit', 'Lean outside the running lines of the truck', 'Ask a pedestrian to walk directly in front of the forks'],
+    answer: 1,
+    explanation: 'The operator must maintain a clear view in the direction of travel. Site and truck-specific rules still apply.',
+  },
+  {
+    id: 'intersection', domain: 'Warehouse etiquette',
+    prompt: 'What should an operator do when approaching a blind cross-aisle?',
+    choices: ['Accelerate through before other traffic arrives', 'Slow down, sound the horn, and confirm the path is clear', 'Drive on the left side of the aisle', 'Raise the forks to increase visibility'],
+    answer: 1,
+    explanation: 'Slow speed, warning signals, and active visual scanning reduce conflict risk at obstructed intersections.',
+  },
+  {
+    id: 'stability', domain: 'Truck stability',
+    prompt: 'Which action most increases tip-over risk?',
+    choices: ['Turning sharply with an elevated load', 'Parking with the forks lowered', 'Inspecting the data plate', 'Using the horn at a doorway'],
+    answer: 0,
+    explanation: 'An elevated load raises the combined center of gravity. Speed and sharp turns further reduce stability.',
+  },
+  {
+    id: 'capacity', domain: 'Attention to detail',
+    prompt: 'The load weighs less than the number on the truck data plate. Is it automatically safe to lift?',
+    choices: ['Yes, weight is the only factor', 'No, load center, lift height, attachments, and truck configuration also matter', 'Yes, if the pallet is wrapped', 'Only if the operator has three years of experience'],
+    answer: 1,
+    explanation: 'Rated capacity depends on the stated configuration, load center, lift height, and attachments.',
+  },
+  {
+    id: 'pedestrian', domain: 'Pedestrian safety',
+    prompt: 'Who has right of way in a shared warehouse travel path?',
+    choices: ['The loaded truck', 'The faster vehicle', 'Pedestrians, while everyone follows the site traffic plan', 'Whichever operator sounds the horn first'],
+    answer: 2,
+    explanation: 'Operators must yield and maintain separation. A horn is a warning, not a grant of right of way.',
+  },
+  {
+    id: 'difference', domain: 'Truck behavior',
+    prompt: 'Why can steering a forklift surprise an operator who is used to a car?',
+    choices: ['Forklifts have no brakes', 'Many forklifts steer from the rear, producing counterweight swing', 'Forklifts only turn while reversing', 'The mast steers the truck'],
+    answer: 1,
+    explanation: 'Rear-wheel steering makes the rear of the truck swing opposite the turn and changes the turning envelope.',
+  },
+]
