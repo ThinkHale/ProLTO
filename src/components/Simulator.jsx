@@ -16,8 +16,8 @@ const DYNAMICS = {
 const clampInput = (value) => THREE.MathUtils.clamp(value, -1, 1)
 
 function controlPrompt(profile) {
-  if (profile.family === 'reach') return 'Drag the left steering tiller and right Multi-Task handle. Hold Shift for the presence pad.'
-  if (profile.family === 'order-picker') return 'Use the opposing hand controls. Hold Shift for the deadman pedal. Your eye point rises with the platform.'
+  if (profile.family === 'reach') return 'Drag the left steering tiller and right Multi-Task handle. Presence engages when you enter.'
+  if (profile.family === 'order-picker') return 'Use the opposing hand controls. The deadman engages on entry, and your eye point rises with the platform.'
   if (profile.family === 'pallet' && profile.stance.includes('Walk')) return 'Drag the tiller head to steer and use either butterfly throttle while staying beside the truck.'
   if (profile.family === 'pallet') return 'Operate the X10 handle from the rider platform. Fork lift is limited to pallet clearance.'
   return 'Turn the wheel, press the pedals, and manipulate each hydraulic lever. Account for rear counterweight swing.'
@@ -27,6 +27,7 @@ const Simulator = forwardRef(function Simulator({ profile, onTelemetry, onSafety
   const mountRef = useRef(null)
   const engineRef = useRef(null)
   const runningRef = useRef(running)
+  const previousRunningRef = useRef(running)
   const audioRef = useRef(true)
   const [xrSupported, setXrSupported] = useState(false)
   const [audioOn, setAudioOn] = useState(true)
@@ -52,7 +53,13 @@ const Simulator = forwardRef(function Simulator({ profile, onTelemetry, onSafety
     if (navigator.xr) navigator.xr.isSessionSupported('immersive-vr').then((value) => active && setXrSupported(value)).catch(() => setXrSupported(false))
     return () => { active = false }
   }, [])
-  useEffect(() => { runningRef.current = running }, [running])
+  useEffect(() => {
+    const wasRunning = previousRunningRef.current
+    runningRef.current = running
+    if (running && !wasRunning) engineRef.current?.setPresence(true, 'Presence engaged on operator entry')
+    if (!running && wasRunning) engineRef.current?.setPresence(false, 'Operator station exited')
+    previousRunningRef.current = running
+  }, [running])
   useEffect(() => { audioRef.current = audioOn }, [audioOn])
 
   useEffect(() => {
@@ -92,15 +99,29 @@ const Simulator = forwardRef(function Simulator({ profile, onTelemetry, onSafety
     rig.cameraMount.add(camera)
     scene.add(rig.root)
     const interactables = controlMeshes(rig)
+    const presenceControl = interactables.find((object) => object.userData.control.action === 'presence')
+    if (presenceControl) presenceControl.userData.restY = presenceControl.position.y
     const raycaster = new THREE.Raycaster()
     const pointer = new THREE.Vector2()
     const dynamics = DYNAMICS[profile.family]
+    const requiresPresence = profile.family !== 'pallet' || !rig.walkie
     const manual = { ...ZERO }
     const state = {
       x: 0, z: 11.5, heading: 0, speed: 0, steer: 0, fork: 0, reach: 0, tilt: 0, sideshift: 0,
-      load: 0, horn: false, presence: false, viewYaw: 0, viewPitch: -.16, lastTelemetry: 0,
+      load: 0, horn: false, presence: !requiresPresence || runningRef.current, presenceLatched: runningRef.current, viewYaw: 0, viewPitch: -.16, lastTelemetry: 0,
       eventLocks: {}, keys: new Set(), pointerDrag: null, lookDrag: null, xrDrags: new Map(), hovered: null,
     }
+    const updatePresence = (engaged, label = engaged ? 'Presence control engaged' : 'Presence control released') => {
+      state.presenceLatched = engaged
+      state.presence = !requiresPresence || engaged
+      setPresence(state.presence)
+      setActiveControl(label)
+      if (presenceControl?.material?.emissive) {
+        presenceControl.userData.baseEmissive = engaged ? 0x123822 : 0x30110d
+        presenceControl.material.emissive.setHex(presenceControl.userData.baseEmissive)
+      }
+    }
+    const togglePresence = () => updatePresence(!state.presenceLatched)
     const reset = () => {
       Object.assign(state, { x: 0, z: 11.5, heading: 0, speed: 0, steer: 0, fork: 0, reach: 0, tilt: 0, sideshift: 0, load: 0, viewYaw: 0, viewPitch: -.16 })
       Object.assign(manual, ZERO)
@@ -108,10 +129,11 @@ const Simulator = forwardRef(function Simulator({ profile, onTelemetry, onSafety
       rig.root.position.set(0, 0, 11.5)
       rig.root.rotation.y = 0
       camera.rotation.set(-.16, 0, 0)
-      setActiveControl('Cab controls armed')
+      updatePresence(runningRef.current, runningRef.current ? 'Presence engaged after reset' : 'Cab controls armed')
       setStability(100)
     }
-    engineRef.current = { renderer, reset, state, rig }
+    engineRef.current = { renderer, reset, state, rig, setPresence: updatePresence }
+    updatePresence(runningRef.current, runningRef.current ? 'Presence engaged on operator entry' : 'Cab controls armed')
 
     const soundHorn = () => {
       if (!audioRef.current) return
@@ -140,6 +162,10 @@ const Simulator = forwardRef(function Simulator({ profile, onTelemetry, onSafety
       state.keys.add(event.code)
       if (['Space', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'].includes(event.code)) event.preventDefault()
       if (event.code === 'Space' && !state.horn) soundHorn()
+      if ((event.code === 'ControlLeft' || event.code === 'ControlRight') && !event.repeat && runningRef.current && requiresPresence) {
+        event.preventDefault()
+        togglePresence()
+      }
     }
     const keyUp = (event) => state.keys.delete(event.code)
     window.addEventListener('keydown', keyDown)
@@ -165,13 +191,18 @@ const Simulator = forwardRef(function Simulator({ profile, onTelemetry, onSafety
     const releaseControl = (object) => {
       if (!object) return
       const control = object.userData.control
-      if (control.spring || ['horn', 'presence', 'belly', 'brake'].includes(control.action)) manual[control.action] = 0
+      if (control.spring || ['horn', 'belly', 'brake'].includes(control.action)) manual[control.action] = 0
       if (control.action === 'horn') state.horn = false
     }
     const pointerDown = (event) => {
       const object = event.button === 2 ? null : pickControl(event)
       if (object) {
         const control = object.userData.control
+        if (control.action === 'presence') {
+          setActiveControl(control.label)
+          togglePresence()
+          return
+        }
         state.pointerDrag = { object, x: event.clientX, y: event.clientY, start: manual[control.action] || 0 }
         renderer.domElement.setPointerCapture(event.pointerId)
         setActiveControl(control.label)
@@ -222,6 +253,11 @@ const Simulator = forwardRef(function Simulator({ profile, onTelemetry, onSafety
         raycaster.set(origin, direction)
         const object = raycaster.intersectObjects(interactables, false)[0]?.object
         if (!object) return
+        if (object.userData.control.action === 'presence') {
+          setActiveControl(object.userData.control.label)
+          togglePresence()
+          return
+        }
         const position = new THREE.Vector3()
         controller.getWorldPosition(position)
         state.xrDrags.set(controller, { object, position, start: manual[object.userData.control.action] || 0 })
@@ -249,7 +285,7 @@ const Simulator = forwardRef(function Simulator({ profile, onTelemetry, onSafety
       const axes = (pad) => pad?.axes?.length >= 4 ? [pad.axes[2], pad.axes[3]] : [pad?.axes?.[0] || 0, pad?.axes?.[1] || 0]
       const [lx, ly] = axes(left)
       const [, ry] = axes(right)
-      return { ...ZERO, travel: -ly, steer: lx, lift: -ry, presence: left || right ? 1 : 0 }
+      return { ...ZERO, travel: -ly, steer: lx, lift: -ry }
     }
 
     const timer = new THREE.Timer()
@@ -274,16 +310,12 @@ const Simulator = forwardRef(function Simulator({ profile, onTelemetry, onSafety
         sideshift: (state.keys.has('KeyC') ? 1 : 0) - (state.keys.has('KeyZ') ? 1 : 0),
         brake: state.keys.has('KeyB') ? 1 : 0,
         horn: state.keys.has('Space') ? 1 : 0,
-        presence: state.keys.has('ShiftLeft') || state.keys.has('ShiftRight') ? 1 : 0,
       }
       const choose = (action) => Math.abs(manual[action]) > .02 ? manual[action] : Math.abs(keyboard[action] || 0) > .02 ? keyboard[action] : xr[action] || 0
-      const requiredPresence = profile.family !== 'pallet' || !rig.walkie
-      state.presence = !requiredPresence || (enabled && choose('presence') > .2)
-      setPresence((value) => value === state.presence ? value : state.presence)
       const requestedTravel = enabled ? choose('travel') : 0
       const requestedHydraulics = enabled ? Math.max(Math.abs(choose('lift')), Math.abs(choose('reach')), Math.abs(choose('tilt'))) : 0
-      if (requiredPresence && !state.presence && (Math.abs(requestedTravel) > .1 || requestedHydraulics > .1)) fireEvent('presence', 'Operator presence control not engaged', 'major', 10, 5000)
-      const permitted = state.presence || !requiredPresence
+      if (requiresPresence && !state.presence && (Math.abs(requestedTravel) > .1 || requestedHydraulics > .1)) fireEvent('presence', 'Operator presence control not engaged', 'major', 10, 5000)
+      const permitted = state.presence || !requiresPresence
       const travelInput = permitted ? requestedTravel : 0
       const steerInput = enabled ? choose('steer') : 0
       const liftInput = permitted ? choose('lift') : 0
@@ -327,6 +359,10 @@ const Simulator = forwardRef(function Simulator({ profile, onTelemetry, onSafety
       if (rig.levers) {
         const values = [liftInput, tiltInput, sideshiftInput]
         rig.levers.forEach((lever, index) => { lever.rotation.x = -.18 + values[index] * .25 })
+      }
+      if (presenceControl) {
+        const targetY = presenceControl.userData.restY - (state.presenceLatched ? .025 : 0)
+        presenceControl.position.y = THREE.MathUtils.damp(presenceControl.position.y, targetY, 12, dt)
       }
       camera.rotation.y = state.viewYaw
       camera.rotation.x = state.viewPitch
@@ -383,7 +419,7 @@ const Simulator = forwardRef(function Simulator({ profile, onTelemetry, onSafety
     <section className={`simulator-shell simulator-${profile.family} ${running ? 'running' : ''}`}>
       <div className="simulator-canvas" ref={mountRef} />
       <div className="sim-topbar"><span><Crosshair size={15} /> Operator eye view</span><span>{profile.manufacturer} {profile.model}</span><span className={xrSupported ? 'online' : 'offline'}>{xrSupported ? 'WebXR ready' : 'Desktop first-person'}</span></div>
-      <div className="machine-status"><span>{profile.stance}</span><strong>{activeControl}</strong><i className={presence ? 'engaged' : ''}>{profile.family === 'pallet' && profile.stance.includes('Walk') ? 'Walkie control zone' : presence ? 'Presence engaged' : 'Hold Shift for presence'}</i></div>
+      <div className="machine-status"><span>{profile.stance}</span><strong>{activeControl}</strong><i className={presence ? 'engaged' : ''}>{profile.family === 'pallet' && profile.stance.includes('Walk') ? 'Walkie control zone' : presence ? 'Presence engaged · Control to release' : 'Presence released · Control to engage'}</i></div>
       <div className="stability-meter"><span>Stability</span><div><i style={{ height: `${stability}%` }} /></div><b>{stability > 55 ? 'STABLE' : 'CAUTION'}</b></div>
       <div className="sim-reticle" aria-hidden="true"><i /><i /></div>
       <div className="sim-hints">
@@ -391,7 +427,7 @@ const Simulator = forwardRef(function Simulator({ profile, onTelemetry, onSafety
         <button onClick={() => setAudioOn((value) => !value)} aria-label={audioOn ? 'Mute audio' : 'Enable audio'}>{audioOn ? <Volume2 size={17} /> : <Headphones size={17} />}</button>
         <button onClick={() => engineRef.current?.reset()} aria-label="Reset vehicle"><RotateCcw size={17} /></button>
       </div>
-      {guideOpen && <div className="control-guide"><header><Gamepad2 size={18} /><b>{profile.control}</b></header><p><MousePointer2 size={14} /> Drag a visible cab control to manipulate it. Drag empty space, or right-drag, to look around.</p><p>Keyboard fallback: Shift presence, W/S travel, A/D steer, E/Q lift, R/F reach, T/G tilt, Z/C sideshift, B brake, Space horn.</p><p>VR: point at a physical control, hold trigger, and move it. Thumbsticks remain available for accessibility.</p><small>{profile.guidance}</small></div>}
+      {guideOpen && <div className="control-guide"><header><Gamepad2 size={18} /><b>{profile.control}</b></header><p><MousePointer2 size={14} /> Drag a visible cab control to manipulate it. Drag empty space, or right-drag, to look around.</p><p>Keyboard fallback: Control toggles presence, W/S travel, A/D steer, E/Q lift, R/F reach, T/G tilt, Z/C sideshift, B brake, Space horn.</p><p>VR: point at a physical control, hold trigger, and move it. Thumbsticks remain available for accessibility.</p><small>{profile.guidance}</small></div>}
       {!running && <div className="start-overlay"><MousePointer2 size={24} /><div><strong>First-person practical exercise</strong><span>{controlPrompt(profile)}</span></div><button onClick={() => onRunningChange(true)}>Enter operator station</button></div>}
     </section>
   )

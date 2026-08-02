@@ -16,7 +16,7 @@ Open the local URL in a desktop browser. WebXR immersive sessions require HTTPS 
 - Mouse or touch: drag visible controls in the operator station
 - Mouse drag on open space: look around
 - VR trigger: point to, grab, and move a physical control
-- Shift: hold operator-presence or deadman control
+- Control: toggle operator-presence or deadman control; entering operator mode engages it automatically
 - W / S or arrow up / down: travel
 - A / D or arrow left / right: steer
 - E / Q: lift / lower

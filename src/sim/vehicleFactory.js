@@ -146,7 +146,10 @@ function buildPallet(profile) {
   ;[-.34, .34].forEach((x) => box(carriage, [.18, .1, 2.3], [x, .15, -1.05], steel))
   root.add(carriage)
   const platform = walkie ? null : box(root, [1.04, .12, .74], [0, .22, 1.43], steel)
-  if (!walkie) box(root, [1.08, .68, .11], [0, .58, 1.77], profile.color)
+  if (!walkie) {
+    box(root, [1.08, .68, .11], [0, .58, 1.77], profile.color)
+    markControl(box(root, [.54, .035, .42], [0, .3, 1.43], 0x435158), 'presence', 'Rider presence pad', 'button', false)
+  }
 
   const controls = new THREE.Group()
   const tillerPivot = new THREE.Group()
@@ -203,6 +206,7 @@ function buildCounterbalance(profile) {
   markControl(box(controls, [.16, .05, .12], [-.52, 1.16, -.45], 0xe0a221), 'horn', 'Horn', 'button', true)
   box(controls, [.74, .11, .65], [0, .67, .42], 0x303a3e)
   box(controls, [.62, .63, .16], [0, 1.02, .7], 0x222c31)
+  markControl(box(controls, [.13, .06, .15], [.4, .76, .56], 0xc94736), 'presence', 'Seat switch and restraint', 'button', false)
   root.add(controls)
   const cameraMount = new THREE.Group()
   cameraMount.position.set(0, 1.68, .42)
