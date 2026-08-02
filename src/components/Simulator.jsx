@@ -1,90 +1,39 @@
 import { forwardRef, useEffect, useImperativeHandle, useRef, useState } from 'react'
 import * as THREE from 'three'
-import { Box, Crosshair, Gamepad2, Headphones, Keyboard, RotateCcw, Volume2 } from 'lucide-react'
+import { Crosshair, Gamepad2, Headphones, Keyboard, MousePointer2, RotateCcw, Volume2 } from 'lucide-react'
+import { controlMeshes, createVehicleRig } from '../sim/vehicleFactory.js'
+import { createWarehouse } from '../sim/warehouse.js'
 
-const WORLD = { minX: -9.5, maxX: 9.5, minZ: -18, maxZ: 16 }
-
-function box(scene, size, position, color, material = {}) {
-  const geometry = new THREE.BoxGeometry(...size)
-  const mesh = new THREE.Mesh(geometry, new THREE.MeshStandardMaterial({ color, roughness: .72, metalness: .12, ...material }))
-  mesh.position.set(...position)
-  mesh.castShadow = true
-  mesh.receiveShadow = true
-  scene.add(mesh)
-  return mesh
+const WORLD = { minX: -8.6, maxX: 8.6, minZ: -18, maxZ: 16 }
+const ZERO = { travel: 0, steer: 0, lift: 0, reach: 0, tilt: 0, sideshift: 0, brake: 0, horn: 0, presence: 0, belly: 0 }
+const DYNAMICS = {
+  reach: { acceleration: 2.45, braking: 6.8, turnRate: 1.42, liftRate: 54, reverseScale: .86 },
+  'order-picker': { acceleration: 2.05, braking: 6.4, turnRate: 1.14, liftRate: 40, reverseScale: .82 },
+  pallet: { acceleration: 3.2, braking: 8.2, turnRate: 1.72, liftRate: 4.2, reverseScale: .72 },
+  counterbalance: { acceleration: 2.15, braking: 6.1, turnRate: .9, liftRate: 43, reverseScale: .86 },
 }
 
-function addRack(scene, x, z, rotation = 0) {
-  const group = new THREE.Group()
-  const steel = 0x31566a
-  ;[-1.8, 1.8].forEach((dx) => {
-    ;[-.65, .65].forEach((dz) => box(group, [.11, 4.6, .11], [dx, 2.3, dz], steel))
-  })
-  ;[.25, 1.65, 3.05, 4.45].forEach((y) => {
-    box(group, [3.8, .1, 1.55], [0, y, 0], 0xd0882f)
-    if (y > .3) {
-      box(group, [1.45, .7, 1.1], [-.82, y + .42, 0], 0x93623f)
-      box(group, [1.45, .7, 1.1], [.82, y + .42, 0], 0x9e7048)
-    }
-  })
-  group.position.set(x, 0, z)
-  group.rotation.y = rotation
-  scene.add(group)
-}
+const clampInput = (value) => THREE.MathUtils.clamp(value, -1, 1)
 
-function makeForklift(profile) {
-  const root = new THREE.Group()
-  const body = new THREE.Group()
-  root.add(body)
-  const bodyLength = profile.family === 'pallet' ? 2.2 : 1.8
-  box(body, [1.45, .72, bodyLength], [0, .52, .25], profile.color)
-  box(body, [1.2, .54, .8], [0, 1.05, .65], 0x1c252b)
-  const mast = new THREE.Group()
-  mast.name = 'mast'
-  ;[-.62, .62].forEach((x) => box(mast, [.12, 3.1, .16], [x, 1.75, -1], 0x182228))
-  box(mast, [1.42, .12, .18], [0, .32, -1], 0x182228)
-  const carriage = new THREE.Group()
-  carriage.name = 'carriage'
-  box(carriage, [1.35, .36, .15], [0, .2, -1.13], 0x27343a)
-  const forkLeft = box(carriage, [.13, .09, 2.05], [-.43, .02, -2.05], 0x3d4548)
-  const forkRight = box(carriage, [.13, .09, 2.05], [.43, .02, -2.05], 0x3d4548)
-  forkLeft.name = 'fork'; forkRight.name = 'fork'
-  mast.add(carriage)
-  body.add(mast)
-  if (profile.family === 'order-picker') {
-    box(carriage, [1.42, .12, 1.2], [0, .18, -.32], 0x5e6465)
-    box(carriage, [1.38, 1.05, .12], [0, .75, .18], 0x1d292f)
-  }
-  ;[-.64, .64].forEach((x) => {
-    const wheel = new THREE.Mesh(new THREE.CylinderGeometry(.27, .27, .16, 20), new THREE.MeshStandardMaterial({ color: 0x101518, roughness: .9 }))
-    wheel.rotation.z = Math.PI / 2
-    wheel.position.set(x, .29, .65)
-    body.add(wheel)
-  })
-  root.userData = { body, mast, carriage, forkHeight: 0, reach: 0, tilt: 0 }
-  return root
-}
-
-function addPedestrian(scene, x, z, color = 0xdac54c) {
-  const group = new THREE.Group()
-  const torso = new THREE.Mesh(new THREE.CapsuleGeometry(.24, .55, 5, 10), new THREE.MeshStandardMaterial({ color }))
-  torso.position.y = 1.08
-  group.add(torso)
-  const head = new THREE.Mesh(new THREE.SphereGeometry(.17, 14, 10), new THREE.MeshStandardMaterial({ color: 0xa76d52 }))
-  head.position.y = 1.65
-  group.add(head)
-  group.position.set(x, 0, z)
-  scene.add(group)
-  return group
+function controlPrompt(profile) {
+  if (profile.family === 'reach') return 'Drag the left steering tiller and right Multi-Task handle. Hold Shift for the presence pad.'
+  if (profile.family === 'order-picker') return 'Use the opposing hand controls. Hold Shift for the deadman pedal. Your eye point rises with the platform.'
+  if (profile.family === 'pallet' && profile.stance.includes('Walk')) return 'Drag the tiller head to steer and use either butterfly throttle while staying beside the truck.'
+  if (profile.family === 'pallet') return 'Operate the X10 handle from the rider platform. Fork lift is limited to pallet clearance.'
+  return 'Turn the wheel, press the pedals, and manipulate each hydraulic lever. Account for rear counterweight swing.'
 }
 
 const Simulator = forwardRef(function Simulator({ profile, onTelemetry, onSafetyEvent, running, onRunningChange }, ref) {
   const mountRef = useRef(null)
   const engineRef = useRef(null)
   const runningRef = useRef(running)
+  const audioRef = useRef(true)
   const [xrSupported, setXrSupported] = useState(false)
   const [audioOn, setAudioOn] = useState(true)
   const [guideOpen, setGuideOpen] = useState(false)
+  const [activeControl, setActiveControl] = useState('Cab controls armed')
+  const [stability, setStability] = useState(100)
+  const [presence, setPresence] = useState(false)
 
   useImperativeHandle(ref, () => ({
     async enterVR() {
@@ -100,23 +49,24 @@ const Simulator = forwardRef(function Simulator({ profile, onTelemetry, onSafety
 
   useEffect(() => {
     let active = true
-    if (navigator.xr) navigator.xr.isSessionSupported('immersive-vr').then((supported) => active && setXrSupported(supported)).catch(() => setXrSupported(false))
+    if (navigator.xr) navigator.xr.isSessionSupported('immersive-vr').then((value) => active && setXrSupported(value)).catch(() => setXrSupported(false))
     return () => { active = false }
   }, [])
-
   useEffect(() => { runningRef.current = running }, [running])
+  useEffect(() => { audioRef.current = audioOn }, [audioOn])
 
   useEffect(() => {
     const mount = mountRef.current
     if (!mount) return
+    setActiveControl('Cab controls armed')
+    setPresence(false)
     const scene = new THREE.Scene()
     scene.background = new THREE.Color(0x111c22)
-    scene.fog = new THREE.Fog(0x111c22, 22, 48)
-    const camera = new THREE.PerspectiveCamera(66, mount.clientWidth / mount.clientHeight, .05, 100)
-    camera.position.set(7.4, 5.4, 9.2)
-    camera.lookAt(0, 1, -2.5)
+    scene.fog = new THREE.Fog(0x111c22, 20, 44)
+    const camera = new THREE.PerspectiveCamera(72, mount.clientWidth / mount.clientHeight, .035, 90)
+    camera.rotation.order = 'YXZ'
     const renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: 'high-performance' })
-    renderer.setPixelRatio(Math.min(window.devicePixelRatio, 1.75))
+    renderer.setPixelRatio(Math.min(window.devicePixelRatio, 1.7))
     renderer.setSize(mount.clientWidth, mount.clientHeight)
     renderer.shadowMap.enabled = true
     renderer.shadowMap.type = THREE.PCFShadowMap
@@ -125,54 +75,59 @@ const Simulator = forwardRef(function Simulator({ profile, onTelemetry, onSafety
     renderer.xr.setReferenceSpaceType('local-floor')
     mount.appendChild(renderer.domElement)
 
-    scene.add(new THREE.HemisphereLight(0xcce9f4, 0x26343a, 2.2))
-    const sun = new THREE.DirectionalLight(0xffffff, 3.1)
-    sun.position.set(-8, 14, 8); sun.castShadow = true
-    sun.shadow.mapSize.set(2048, 2048); sun.shadow.camera.left = -20; sun.shadow.camera.right = 20; sun.shadow.camera.top = 20; sun.shadow.camera.bottom = -20
+    scene.add(new THREE.HemisphereLight(0xd4edf6, 0x26343a, 2.1))
+    const sun = new THREE.DirectionalLight(0xffffff, 3)
+    sun.position.set(-7, 14, 8)
+    sun.castShadow = true
+    sun.shadow.mapSize.set(2048, 2048)
+    sun.shadow.camera.left = -20
+    sun.shadow.camera.right = 20
+    sun.shadow.camera.top = 20
+    sun.shadow.camera.bottom = -20
     scene.add(sun)
-    box(scene, [24, .15, 40], [0, -.08, -1], 0x6c7476)
-    const grid = new THREE.GridHelper(40, 40, 0xe2a32b, 0x586064)
-    grid.position.y = .005; grid.material.opacity = .22; grid.material.transparent = true; scene.add(grid)
-    ;[-9, 9].forEach((x) => box(scene, [.12, 7, 40], [x, 3.5, -1], 0x26343a))
-    ;[-6.7, 6.7].forEach((x) => { [-12, -6, 0, 6].forEach((z) => addRack(scene, x, z, 0)) })
-    box(scene, [.09, .02, 33], [-3.4, .02, -1], 0xf0b32b, { emissive: 0x6a4200 })
-    box(scene, [.09, .02, 33], [3.4, .02, -1], 0xf0b32b, { emissive: 0x6a4200 })
-    ;[-14, 10].forEach((z) => box(scene, [6.7, .025, .1], [0, .025, z], 0xf0b32b, { emissive: 0x6a4200 }))
-    const pallet = new THREE.Group()
-    ;[-.45, 0, .45].forEach((z) => box(pallet, [1.25, .1, .23], [0, .13, z], 0x8e5b32))
-    box(pallet, [1.2, .86, .98], [0, .68, 0], 0xaa7448)
-    pallet.position.set(0, 0, -11.5); scene.add(pallet)
-    const pedestrians = [addPedestrian(scene, 2.7, -7.6), addPedestrian(scene, -2.9, 8.2, 0xe18a3b)]
-    const coneGroup = new THREE.Group()
-    ;[[-2.1, 3.2], [0, 3.2], [2.1, 3.2]].forEach(([x, z]) => {
-      const cone = new THREE.Mesh(new THREE.ConeGeometry(.25, .75, 18), new THREE.MeshStandardMaterial({ color: 0xe97520 }))
-      cone.position.set(x, .38, z); coneGroup.add(cone)
-    })
-    scene.add(coneGroup)
 
-    const forklift = makeForklift(profile)
-    scene.add(forklift)
-    const state = { x: 0, z: 11.5, heading: Math.PI, speed: 0, steer: 0, fork: 0, reach: 0, tilt: 0, horn: false, load: 0, lastTime: performance.now(), lastTelemetry: 0, eventLocks: {}, keys: new Set() }
-    const initial = { x: 0, z: 11.5, heading: Math.PI }
-    const reset = () => { Object.assign(state, initial, { speed: 0, steer: 0, fork: 0, reach: 0, tilt: 0, load: 0 }); state.eventLocks = {}; forklift.position.set(state.x, 0, state.z); forklift.rotation.y = state.heading }
-    engineRef.current = { renderer, reset, state }
-
-    const hornAudio = () => {
-      if (!audioOn) return
-      const context = new AudioContext(); const oscillator = context.createOscillator(); const gain = context.createGain()
-      oscillator.type = 'square'; oscillator.frequency.value = 330; gain.gain.setValueAtTime(.08, context.currentTime); gain.gain.exponentialRampToValueAtTime(.001, context.currentTime + .22)
-      oscillator.connect(gain).connect(context.destination); oscillator.start(); oscillator.stop(context.currentTime + .22)
+    const { pallet, pedestrians } = createWarehouse(scene)
+    const rig = createVehicleRig(profile)
+    rig.root.position.set(0, 0, 11.5)
+    rig.cameraMount.add(camera)
+    scene.add(rig.root)
+    const interactables = controlMeshes(rig)
+    const raycaster = new THREE.Raycaster()
+    const pointer = new THREE.Vector2()
+    const dynamics = DYNAMICS[profile.family]
+    const manual = { ...ZERO }
+    const state = {
+      x: 0, z: 11.5, heading: 0, speed: 0, steer: 0, fork: 0, reach: 0, tilt: 0, sideshift: 0,
+      load: 0, horn: false, presence: false, viewYaw: 0, viewPitch: -.16, lastTelemetry: 0,
+      eventLocks: {}, keys: new Set(), pointerDrag: null, lookDrag: null, xrDrags: new Map(), hovered: null,
     }
-    const keyDown = (e) => {
-      if (['INPUT', 'TEXTAREA'].includes(e.target.tagName)) return
-      state.keys.add(e.code)
-      if (e.code === 'Space' && !state.horn) { state.horn = true; hornAudio() }
+    const reset = () => {
+      Object.assign(state, { x: 0, z: 11.5, heading: 0, speed: 0, steer: 0, fork: 0, reach: 0, tilt: 0, sideshift: 0, load: 0, viewYaw: 0, viewPitch: -.16 })
+      Object.assign(manual, ZERO)
+      state.eventLocks = {}
+      rig.root.position.set(0, 0, 11.5)
+      rig.root.rotation.y = 0
+      camera.rotation.set(-.16, 0, 0)
+      setActiveControl('Cab controls armed')
+      setStability(100)
     }
-    const keyUp = (e) => { state.keys.delete(e.code); if (e.code === 'Space') state.horn = false }
-    window.addEventListener('keydown', keyDown); window.addEventListener('keyup', keyUp)
-    const controller1 = renderer.xr.getController(0); const controller2 = renderer.xr.getController(1)
-    scene.add(controller1, controller2)
+    engineRef.current = { renderer, reset, state, rig }
 
+    const soundHorn = () => {
+      if (!audioRef.current) return
+      const AudioContextClass = window.AudioContext || window.webkitAudioContext
+      if (!AudioContextClass) return
+      const context = new AudioContextClass()
+      const oscillator = context.createOscillator()
+      const gain = context.createGain()
+      oscillator.type = 'square'
+      oscillator.frequency.value = profile.family === 'pallet' ? 410 : 330
+      gain.gain.setValueAtTime(.07, context.currentTime)
+      gain.gain.exponentialRampToValueAtTime(.001, context.currentTime + .2)
+      oscillator.connect(gain).connect(context.destination)
+      oscillator.start()
+      oscillator.stop(context.currentTime + .21)
+    }
     const fireEvent = (type, label, severity = 'minor', deduction = 4, cooldown = 7000) => {
       const now = performance.now()
       if ((state.eventLocks[type] || 0) > now) return
@@ -180,82 +135,264 @@ const Simulator = forwardRef(function Simulator({ profile, onTelemetry, onSafety
       onSafetyEvent({ type, label, severity, deduction })
     }
 
-    const readXR = () => {
-      if (!renderer.xr.isPresenting) return { drive: 0, steer: 0, lift: 0, reach: 0, horn: false }
-      const session = renderer.xr.getSession(); const sources = [...(session?.inputSources || [])]
-      const left = sources.find((s) => s.handedness === 'left')?.gamepad
-      const right = sources.find((s) => s.handedness === 'right')?.gamepad
+    const keyDown = (event) => {
+      if (['INPUT', 'TEXTAREA', 'SELECT'].includes(event.target.tagName)) return
+      state.keys.add(event.code)
+      if (['Space', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'].includes(event.code)) event.preventDefault()
+      if (event.code === 'Space' && !state.horn) soundHorn()
+    }
+    const keyUp = (event) => state.keys.delete(event.code)
+    window.addEventListener('keydown', keyDown)
+    window.addEventListener('keyup', keyUp)
+
+    const pointerCoordinates = (event) => {
+      const rect = renderer.domElement.getBoundingClientRect()
+      pointer.x = ((event.clientX - rect.left) / rect.width) * 2 - 1
+      pointer.y = -((event.clientY - rect.top) / rect.height) * 2 + 1
+    }
+    const pickControl = (event) => {
+      pointerCoordinates(event)
+      raycaster.setFromCamera(pointer, camera)
+      return raycaster.intersectObjects(interactables, false)[0]?.object || null
+    }
+    const setHovered = (object) => {
+      if (state.hovered === object) return
+      if (state.hovered?.material?.emissive) state.hovered.material.emissive.setHex(state.hovered.userData.baseEmissive || 0)
+      state.hovered = object
+      renderer.domElement.style.cursor = object ? 'grab' : 'crosshair'
+      if (object?.material?.emissive) object.material.emissive.setHex(0x6b4700)
+    }
+    const releaseControl = (object) => {
+      if (!object) return
+      const control = object.userData.control
+      if (control.spring || ['horn', 'presence', 'belly', 'brake'].includes(control.action)) manual[control.action] = 0
+      if (control.action === 'horn') state.horn = false
+    }
+    const pointerDown = (event) => {
+      const object = event.button === 2 ? null : pickControl(event)
+      if (object) {
+        const control = object.userData.control
+        state.pointerDrag = { object, x: event.clientX, y: event.clientY, start: manual[control.action] || 0 }
+        renderer.domElement.setPointerCapture(event.pointerId)
+        setActiveControl(control.label)
+        if (['button', 'pedal'].includes(control.axis)) {
+          manual[control.action] = 1
+          if (control.action === 'horn') { state.horn = true; soundHorn() }
+          if (control.action === 'belly') fireEvent('belly-switch', 'Emergency reverse switch activated', 'minor', 0, 1000)
+        }
+      } else {
+        state.lookDrag = { x: event.clientX, y: event.clientY, yaw: state.viewYaw, pitch: state.viewPitch }
+        renderer.domElement.setPointerCapture(event.pointerId)
+      }
+    }
+    const pointerMove = (event) => {
+      if (state.pointerDrag) {
+        const { object, x, y, start } = state.pointerDrag
+        const control = object.userData.control
+        const delta = control.axis === 'horizontal' ? (event.clientX - x) / 85 : (y - event.clientY) / 85
+        manual[control.action] = clampInput(start + delta)
+      } else if (state.lookDrag) {
+        state.viewYaw = THREE.MathUtils.clamp(state.lookDrag.yaw - (event.clientX - state.lookDrag.x) * .004, -.95, .95)
+        state.viewPitch = THREE.MathUtils.clamp(state.lookDrag.pitch - (event.clientY - state.lookDrag.y) * .0035, -.72, .55)
+      } else setHovered(pickControl(event))
+    }
+    const pointerUp = (event) => {
+      if (state.pointerDrag) releaseControl(state.pointerDrag.object)
+      state.pointerDrag = null
+      state.lookDrag = null
+      if (renderer.domElement.hasPointerCapture(event.pointerId)) renderer.domElement.releasePointerCapture(event.pointerId)
+    }
+    const preventMenu = (event) => event.preventDefault()
+    renderer.domElement.addEventListener('pointerdown', pointerDown)
+    renderer.domElement.addEventListener('pointermove', pointerMove)
+    renderer.domElement.addEventListener('pointerup', pointerUp)
+    renderer.domElement.addEventListener('pointercancel', pointerUp)
+    renderer.domElement.addEventListener('contextmenu', preventMenu)
+
+    const controllers = [0, 1].map((index) => {
+      const controller = renderer.xr.getController(index)
+      const line = new THREE.Line(new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(), new THREE.Vector3(0, 0, -2.5)]), new THREE.LineBasicMaterial({ color: 0xffad21 }))
+      controller.add(line)
+      scene.add(controller)
+      const selectStart = () => {
+        const origin = new THREE.Vector3()
+        const direction = new THREE.Vector3(0, 0, -1)
+        controller.getWorldPosition(origin)
+        direction.applyQuaternion(controller.getWorldQuaternion(new THREE.Quaternion()))
+        raycaster.set(origin, direction)
+        const object = raycaster.intersectObjects(interactables, false)[0]?.object
+        if (!object) return
+        const position = new THREE.Vector3()
+        controller.getWorldPosition(position)
+        state.xrDrags.set(controller, { object, position, start: manual[object.userData.control.action] || 0 })
+        setActiveControl(object.userData.control.label)
+        if (['button', 'pedal'].includes(object.userData.control.axis)) {
+          manual[object.userData.control.action] = 1
+          if (object.userData.control.action === 'horn') soundHorn()
+        }
+      }
+      const selectEnd = () => {
+        const drag = state.xrDrags.get(controller)
+        if (drag) releaseControl(drag.object)
+        state.xrDrags.delete(controller)
+      }
+      controller.addEventListener('selectstart', selectStart)
+      controller.addEventListener('selectend', selectEnd)
+      return { controller, selectStart, selectEnd }
+    })
+
+    const readXRAxes = () => {
+      if (!renderer.xr.isPresenting) return ZERO
+      const sources = [...(renderer.xr.getSession()?.inputSources || [])]
+      const left = sources.find((source) => source.handedness === 'left')?.gamepad
+      const right = sources.find((source) => source.handedness === 'right')?.gamepad
       const axes = (pad) => pad?.axes?.length >= 4 ? [pad.axes[2], pad.axes[3]] : [pad?.axes?.[0] || 0, pad?.axes?.[1] || 0]
-      const [lx, ly] = axes(left); const [, ry] = axes(right)
-      return { drive: -ly, steer: lx, lift: -ry, reach: (right?.buttons?.[0]?.value || 0) - (right?.buttons?.[1]?.value || 0), horn: !!left?.buttons?.[0]?.pressed }
+      const [lx, ly] = axes(left)
+      const [, ry] = axes(right)
+      return { ...ZERO, travel: -ly, steer: lx, lift: -ry, presence: left || right ? 1 : 0 }
     }
 
     const timer = new THREE.Timer()
     renderer.setAnimationLoop((time) => {
       timer.update()
       const dt = Math.min(timer.getDelta(), .04)
-      const xr = readXR()
       const enabled = runningRef.current
-      const driveInput = enabled ? ((state.keys.has('KeyW') || state.keys.has('ArrowUp') ? 1 : 0) - (state.keys.has('KeyS') || state.keys.has('ArrowDown') ? 1 : 0) || xr.drive) : 0
-      const steerInput = enabled ? ((state.keys.has('KeyD') || state.keys.has('ArrowRight') ? 1 : 0) - (state.keys.has('KeyA') || state.keys.has('ArrowLeft') ? 1 : 0) || xr.steer) : 0
-      const liftInput = enabled ? ((state.keys.has('KeyE') ? 1 : 0) - (state.keys.has('KeyQ') ? 1 : 0) || xr.lift) : 0
-      const reachInput = enabled ? ((state.keys.has('KeyR') ? 1 : 0) - (state.keys.has('KeyF') ? 1 : 0) || xr.reach) : 0
-      const tiltInput = enabled ? ((state.keys.has('KeyT') ? 1 : 0) - (state.keys.has('KeyG') ? 1 : 0)) : 0
-      const maxMeters = profile.maxSpeed * .44704
-      const target = driveInput * maxMeters
-      state.speed = THREE.MathUtils.damp(state.speed, target, driveInput ? 2.4 : 5.8, dt)
-      state.steer = THREE.MathUtils.damp(state.steer, steerInput, 5, dt)
-      if (Math.abs(state.speed) > .02) state.heading += state.steer * profile.steerRatio * dt * (state.speed / Math.max(maxMeters, .1))
-      state.x += Math.sin(state.heading) * state.speed * dt
-      state.z += Math.cos(state.heading) * state.speed * dt
-      if (state.x < WORLD.minX || state.x > WORLD.maxX || state.z < WORLD.minZ || state.z > WORLD.maxZ) { fireEvent('boundary', 'Contact with facility boundary', 'critical', 18); state.x = THREE.MathUtils.clamp(state.x, WORLD.minX, WORLD.maxX); state.z = THREE.MathUtils.clamp(state.z, WORLD.minZ, WORLD.maxZ); state.speed *= -.15 }
-      state.fork = THREE.MathUtils.clamp(state.fork + liftInput * dt * 52, 0, profile.maxLift)
-      state.reach = THREE.MathUtils.clamp(state.reach + reachInput * dt * 28, 0, profile.family === 'reach' ? 42 : 12)
-      state.tilt = THREE.MathUtils.clamp(state.tilt + tiltInput * dt * 4, -5, 9)
-      forklift.position.set(state.x, 0, state.z); forklift.rotation.y = state.heading
-      forklift.userData.carriage.position.y = state.fork * .0254
-      forklift.userData.carriage.position.z = -state.reach * .0254
-      forklift.userData.mast.rotation.x = THREE.MathUtils.degToRad(state.tilt)
+      const xr = readXRAxes()
+      state.xrDrags.forEach((drag, controller) => {
+        const position = new THREE.Vector3()
+        controller.getWorldPosition(position)
+        const control = drag.object.userData.control
+        const delta = control.axis === 'horizontal' ? position.x - drag.position.x : position.y - drag.position.y
+        manual[control.action] = clampInput(drag.start + delta * 2.6)
+      })
+      const keyboard = {
+        travel: (state.keys.has('KeyW') || state.keys.has('ArrowUp') ? 1 : 0) - (state.keys.has('KeyS') || state.keys.has('ArrowDown') ? 1 : 0),
+        steer: (state.keys.has('KeyD') || state.keys.has('ArrowRight') ? 1 : 0) - (state.keys.has('KeyA') || state.keys.has('ArrowLeft') ? 1 : 0),
+        lift: (state.keys.has('KeyE') ? 1 : 0) - (state.keys.has('KeyQ') ? 1 : 0),
+        reach: (state.keys.has('KeyR') ? 1 : 0) - (state.keys.has('KeyF') ? 1 : 0),
+        tilt: (state.keys.has('KeyT') ? 1 : 0) - (state.keys.has('KeyG') ? 1 : 0),
+        sideshift: (state.keys.has('KeyC') ? 1 : 0) - (state.keys.has('KeyZ') ? 1 : 0),
+        brake: state.keys.has('KeyB') ? 1 : 0,
+        horn: state.keys.has('Space') ? 1 : 0,
+        presence: state.keys.has('ShiftLeft') || state.keys.has('ShiftRight') ? 1 : 0,
+      }
+      const choose = (action) => Math.abs(manual[action]) > .02 ? manual[action] : Math.abs(keyboard[action] || 0) > .02 ? keyboard[action] : xr[action] || 0
+      const requiredPresence = profile.family !== 'pallet' || !rig.walkie
+      state.presence = !requiredPresence || (enabled && choose('presence') > .2)
+      setPresence((value) => value === state.presence ? value : state.presence)
+      const requestedTravel = enabled ? choose('travel') : 0
+      const requestedHydraulics = enabled ? Math.max(Math.abs(choose('lift')), Math.abs(choose('reach')), Math.abs(choose('tilt'))) : 0
+      if (requiredPresence && !state.presence && (Math.abs(requestedTravel) > .1 || requestedHydraulics > .1)) fireEvent('presence', 'Operator presence control not engaged', 'major', 10, 5000)
+      const permitted = state.presence || !requiredPresence
+      const travelInput = permitted ? requestedTravel : 0
+      const steerInput = enabled ? choose('steer') : 0
+      const liftInput = permitted ? choose('lift') : 0
+      const reachInput = profile.family === 'reach' && permitted ? choose('reach') : 0
+      const tiltInput = ['reach', 'counterbalance'].includes(profile.family) && permitted ? choose('tilt') : 0
+      const sideshiftInput = ['reach', 'counterbalance'].includes(profile.family) && permitted ? choose('sideshift') : 0
+      const brakeInput = enabled ? choose('brake') : 0
+      state.horn = enabled && choose('horn') > .2
+
+      let maxMps = profile.maxSpeed * .44704
+      if (profile.family === 'order-picker') maxMps *= THREE.MathUtils.clamp(1 - (state.fork / profile.maxLift) * .78, .18, 1)
+      if (profile.family === 'reach' && state.fork > 120) maxMps *= .48
+      if (profile.family === 'counterbalance' && state.fork > 72) maxMps *= .55
+      const targetSpeed = travelInput * maxMps * (travelInput < 0 ? dynamics.reverseScale : 1)
+      const damping = brakeInput > .1 || Math.abs(travelInput) < .02 ? dynamics.braking * (1 + brakeInput) : dynamics.acceleration
+      state.speed = THREE.MathUtils.damp(state.speed, brakeInput > .1 ? 0 : targetSpeed, damping, dt)
+      state.steer = THREE.MathUtils.damp(state.steer, steerInput, profile.family === 'counterbalance' ? 3.1 : 5.2, dt)
+      if (Math.abs(state.speed) > .025) {
+        const speedRatio = Math.abs(state.speed) / Math.max(maxMps, .1)
+        state.heading -= state.steer * dynamics.turnRate * profile.steerRatio * Math.sign(state.speed) * (.3 + speedRatio * .7) * dt
+      }
+      state.x -= Math.sin(state.heading) * state.speed * dt
+      state.z -= Math.cos(state.heading) * state.speed * dt
+      if (state.x < WORLD.minX || state.x > WORLD.maxX || state.z < WORLD.minZ || state.z > WORLD.maxZ) {
+        fireEvent('boundary', 'Contact with facility boundary', 'critical', 18)
+        state.x = THREE.MathUtils.clamp(state.x, WORLD.minX, WORLD.maxX)
+        state.z = THREE.MathUtils.clamp(state.z, WORLD.minZ, WORLD.maxZ)
+        state.speed *= -.12
+      }
+      state.fork = THREE.MathUtils.clamp(state.fork + liftInput * dynamics.liftRate * dt, 0, profile.maxLift)
+      state.reach = THREE.MathUtils.clamp(state.reach + reachInput * 30 * dt, 0, profile.family === 'reach' ? 42 : 0)
+      state.tilt = THREE.MathUtils.clamp(state.tilt + tiltInput * 4.2 * dt, -5, 9)
+      state.sideshift = THREE.MathUtils.clamp(state.sideshift + sideshiftInput * .48 * dt, -.15, .15)
+      rig.root.position.set(state.x, 0, state.z)
+      rig.root.rotation.y = state.heading
+      if (rig.carriage) { rig.carriage.position.y = state.fork * .0254; rig.carriage.position.x = state.sideshift }
+      if (rig.reachGroup) rig.reachGroup.position.z = -state.reach * .0254
+      if (rig.mast) rig.mast.rotation.x = THREE.MathUtils.degToRad(state.tilt)
+      if (rig.tillerPivot) rig.tillerPivot.rotation.y = -state.steer * .72
+      if (rig.wheelPivot) rig.wheelPivot.rotation.z = -state.steer * 1.5
+      if (rig.levers) {
+        const values = [liftInput, tiltInput, sideshiftInput]
+        rig.levers.forEach((lever, index) => { lever.rotation.x = -.18 + values[index] * .25 })
+      }
+      camera.rotation.y = state.viewYaw
+      camera.rotation.x = state.viewPitch
+
       const speedMph = Math.abs(state.speed) / .44704
       if (speedMph > profile.safeSpeed + .15) fireEvent('speed', 'Travel speed above assessment limit', 'minor', 5)
       if (speedMph > 1.2 && state.fork > 18) fireEvent('fork-height', 'Travel with elevated forks', 'major', 10)
-      if (speedMph > .4 && Math.abs(state.steer) > .78 && state.fork > 48) fireEvent('stability', 'Sharp turn with elevated carriage', 'critical', 18)
-      pedestrians.forEach((person) => { if (person.position.distanceTo(forklift.position) < 1.9) fireEvent('pedestrian', 'Pedestrian separation breached', 'critical', 20, 10000) })
-      const palletDistance = forklift.position.distanceTo(pallet.position)
-      if (palletDistance < 1.7 && state.fork < 8 && Math.abs(state.speed) < .45) state.load = Math.min(profile.capacity * .62, 2400)
+      if (speedMph > .4 && Math.abs(state.steer) > .74 && state.fork > 48) fireEvent('stability', 'Sharp turn with elevated carriage', 'critical', 18)
+      pedestrians.forEach((person) => { if (person.position.distanceTo(rig.root.position) < 1.9) fireEvent('pedestrian', 'Pedestrian separation breached', 'critical', 20, 10000) })
+      const palletDistance = rig.root.position.distanceTo(pallet.position)
+      if (palletDistance < 1.75 && state.fork < 8 && Math.abs(state.speed) < .45) state.load = Math.min(profile.capacity * .62, 2400)
       if (palletDistance < 1.1 && Math.abs(state.speed) > .8) fireEvent('load-contact', 'Hard contact with pallet', 'major', 10)
-      if (Math.abs(state.z - 3.2) < 2.4 && Math.abs(state.x) < 3.2 && speedMph > .8 && !state.horn && !xr.horn) fireEvent('intersection', 'Blind intersection without horn', 'minor', 5, 12000)
+      if (Math.abs(state.z - 3.2) < 2.4 && Math.abs(state.x) < 3.2 && speedMph > .8 && !state.horn) fireEvent('intersection', 'Blind intersection without horn', 'minor', 5, 12000)
+      if (manual.belly > .2) state.speed = Math.max(state.speed, .75)
+
+      const stabilityValue = Math.max(6, 100 - speedMph * 4.5 - state.fork * .085 - Math.abs(state.steer) * speedMph * 7.5 - Math.abs(state.sideshift) * 18)
       if (time - state.lastTelemetry > 100) {
         state.lastTelemetry = time
-        onTelemetry({ speed: speedMph, signedSpeed: state.speed / .44704, fork: state.fork, reach: state.reach, tilt: state.tilt, load: state.load, stability: Math.max(8, 100 - speedMph * 5 - state.fork * .09 - Math.abs(state.steer) * speedMph * 8), position: { x: state.x, z: state.z }, heading: state.heading, horn: state.horn || xr.horn, xr: renderer.xr.isPresenting })
-      }
-      if (!renderer.xr.isPresenting) {
-        const desired = new THREE.Vector3(state.x + 7.4, 5.4, state.z + 9.2)
-        camera.position.lerp(desired, .035); camera.lookAt(state.x, 1, state.z - 3)
+        setStability(Math.round(stabilityValue))
+        onTelemetry({ speed: speedMph, signedSpeed: state.speed / .44704, fork: state.fork, reach: state.reach, tilt: state.tilt, load: state.load, stability: stabilityValue, position: { x: state.x, z: state.z }, heading: state.heading, horn: state.horn, xr: renderer.xr.isPresenting })
       }
       renderer.render(scene, camera)
     })
 
-    const resize = () => { if (!mount.clientWidth || !mount.clientHeight) return; camera.aspect = mount.clientWidth / mount.clientHeight; camera.updateProjectionMatrix(); renderer.setSize(mount.clientWidth, mount.clientHeight) }
-    const observer = new ResizeObserver(resize); observer.observe(mount)
-    return () => {
-      observer.disconnect(); window.removeEventListener('keydown', keyDown); window.removeEventListener('keyup', keyUp)
-      renderer.setAnimationLoop(null); renderer.dispose(); mount.removeChild(renderer.domElement); engineRef.current = null
+    const resize = () => {
+      if (!mount.clientWidth || !mount.clientHeight) return
+      camera.aspect = mount.clientWidth / mount.clientHeight
+      camera.updateProjectionMatrix()
+      renderer.setSize(mount.clientWidth, mount.clientHeight)
     }
-  }, [profile, onSafetyEvent, onTelemetry, audioOn, onRunningChange])
+    const observer = new ResizeObserver(resize)
+    observer.observe(mount)
+    return () => {
+      observer.disconnect()
+      window.removeEventListener('keydown', keyDown)
+      window.removeEventListener('keyup', keyUp)
+      renderer.domElement.removeEventListener('pointerdown', pointerDown)
+      renderer.domElement.removeEventListener('pointermove', pointerMove)
+      renderer.domElement.removeEventListener('pointerup', pointerUp)
+      renderer.domElement.removeEventListener('pointercancel', pointerUp)
+      renderer.domElement.removeEventListener('contextmenu', preventMenu)
+      controllers.forEach(({ controller, selectStart, selectEnd }) => {
+        controller.removeEventListener('selectstart', selectStart)
+        controller.removeEventListener('selectend', selectEnd)
+      })
+      renderer.setAnimationLoop(null)
+      renderer.dispose()
+      if (renderer.domElement.parentElement === mount) mount.removeChild(renderer.domElement)
+      engineRef.current = null
+    }
+  }, [profile, onSafetyEvent, onTelemetry, onRunningChange])
 
   return (
-    <section className={`simulator-shell ${running ? 'running' : ''}`}>
+    <section className={`simulator-shell simulator-${profile.family} ${running ? 'running' : ''}`}>
       <div className="simulator-canvas" ref={mountRef} />
-      <div className="sim-topbar"><span><Crosshair size={15} /> Training Bay 01</span><span>{profile.manufacturer} {profile.model}</span><span className={xrSupported ? 'online' : 'offline'}>{xrSupported ? 'WebXR ready' : 'Desktop ready'}</span></div>
-      <div className="stability-meter"><span>Stability</span><div><i style={{ height: '74%' }} /></div><b>MONITORED</b></div>
+      <div className="sim-topbar"><span><Crosshair size={15} /> Operator eye view</span><span>{profile.manufacturer} {profile.model}</span><span className={xrSupported ? 'online' : 'offline'}>{xrSupported ? 'WebXR ready' : 'Desktop first-person'}</span></div>
+      <div className="machine-status"><span>{profile.stance}</span><strong>{activeControl}</strong><i className={presence ? 'engaged' : ''}>{profile.family === 'pallet' && profile.stance.includes('Walk') ? 'Walkie control zone' : presence ? 'Presence engaged' : 'Hold Shift for presence'}</i></div>
+      <div className="stability-meter"><span>Stability</span><div><i style={{ height: `${stability}%` }} /></div><b>{stability > 55 ? 'STABLE' : 'CAUTION'}</b></div>
+      <div className="sim-reticle" aria-hidden="true"><i /><i /></div>
       <div className="sim-hints">
         <button onClick={() => setGuideOpen((value) => !value)}><Keyboard size={17} /> Controls</button>
-        <button onClick={() => setAudioOn((value) => !value)}>{audioOn ? <Volume2 size={17} /> : <Headphones size={17} />}</button>
-        <button onClick={() => engineRef.current?.reset()}><RotateCcw size={17} /></button>
+        <button onClick={() => setAudioOn((value) => !value)} aria-label={audioOn ? 'Mute audio' : 'Enable audio'}>{audioOn ? <Volume2 size={17} /> : <Headphones size={17} />}</button>
+        <button onClick={() => engineRef.current?.reset()} aria-label="Reset vehicle"><RotateCcw size={17} /></button>
       </div>
-      {guideOpen && <div className="control-guide"><header><Gamepad2 size={18} /><b>{profile.control}</b></header><p>Desktop: W/S travel, A/D steer, E/Q lift, R/F reach, T/G tilt, Space horn.</p><p>VR: left stick travel and steer, right stick lift, right trigger/grip reach, left trigger horn.</p><small>{profile.guidance}</small></div>}
-      {!running && <div className="start-overlay"><Box size={24} /><div><strong>Practical exercise ready</strong><span>Inspect the truck, sound the horn at the cross-aisle, engage the pallet, and place it in the marked zone.</span></div><button onClick={() => onRunningChange(true)}>Start desktop exercise</button></div>}
+      {guideOpen && <div className="control-guide"><header><Gamepad2 size={18} /><b>{profile.control}</b></header><p><MousePointer2 size={14} /> Drag a visible cab control to manipulate it. Drag empty space, or right-drag, to look around.</p><p>Keyboard fallback: Shift presence, W/S travel, A/D steer, E/Q lift, R/F reach, T/G tilt, Z/C sideshift, B brake, Space horn.</p><p>VR: point at a physical control, hold trigger, and move it. Thumbsticks remain available for accessibility.</p><small>{profile.guidance}</small></div>}
+      {!running && <div className="start-overlay"><MousePointer2 size={24} /><div><strong>First-person practical exercise</strong><span>{controlPrompt(profile)}</span></div><button onClick={() => onRunningChange(true)}>Enter operator station</button></div>}
     </section>
   )
 })

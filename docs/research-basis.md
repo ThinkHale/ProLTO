@@ -28,7 +28,7 @@ The knowledge bank and safety detectors cover truck controls, differences from a
 
 ## Technical architecture
 
-React manages the evaluator interface, knowledge assessment, truck profiles, and state. Three.js renders one shared warehouse exercise to a desktop canvas or immersive WebXR session. GitHub Pages supplies the HTTPS secure context required by WebXR. No server is required for the current local-only prototype. Candidate record persistence and organization access control should be added before production use.
+React manages the evaluator interface, knowledge assessment, truck profiles, and state. Three.js renders a shared warehouse around four separate equipment-family rigs. Each rig owns its operator eye point, control geometry, control raycast targets, hydraulic animation, and family dynamics. Desktop users drag the modeled controls directly. Quest users point at a control, hold a controller trigger, and move the control through its axis. GitHub Pages supplies the HTTPS secure context required by WebXR. No server is required for the current local-only prototype. Candidate record persistence and organization access control should be added before production use.
 
 ## Primary references
 

@@ -52,6 +52,7 @@ button:focus-visible, select:focus-visible, input:focus-visible { outline: 2px s
 .simulator-column { min-width: 0; }
 .simulator-shell { height: calc(100vh - 280px); min-height: 430px; position: relative; overflow: hidden; border: 1px solid #354852; border-radius: 6px 6px 0 0; background: #111c22; }
 .simulator-canvas, .simulator-canvas canvas { width: 100%; height: 100%; display: block; }
+.simulator-canvas canvas { touch-action: none; }
 .sim-topbar { position: absolute; top: 12px; left: 12px; right: 12px; min-height: 34px; padding: 7px 10px; display: flex; align-items: center; gap: 18px; background: rgba(5, 14, 19, .78); border: 1px solid rgba(132, 157, 169, .35); backdrop-filter: blur(10px); font-size: 11px; pointer-events: none; }
 .sim-topbar span { display: flex; align-items: center; gap: 6px; }
 .sim-topbar span:nth-child(2) { margin-left: auto; color: #c8d4d9; }
@@ -62,11 +63,20 @@ button:focus-visible, select:focus-visible, input:focus-visible { outline: 2px s
 .stability-meter div { height: 100px; margin: 7px 8px; background: repeating-linear-gradient(to top, #24343b 0 10px, transparent 10px 14px); display: flex; align-items: flex-end; }
 .stability-meter i { width: 100%; background: repeating-linear-gradient(to top, #4bc875 0 10px, transparent 10px 14px); }
 .stability-meter b { color: var(--teal); font-size: 8px; }
+.machine-status { position: absolute; left: 50%; bottom: 18px; width: min(420px, calc(100% - 180px)); transform: translateX(-50%); display: grid; grid-template-columns: 1fr auto; gap: 3px 14px; padding: 9px 12px; border: 1px solid rgba(125, 151, 162, .42); background: rgba(5, 14, 19, .83); backdrop-filter: blur(9px); pointer-events: none; }
+.machine-status span { grid-column: 1 / -1; color: #8fa2ab; font-size: 8px; letter-spacing: .1em; text-transform: uppercase; }
+.machine-status strong { min-width: 0; overflow: hidden; color: white; font-family: 'Barlow Condensed'; font-size: 14px; font-weight: 500; text-overflow: ellipsis; white-space: nowrap; }
+.machine-status i { align-self: center; color: var(--amber); font-size: 8px; font-style: normal; text-transform: uppercase; }
+.machine-status i.engaged { color: var(--teal); }
+.sim-reticle { position: absolute; left: 50%; top: 50%; width: 18px; height: 18px; transform: translate(-50%, -50%); opacity: .48; pointer-events: none; }
+.sim-reticle i { position: absolute; left: 50%; top: 50%; display: block; width: 18px; height: 1px; transform: translate(-50%, -50%); background: #e8f0f2; }
+.sim-reticle i:last-child { transform: translate(-50%, -50%) rotate(90deg); }
 .sim-hints { position: absolute; top: 59px; right: 12px; display: flex; gap: 5px; }
 .sim-hints button { height: 31px; display: flex; align-items: center; gap: 6px; border: 1px solid rgba(132, 157, 169, .42); background: rgba(5, 14, 19, .78); cursor: pointer; font-size: 10px; }
 .control-guide { position: absolute; top: 96px; right: 12px; width: 280px; padding: 14px; background: rgba(7, 17, 22, .94); border: 1px solid #49606a; box-shadow: 0 12px 32px rgba(0,0,0,.35); font-size: 11px; }
 .control-guide header { display: flex; align-items: center; gap: 8px; color: var(--amber); }
 .control-guide p { margin: 9px 0; color: #d8e1e5; line-height: 1.45; }
+.control-guide p svg { margin: 0 4px -3px 0; color: var(--amber); }
 .control-guide small { color: #93a5ad; line-height: 1.45; display: block; }
 .start-overlay { position: absolute; left: 80px; right: 14px; bottom: 15px; display: flex; align-items: center; gap: 11px; padding: 11px 13px; background: rgba(7, 17, 22, .9); border: 1px solid #4b5e66; backdrop-filter: blur(12px); }
 .start-overlay > svg { color: var(--amber); }
@@ -210,6 +220,7 @@ button:focus-visible, select:focus-visible, input:focus-visible { outline: 2px s
   .simulator-shell { min-height: 390px; }
   .sim-topbar span:nth-child(2) { display: none; }
   .start-overlay { left: 12px; flex-wrap: wrap; }
+  .machine-status { left: 12px; right: 12px; bottom: 14px; width: auto; transform: none; }
   .start-overlay button { width: 100%; margin: 2px 0 0; }
   .telemetry-bar { height: auto; grid-template-columns: repeat(2, 1fr); }
   .telemetry-bar > div { min-height: 65px; border-bottom: 1px solid #2a3d46; }
