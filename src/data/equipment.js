@@ -7,11 +7,13 @@ export const equipmentFamilies = [
 
 export const equipmentProfiles = {
   'Crown:reach': {
-    manufacturer: 'Crown', family: 'reach', model: 'RR 5700', capacity: 4500, maxLift: 400,
-    maxSpeed: 6.5, safeSpeed: 4.5, stance: 'Variable side stance', steerRatio: 1.15,
+    manufacturer: 'Crown', family: 'reach', model: 'RR 5725-45', capacity: 4500, maxLift: 400,
+    maxSpeed: 8, forksFirstSpeed: 6.8, loadedPowerUnitSpeed: 7.2, loadedForksSpeed: 5.7,
+    liftEmptyFpm: 153, liftLoadedFpm: 82, lowerFpm: 110, tiltForward: 3, tiltBack: 4,
+    safeSpeed: 4.5, stance: 'Variable side stance', steerRatio: 1.15,
     driveUnit: 'rear', control: 'Multi-Task Control Handle', color: 0xd9d7cf,
     functions: ['Travel speed and direction', 'Lift / lower', 'Reach / retract', 'Tilt', 'Sideshift'],
-    guidance: 'Power-unit swing is opposite the turn when traveling forks first. Steering behavior can vary by truck configuration.',
+    guidance: 'RR 5725-45 36V benchmark. Rated travel and hydraulic values follow Crown specifications. Site limits still govern operation.',
   },
   'Raymond:reach': {
     manufacturer: 'Raymond', family: 'reach', model: '7000 Series', capacity: 4500, maxLift: 444,

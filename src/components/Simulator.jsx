@@ -7,7 +7,7 @@ import { createWarehouse } from '../sim/warehouse.js'
 const WORLD = { minX: -8.6, maxX: 8.6, minZ: -18, maxZ: 16 }
 const ZERO = { travel: 0, steer: 0, lift: 0, reach: 0, tilt: 0, sideshift: 0, brake: 0, horn: 0, presence: 0, belly: 0 }
 const DYNAMICS = {
-  reach: { acceleration: 2.45, braking: 6.8, turnRate: 1.42, liftRate: 54, reverseScale: .86 },
+  reach: { acceleration: 2.45, braking: 6.8, turnRate: 1.42, liftRate: 30.6, reverseScale: .86 },
   'order-picker': { acceleration: 2.05, braking: 6.4, turnRate: 1.14, liftRate: 40, reverseScale: .82 },
   pallet: { acceleration: 3.2, braking: 8.2, turnRate: 1.72, liftRate: 4.2, reverseScale: .72 },
   counterbalance: { acceleration: 2.15, braking: 6.1, turnRate: .9, liftRate: 43, reverseScale: .86 },
@@ -68,9 +68,11 @@ const Simulator = forwardRef(function Simulator({ profile, onTelemetry, onSafety
     setActiveControl('Cab controls armed')
     setPresence(false)
     const scene = new THREE.Scene()
-    scene.background = new THREE.Color(0x111c22)
-    scene.fog = new THREE.Fog(0x111c22, 20, 44)
-    const camera = new THREE.PerspectiveCamera(72, mount.clientWidth / mount.clientHeight, .035, 90)
+    scene.background = new THREE.Color(0x2c3437)
+    scene.fog = new THREE.Fog(0x2c3437, 24, 58)
+    const crownReach = profile.family === 'reach' && profile.manufacturer === 'Crown'
+    const defaultViewPitch = crownReach ? -.22 : -.16
+    const camera = new THREE.PerspectiveCamera(crownReach ? 68 : 72, mount.clientWidth / mount.clientHeight, .035, 90)
     camera.rotation.order = 'YXZ'
     const renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: 'high-performance' })
     renderer.setPixelRatio(Math.min(window.devicePixelRatio, 1.7))
@@ -78,12 +80,14 @@ const Simulator = forwardRef(function Simulator({ profile, onTelemetry, onSafety
     renderer.shadowMap.enabled = true
     renderer.shadowMap.type = THREE.PCFShadowMap
     renderer.outputColorSpace = THREE.SRGBColorSpace
+    renderer.toneMapping = THREE.ACESFilmicToneMapping
+    renderer.toneMappingExposure = 1.08
     renderer.xr.enabled = true
     renderer.xr.setReferenceSpaceType('local-floor')
     mount.appendChild(renderer.domElement)
 
-    scene.add(new THREE.HemisphereLight(0xd4edf6, 0x26343a, 2.1))
-    const sun = new THREE.DirectionalLight(0xffffff, 3)
+    scene.add(new THREE.HemisphereLight(0xe7f3f4, 0x313638, 1.45))
+    const sun = new THREE.DirectionalLight(0xfffbef, 4.2)
     sun.position.set(-7, 14, 8)
     sun.castShadow = true
     sun.shadow.mapSize.set(2048, 2048)
@@ -108,7 +112,7 @@ const Simulator = forwardRef(function Simulator({ profile, onTelemetry, onSafety
     const manual = { ...ZERO }
     const state = {
       x: 0, z: 11.5, heading: 0, speed: 0, steer: 0, fork: 0, reach: 0, tilt: 0, sideshift: 0,
-      load: 0, horn: false, presence: !requiresPresence || runningRef.current, presenceLatched: runningRef.current, viewYaw: 0, viewPitch: -.16, lastTelemetry: 0,
+      load: 0, horn: false, presence: !requiresPresence || runningRef.current, presenceLatched: runningRef.current, viewYaw: 0, viewPitch: defaultViewPitch, lastTelemetry: 0,
       eventLocks: {}, keys: new Set(), pointerDrag: null, lookDrag: null, xrDrags: new Map(), hovered: null,
     }
     const updatePresence = (engaged, label = engaged ? 'Presence control engaged' : 'Presence control released') => {
@@ -123,12 +127,12 @@ const Simulator = forwardRef(function Simulator({ profile, onTelemetry, onSafety
     }
     const togglePresence = () => updatePresence(!state.presenceLatched)
     const reset = () => {
-      Object.assign(state, { x: 0, z: 11.5, heading: 0, speed: 0, steer: 0, fork: 0, reach: 0, tilt: 0, sideshift: 0, load: 0, viewYaw: 0, viewPitch: -.16 })
+      Object.assign(state, { x: 0, z: 11.5, heading: 0, speed: 0, steer: 0, fork: 0, reach: 0, tilt: 0, sideshift: 0, load: 0, viewYaw: 0, viewPitch: defaultViewPitch })
       Object.assign(manual, ZERO)
       state.eventLocks = {}
       rig.root.position.set(0, 0, 11.5)
       rig.root.rotation.y = 0
-      camera.rotation.set(-.16, 0, 0)
+      camera.rotation.set(defaultViewPitch, 0, 0)
       updatePresence(runningRef.current, runningRef.current ? 'Presence engaged after reset' : 'Cab controls armed')
       setStability(100)
     }
@@ -325,11 +329,18 @@ const Simulator = forwardRef(function Simulator({ profile, onTelemetry, onSafety
       const brakeInput = enabled ? choose('brake') : 0
       state.horn = enabled && choose('horn') > .2
 
-      let maxMps = profile.maxSpeed * .44704
+      const loadRatio = THREE.MathUtils.clamp(state.load / profile.capacity, 0, 1)
+      let ratedSpeed = profile.maxSpeed
+      if (profile.family === 'reach' && profile.forksFirstSpeed) {
+        const emptySpeed = travelInput >= 0 ? profile.forksFirstSpeed : profile.maxSpeed
+        const loadedSpeed = travelInput >= 0 ? profile.loadedForksSpeed : profile.loadedPowerUnitSpeed
+        ratedSpeed = THREE.MathUtils.lerp(emptySpeed, loadedSpeed, loadRatio)
+      }
+      let maxMps = ratedSpeed * .44704
       if (profile.family === 'order-picker') maxMps *= THREE.MathUtils.clamp(1 - (state.fork / profile.maxLift) * .78, .18, 1)
       if (profile.family === 'reach' && state.fork > 120) maxMps *= .48
       if (profile.family === 'counterbalance' && state.fork > 72) maxMps *= .55
-      const targetSpeed = travelInput * maxMps * (travelInput < 0 ? dynamics.reverseScale : 1)
+      const targetSpeed = travelInput * maxMps * (profile.forksFirstSpeed ? 1 : travelInput < 0 ? dynamics.reverseScale : 1)
       const damping = brakeInput > .1 || Math.abs(travelInput) < .02 ? dynamics.braking * (1 + brakeInput) : dynamics.acceleration
       state.speed = THREE.MathUtils.damp(state.speed, brakeInput > .1 ? 0 : targetSpeed, damping, dt)
       state.steer = THREE.MathUtils.damp(state.steer, steerInput, profile.family === 'counterbalance' ? 3.1 : 5.2, dt)
@@ -345,17 +356,31 @@ const Simulator = forwardRef(function Simulator({ profile, onTelemetry, onSafety
         state.z = THREE.MathUtils.clamp(state.z, WORLD.minZ, WORLD.maxZ)
         state.speed *= -.12
       }
-      state.fork = THREE.MathUtils.clamp(state.fork + liftInput * dynamics.liftRate * dt, 0, profile.maxLift)
+      let liftRate = dynamics.liftRate
+      if (profile.liftEmptyFpm) {
+        liftRate = liftInput >= 0
+          ? THREE.MathUtils.lerp(profile.liftEmptyFpm, profile.liftLoadedFpm, loadRatio) * .2
+          : profile.lowerFpm * .2
+      }
+      state.fork = THREE.MathUtils.clamp(state.fork + liftInput * liftRate * dt, 0, profile.maxLift)
       state.reach = THREE.MathUtils.clamp(state.reach + reachInput * 30 * dt, 0, profile.family === 'reach' ? 42 : 0)
-      state.tilt = THREE.MathUtils.clamp(state.tilt + tiltInput * 4.2 * dt, -5, 9)
+      state.tilt = THREE.MathUtils.clamp(state.tilt + tiltInput * 4.2 * dt, -(profile.tiltForward ?? 5), profile.tiltBack ?? 9)
       state.sideshift = THREE.MathUtils.clamp(state.sideshift + sideshiftInput * .48 * dt, -.15, .15)
       rig.root.position.set(state.x, 0, state.z)
       rig.root.rotation.y = state.heading
       if (rig.carriage) { rig.carriage.position.y = state.fork * .0254; rig.carriage.position.x = state.sideshift }
       if (rig.reachGroup) rig.reachGroup.position.z = -state.reach * .0254
-      if (rig.mast) rig.mast.rotation.x = THREE.MathUtils.degToRad(state.tilt)
+      if (rig.tiltGroup) rig.tiltGroup.rotation.x = THREE.MathUtils.degToRad(state.tilt)
+      else if (rig.mast) rig.mast.rotation.x = THREE.MathUtils.degToRad(state.tilt)
       if (rig.tillerPivot) rig.tillerPivot.rotation.y = -state.steer * .72
+      if (rig.steerPivot) rig.steerPivot.rotation.y = -state.steer * .62
+      if (rig.travelPivot) rig.travelPivot.rotation.x = travelInput * .16
+      if (rig.liftPivot) rig.liftPivot.rotation.x = liftInput * .24
+      if (rig.reachPivot) rig.reachPivot.rotation.z = -reachInput * .22
+      if (rig.tiltPivot) rig.tiltPivot.rotation.z = -tiltInput * .22
       if (rig.wheelPivot) rig.wheelPivot.rotation.z = -state.steer * 1.5
+      if (rig.driveWheel) rig.driveWheel.rotation.x -= state.speed * dt / .165
+      if (rig.loadWheels) rig.loadWheels.forEach((loadWheel) => { loadWheel.rotation.x -= state.speed * dt / .075 })
       if (rig.levers) {
         const values = [liftInput, tiltInput, sideshiftInput]
         rig.levers.forEach((lever, index) => { lever.rotation.x = -.18 + values[index] * .25 })
