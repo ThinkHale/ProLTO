@@ -6,7 +6,7 @@ forks protrude +Y from under the platform between fixed baselegs.
 
 Layout along Y (forks +Y): ivory power unit at rear (-1.55..-0.60), black mast
 mid-truck (center -0.42), operator platform on the mast front (floor -0.18..0.62)
-with the console on its mast side — the operator faces -Y over the console, the
+with the console on its mast side. The operator faces -Y over the console, the
 board's signature safety-orange gate loops flank the platform sides.
 
 Rig: rig_root > rig_mast > rig_carriage (global (0, 0.9, 0)) which carries
@@ -165,99 +165,157 @@ def mast(root):
 
 
 # ------------------------------------------------- carriage: platform + guard
-def console(platform):
+def console(platform, prefix, primary=False):
+    """Build the exact 2025 SP left and right operator control pair."""
     molded = M.plastic_molded()
-    dark = M.plastic_dark()
-    P.rounded_box('console_body', (0.76, 0.22, 0.42), (0, -0.07, 1.10), molded, platform, radius=0.05)
-    # twin round control pods facing the operator (+Y)
-    for sx, tag in ((-1, 'L'), (1, 'R')):
-        P.lathe(f'console_pod_{tag}', [(0.0, 0), (0.1, 0.004), (0.11, 0.028), (0.095, 0.05), (0.0, 0.056)],
-                dark, platform, loc=(sx * 0.20, 0.03, 1.10), rot=(-math.pi / 2, 0, 0))
-    # left pod: steering with grab loop
-    steer = R.empty('rig_steerPivot', (-0.20, 0.09, 1.10), platform)
-    disc = P.lathe('steer_disc', [(0.0, 0), (0.075, 0.004), (0.082, 0.02), (0.058, 0.036), (0.0, 0.04)],
-                   M.grip_rubber(), steer, rot=(-math.pi / 2, 0, 0))
-    R.tag_control(disc, 'steer', 'Steer palm wheel', 'horizontal', False)
-    P.tube('steer_loop', [(-0.05, 0.005, -0.005), (-0.05, 0.075, 0.045), (0.0, 0.1, 0.07),
-                          (0.05, 0.075, 0.045), (0.05, 0.005, -0.005)], 0.013,
-           M.steel_dark(), steer, corner_radius=0.05)
-    # right pod: travel twist grip + lift rocker
-    travel = R.empty('rig_travelPivot', (0.20, 0.09, 1.10), platform)
-    grip = P.cyl('travel_grip', 0.024, 0.13, (0.01, 0.02, 0), M.grip_rubber(), travel, axis='X', bevel=0.006)
-    R.tag_control(grip, 'travel', 'Travel twist grip', 'vertical', True)
-    P.lathe('travel_hub', [(0.0, 0), (0.03, 0.004), (0.034, 0.03), (0.0, 0.036)],
-            dark, travel, loc=(-0.065, 0.02, 0), rot=(0, math.pi / 2, 0))
-    lift = R.empty('rig_liftPivot', (0.315, 0.045, 1.06), platform)
-    rocker = P.rounded_box('lift_rocker', (0.05, 0.042, 0.08), (0, 0, 0), ORANGE(), lift, radius=0.012)
-    R.tag_control(rocker, 'lift', 'Platform lift rocker', 'vertical', True)
-    # center cluster: display, horn, e-stop
-    P.display('console_display', 0.13, 0.085, parent=platform, loc=(-0.02, 0.005, 1.27),
-              rot=(-0.35, 0, math.pi), screen_name='screen_sp')
-    horn = P.cyl('btn_horn', 0.026, 0.016, (0.065, 0.045, 1.03), M.warning_amber(), platform, axis='Y')
-    R.tag_control(horn, 'horn', 'Horn button', 'button', True)
-    P.lathe('btn_estop', [(0.0, 0), (0.018, 0), (0.018, 0.02), (0.027, 0.024), (0.027, 0.042), (0.0, 0.048)],
-            M.button_red(), platform, loc=(-0.065, 0.045, 1.03), rot=(-math.pi / 2, 0, 0))
-    for i in range(2):
-        P.rounded_box(f'console_sw_{i}', (0.035, 0.02, 0.022), (0.10 + i * 0.05, 0.035, 1.27),
-                      dark, platform, radius=0.005)
-    # stowage tray behind the console top
-    P.rounded_box('console_tray', (0.5, 0.1, 0.06), (0, -0.20, 1.33), dark, platform, radius=0.015)
-    P.label('console_warn', (0.09, 0.06), M.decal_white(), platform, (-0.30, 0.042, 1.02),
-            rot=(0, 0, math.pi))
+    inset = M.plastic_dark()
+    control = M.grip_rubber()
+
+    # Separate height-adjustable pedestals preserve the SP mid-platform view.
+    for sx, side in ((-1, 'left'), (1, 'right')):
+        P.rounded_box(f'{prefix}_pedestal_{side}', (0.31, 0.16, 0.82),
+                      (sx * 0.245, 0.07, 0.54), molded, platform,
+                      radius=0.045, segments=6, rot=(-0.035, 0, 0))
+        P.rounded_box(f'{prefix}_pod_{side}', (0.36, 0.31, 0.095),
+                      (sx * 0.245, -0.02, 0.96), inset, platform,
+                      radius=0.075, segments=8)
+    P.rounded_box(f'{prefix}_adjust_bar', (0.13, 0.12, 0.11),
+                  (0, 0.08, 0.85), molded, platform, radius=0.025, segments=5)
+
+    # Left pod: hand grip, steering disk, spinner, tilt release, and switches.
+    P.tube(f'{prefix}_left_hand_grip',
+           [(-0.40, 0.065, 0.93), (-0.42, -0.02, 0.99),
+            (-0.39, -0.145, 1.00), (-0.34, -0.17, 0.95)],
+           0.026, control, platform, corner_radius=0.055)
+    steer_name = 'rig_steerPivot' if primary else f'{prefix}_steerPivot'
+    steer = R.empty(steer_name, (-0.245, -0.035, 1.017), platform)
+    P.cyl(f'{prefix}_steer_recess', 0.125, 0.018,
+          (-0.245, -0.035, 1.005), M.plastic_molded(), platform,
+          verts=56, bevel=0.003)
+    disc = P.cyl(f'{prefix}_steer_disk', 0.108, 0.025, (0, 0, 0),
+                 control, steer, verts=56, bevel=0.006)
+    R.tag_control(disc, 'steer', 'SP dual-position steering wheel', 'radial',
+                  False, motion='radial')
+    P.cyl(f'{prefix}_steer_spinner', 0.033, 0.064, (-0.063, -0.055, 0.052),
+          control, steer, verts=36, bevel=0.012)
+    P.rounded_box(f'{prefix}_steer_tilt', (0.068, 0.032, 0.026),
+                  (-0.245, -0.172, 1.02), ORANGE(), platform,
+                  radius=0.009, segments=4)
+    for index, x in enumerate((-0.325, -0.285, -0.245, -0.205, -0.165)):
+        P.rounded_box(f'{prefix}_option_switch_{index}', (0.030, 0.052, 0.022),
+                      (x, 0.085, 1.025), M.plastic_dark(), platform,
+                      radius=0.005, segments=3)
+    P.cyl(f'{prefix}_auto_position', 0.021, 0.014,
+          (-0.378, 0.085, 1.025), ORANGE(), platform, verts=28, bevel=0.004)
+
+    # Right pod: fixed grip with separate travel, horn and lift controls.
+    P.tube(f'{prefix}_right_hand_grip',
+           [(0.14, -0.13, 1.00), (0.18, -0.17, 1.02),
+            (0.36, -0.17, 1.02), (0.41, -0.10, 0.99),
+            (0.40, 0.005, 0.95)], 0.027, control, platform,
+           corner_radius=0.07)
+    travel_name = 'rig_travelPivot' if primary else f'{prefix}_travelPivot'
+    travel = R.empty(travel_name, (0.16, -0.125, 1.02), platform)
+    rocker = P.rounded_box(f'{prefix}_travel_rocker', (0.078, 0.068, 0.038),
+                           (0, 0, 0), M.pbr(f'{prefix}_rocker_gray', 0xB5B7B4,
+                                            roughness=0.52), travel,
+                           radius=0.012, segments=4)
+    R.tag_control(rocker, 'travel', 'Forward and reverse rocker', 'vertical',
+                  True, motion='fore-aft')
+    lift_name = 'rig_liftPivot' if primary else f'{prefix}_liftPivot'
+    lift = R.empty(lift_name, (0.245, -0.148, 0.975), platform)
+    paddle = P.rounded_box(f'{prefix}_raise_lower_paddle', (0.092, 0.065, 0.026),
+                           (0, 0, 0), ORANGE(), lift, radius=0.012, segments=5)
+    R.tag_control(paddle, 'lift', 'Orange raise and lower paddle', 'vertical',
+                  True, motion='fore-aft')
+    horn = P.rounded_box(f'{prefix}_horn', (0.045, 0.024, 0.026),
+                         (0.12, -0.15, 0.99), M.warning_amber(), platform,
+                         radius=0.009, segments=4)
+    R.tag_control(horn, 'horn', 'Horn switch below hand grip', 'button', True,
+                  motion='button')
+
+    # Navigation options, key switch and the red mushroom disconnect.
+    P.rounded_box(f'{prefix}_wire_guidance', (0.060, 0.060, 0.025),
+                  (0.16, 0.085, 1.025), inset, platform, radius=0.009)
+    P.rounded_box(f'{prefix}_override', (0.042, 0.055, 0.024),
+                  (0.22, 0.092, 1.025), inset, platform, radius=0.007)
+    P.cyl(f'{prefix}_nav_knob', 0.029, 0.034, (0.31, 0.082, 1.04),
+          control, platform, verts=36, bevel=0.007)
+    key_bezel = P.cyl(f'{prefix}_key_bezel', 0.018, 0.012,
+                      (0.36, 0.035, 1.025), M.steel_dark(), platform,
+                      verts=30, bevel=0.002)
+    P.box(f'{prefix}_key', (0.009, 0.026, 0.022), (0, 0, 0.014),
+          inset, key_bezel, bevel=0.003, rot=(0, 0, 0.35))
+    stop_base = P.cyl(f'{prefix}_disconnect_base', 0.033, 0.018,
+                      (0.415, 0.025, 1.03), M.warning_amber(), platform,
+                      verts=36)
+    P.cyl(f'{prefix}_disconnect', 0.027, 0.035, (0, 0, 0.025),
+          M.button_red(), stop_base, verts=36, bevel=0.006)
 
 
 def platform_assembly(carriage):
     platform = R.empty('rig_platform', (0, -CARRIAGE_Y, 0), carriage)  # global (0,0,0)
-    # rising base pan + rubber tread floor
-    P.rounded_box('plat_base', (0.98, 0.8, 0.11), (0, 0.22, 0.225), M.plastic_dark(), platform, radius=0.03)
-    P.tread_plate('plat_floor', (0.88, 0.68), M.floor_mat(), platform, (0, 0.24, 0.285), rib_axis='X')
-    P.label('plat_edge', (0.4, 0.05), M.warning_amber(), platform, (0, 0.615, 0.24),
+    # Deeper Op-Zone floor supports opposing power-unit and forks-facing sets.
+    P.rounded_box('plat_base', (0.98, 1.08, 0.11), (0, 0.25, 0.225),
+                  M.plastic_dark(), platform, radius=0.03)
+    P.tread_plate('plat_floor', (0.88, 0.88), M.floor_mat(), platform,
+                  (0, 0.25, 0.285), rib_axis='X')
+    P.label('plat_edge', (0.4, 0.05), M.warning_amber(), platform, (0, 0.77, 0.24),
             rot=(0, 0, math.pi))
     P.text_mesh('plat_model', 'SP 1500', 0.035, 0.0018, M.decal_white(), platform,
                 loc=(0.492, 0.25, 0.225), facing='+X')
     # guard posts from the platform, mesh screen toward the mast
     for sx in (-1, 1):
-        P.rounded_box(f'guard_post_{int(sx > 0)}', (0.055, 0.07, 2.25), (sx * 0.40, -0.15, 1.315),
+        P.rounded_box(f'guard_post_{int(sx > 0)}', (0.055, 0.07, 2.25), (sx * 0.40, -0.30, 1.315),
                       BLACK(), platform, radius=0.012)
-    mesh_grid('back_mesh', 0.74, 0.85, platform, (0, -0.175, 1.42), nx=9, nz=4)
-    P.rounded_box('back_panel', (0.74, 0.045, 0.62), (0, -0.14, 0.63), M.plastic_molded(), platform, radius=0.02)
-    P.box('back_slot', (0.28, 0.055, 0.09), (0, -0.14, 0.52), M.plastic_dark(), platform, bevel=0.008)
+    mesh_grid('back_mesh', 0.74, 0.85, platform, (0, -0.325, 1.42), nx=9, nz=4)
+    P.rounded_box('back_panel', (0.74, 0.045, 0.62), (0, -0.29, 0.63),
+                  M.plastic_molded(), platform, radius=0.02)
+    P.box('back_slot', (0.28, 0.055, 0.09), (0, -0.29, 0.52),
+          M.plastic_dark(), platform, bevel=0.008)
     # orange entry grab rails flanking the console
     for sx in (-1, 1):
-        P.tube(f'grab_rail_{int(sx > 0)}', [(sx * 0.42, -0.08, 0.35), (sx * 0.42, -0.08, 1.42)],
+        P.tube(f'grab_rail_{int(sx > 0)}', [(sx * 0.42, -0.23, 0.35), (sx * 0.42, -0.23, 1.42)],
                0.016, ORANGE(), platform, corner_radius=0)
     # cantilevered roof (falling-object guard) riding the posts
-    P.tube('roof_frame', [(-0.44, -0.28, 2.47), (-0.44, 0.56, 2.47), (0.44, 0.56, 2.47),
-                          (0.44, -0.28, 2.47)], 0.037, BLACK(), platform, corner_radius=0.09, cyclic=True)
+    P.tube('roof_frame', [(-0.44, -0.42, 2.47), (-0.44, 0.78, 2.47), (0.44, 0.78, 2.47),
+                          (0.44, -0.42, 2.47)], 0.037, BLACK(), platform, corner_radius=0.09, cyclic=True)
     for i, x in enumerate((-0.33, -0.11, 0.11, 0.33)):
-        P.tube(f'roof_slat_{i}', [(x, -0.24, 2.49), (x, 0.52, 2.49)], 0.015, BLACK(), platform)
-    P.tube('roof_cross', [(-0.4, 0.14, 2.485), (0.4, 0.14, 2.485)], 0.015, BLACK(), platform)
+        P.tube(f'roof_slat_{i}', [(x, -0.38, 2.49), (x, 0.74, 2.49)], 0.015, BLACK(), platform)
+    P.tube('roof_cross', [(-0.4, 0.18, 2.485), (0.4, 0.18, 2.485)], 0.015, BLACK(), platform)
     for sx in (-1, 1):
-        P.box(f'roof_bracket_{int(sx > 0)}', (0.05, 0.05, 0.09), (sx * 0.40, -0.15, 2.44),
+        P.box(f'roof_bracket_{int(sx > 0)}', (0.05, 0.05, 0.09), (sx * 0.40, -0.30, 2.44),
               BLACK(), platform, bevel=0.008)
-        P.tube(f'roof_brace_{int(sx > 0)}', [(sx * 0.40, -0.13, 2.36), (sx * 0.40, 0.24, 2.44)],
+        P.tube(f'roof_brace_{int(sx > 0)}', [(sx * 0.40, -0.28, 2.36), (sx * 0.40, 0.18, 2.44)],
                0.018, BLACK(), platform, corner_radius=0)
-    P.rounded_box('roof_badge', (0.46, 0.035, 0.075), (0, 0.565, 2.47), M.plastic_molded(), platform, radius=0.012)
+    P.rounded_box('roof_badge', (0.46, 0.035, 0.075), (0, 0.785, 2.47), M.plastic_molded(), platform, radius=0.012)
     P.text_mesh('roof_logo', 'CROWN', 0.04, 0.0018, M.decal_white(), platform,
-                loc=(0, 0.585, 2.47), facing='+Y')
+                loc=(0, 0.805, 2.47), facing='+Y')
+    # Gena display is suspended at eye level from the front overhead rail.
+    P.display('display_sp', 0.28, 0.17, parent=platform,
+              loc=(0.20, 0.73, 2.19), screen_name='screen_sp')
+    P.tube('display_mount', [(0.20, 0.73, 2.28), (0.20, 0.73, 2.43)],
+           0.018, BLACK(), platform, corner_radius=0)
     # safety-orange side gates (rig-animated: flip up around X at the rear hinge)
     for i, sx in enumerate((-1, 1)):
-        gate = R.empty(f'rig_gate_{i}', (sx * 0.465, -0.06, 1.12), platform)
-        P.tube(f'gate_loop_{i}', [(0, 0.03, 0), (0, 0.62, 0), (0, 0.62, -0.34), (0, 0.03, -0.34)],
+        gate = R.empty(f'rig_gate_{i}', (sx * 0.465, -0.22, 1.12), platform)
+        P.tube(f'gate_loop_{i}', [(0, 0.03, 0), (0, 0.93, 0), (0, 0.93, -0.34), (0, 0.03, -0.34)],
                0.016, ORANGE(), gate, corner_radius=0.05, cyclic=True)
-        P.tube(f'gate_mid_{i}', [(0, 0.33, -0.015), (0, 0.33, -0.325)], 0.011, ORANGE(), gate,
+        P.tube(f'gate_mid_{i}', [(0, 0.48, -0.015), (0, 0.48, -0.325)], 0.011, ORANGE(), gate,
                corner_radius=0)
         P.box(f'gate_hinge_{i}', (0.03, 0.05, 0.1), (0, 0.01, -0.02), BLACK(), gate, bevel=0.006)
-    # The operator stands at the rear of the platform with their back to the
-    # mesh guard. console() is authored for an operator on its +Y side, so the
-    # head is carried to the front rail and turned to face back at them; the
-    # half-turn puts the controls between the operator and the console body.
-    console_root = R.empty('console_root', (0, 0.58, 0.28), platform)
-    console_root.rotation_euler = (0, 0, math.pi)
-    console(console_root)
-    # operator presence deadman pedal on the floor
-    presence = P.pedal('pedal_presence', (0.15, 0.18), parent=platform, loc=(0.2, 0.1, 0.305), angle=0)
-    R.tag_control(presence, 'presence', 'Presence deadman pedal', 'button', False)
+    # Opposing optional controls let the operator face either travel direction.
+    forks_controls = R.empty('forks_facing_controls', (0, 0.72, 0.28), platform)
+    console(forks_controls, 'forks', primary=True)
+    power_controls = R.empty('power_unit_facing_controls', (0, -0.20, 0.28), platform)
+    power_controls.rotation_euler = (0, 0, math.pi)
+    console(power_controls, 'power', primary=False)
+
+    # SP brake/deadman pedal: removing the foot applies the parking brake.
+    presence = P.pedal('pedal_presence', (0.19, 0.22), parent=platform,
+                       loc=(0.18, 0.24, 0.305), angle=0)
+    R.tag_control(presence, 'presence', 'SP deadman brake pedal', 'button',
+                  False, motion='button')
     return platform
 
 
@@ -276,9 +334,10 @@ def carriage_assembly(mast_node):
         obj = bpy.data.objects[f]
         obj.location.y = -CARRIAGE_Y - 0.14
     platform_assembly(carriage)
-    # Standing eye: 0.29 m platform floor + 1.63 m, at the rear of the platform
-    # (platform-local y = 0.05) so the control head reads in the lower view.
-    R.empty('rig_cameraMount', (0, -0.85, 1.92), carriage)
+    # Eye and tracked-floor origins must remain separate. Both rise with the
+    # man-up carriage, while headset tracking remains relative to the floor.
+    R.empty('rig_cameraMount', (0, -0.65, 1.92), carriage)
+    R.empty('rig_xrOrigin', (0, -0.65, 0.29), carriage)
     return carriage
 
 

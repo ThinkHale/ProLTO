@@ -14,8 +14,8 @@ The knowledge bank and safety detectors cover truck controls, differences from a
 - Raymond 5000 Series order picker: multifunction travel and lift control, deadman brake pedal, elevating platform, fall protection, and overhead awareness.
 - Crown PE 4500 end-control rider pallet truck: X10 control handle, twist travel control, fork raise/lower, coast behavior, and heavy-load stopping distance.
 - Raymond 8210 walkie pallet truck: tiller brake zones, butterfly travel control, emergency reverse, Click2Creep behavior, and anti-roll braking.
-- Crown SC 6200 sit-down counterbalance: seated electric three-wheel layout, steering wheel, pedals, hydraulic controls, rear swing, operator restraint, and data plate capacity.
-- Raymond 4460 sit-down counterbalance: seated three-wheel layout, tilt steering column, cowl hydraulic levers, integral sideshift, and automatic parking brake behavior.
+- Crown SC 6200 sit-down counterbalance: seated electric four-wheel layout, standard manual-lever configuration, steering wheel, pedals, rear swing, operator restraint, and data plate capacity.
+- Raymond 4460 sit-down counterbalance: fixed legacy three-wheel configuration with tilt steering column, cowl hydraulic levers, monochrome display and open-view mast. The 2024 enhanced controls are a separate configuration.
 
 ## Validation gates before production use
 
@@ -28,7 +28,7 @@ The knowledge bank and safety detectors cover truck controls, differences from a
 
 ## Technical architecture
 
-React manages the evaluator interface, knowledge assessment, truck profiles, and state. Three.js renders a shared warehouse around four separate equipment-family rigs. Each rig owns its operator eye point, control geometry, control raycast targets, hydraulic animation, and family dynamics. Desktop users drag the modeled controls directly. Quest users point at a control, hold a controller trigger, and move the control through its axis. GitHub Pages supplies the HTTPS secure context required by WebXR. No server is required for the current local-only prototype. Candidate record persistence and organization access control should be added before production use.
+React manages the evaluator interface, knowledge assessment, truck profiles, and state. Three.js renders a shared warehouse around model-specific equipment rigs. Each rig owns a desktop operator eye, a separate tracked-floor XR origin, control geometry, near-hand targets, hydraulic animation, and family dynamics. Desktop users drag the modeled controls directly. Quest users reach to a control, hold trigger or pinch, and move it through its local mechanical axis. Laser and thumbstick input is an explicit accessibility mode. GitHub Pages supplies the HTTPS secure context required by WebXR. No server is required for the current local-only prototype. Candidate record persistence and organization access control should be added before production use.
 
 ## Primary references
 

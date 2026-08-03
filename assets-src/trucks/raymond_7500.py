@@ -124,7 +124,14 @@ def power_unit(root):
     for y, w, h, z0 in ((-0.35, 1.06, 0.64, 0.62), (-0.30, 1.07, 0.66, 0.61),
                         (-0.12, 1.07, 0.66, 0.61), (-0.07, 1.03, 0.62, 0.62)):
         rear.append((y, rounded_rect(w, h, 0.04, 0.07, z0=z0)))
-    P.loft_shell('shell_rear', rear, red, root, subsurf=1)
+    P.loft_shell('shell_rear', rear, CHAR(), root, subsurf=1)
+    # The operator does not face a red wall. The battery cover and forward
+    # sight-line surface are charcoal, with Raymond red visible only as the
+    # painted perimeter and side bodywork.
+    P.rounded_box('battery_top_cover', (1.01, 0.65, 0.075), (0, 0.17, 1.29),
+                  CHAR(), root, radius=0.045, segments=7)
+    P.rounded_box('battery_operator_cover', (1.02, 0.10, 0.47),
+                  (0, -0.265, 1.02), CHAR(), root, radius=0.04, segments=6)
     # black battery mid-section with angled recess panels each side
     P.rounded_box('battery_box', (1.06, 0.78, 0.50), (0, 0.04, 0.40), CHAR(), root,
                   radius=0.025)
@@ -192,80 +199,149 @@ def compartment(root):
 
 # ---------------------------------------------------------------------- console
 def console(root):
-    char = CHAR()
-    # corner console pod, flush against the power-unit wall
-    P.rounded_box('pod_column', (0.28, 0.30, 0.36), (-0.31, -0.50, 0.80), char, root,
-                  radius=0.06)
-    P.rounded_box('pod_head', (0.34, 0.36, 0.18), (-0.31, -0.52, 0.99), char, root,
-                  radius=0.07)
-    P.rounded_box('pod_pedestal', (0.12, 0.14, 0.42), (-0.40, -0.44, 0.44), DARK(),
-                  root, radius=0.03)
-    P.box('corner_post', (0.07, 0.09, 1.25), (-0.46, -0.38, 0.86), BLACK(), root,
-          bevel=0.008)
-    # flat tiller steering wheel recessed in the pod top
-    P.lathe('steer_cup', [(0.100, 0.0), (0.118, 0.0), (0.122, 0.012), (0.118, 0.040),
-                          (0.104, 0.044), (0.100, 0.030)], char, root,
-            loc=(-0.31, -0.49, 1.055))
-    steer = R.empty('rig_steerPivot', (-0.31, -0.49, 1.095), root)
-    wheel = P.steering_wheel('steer_wheel', 0.085, parent=steer, loc=(0, 0, 0))
-    wheel.rotation_euler = (0.10, 0, 0)
-    P.cyl('steer_spinner', 0.013, 0.05, (0.058, 0, 0.030), DARK(), wheel)
-    R.tag_control(wheel, 'steer', 'Tiller steering wheel', 'horizontal', False)
-    # single-axis multifunction handle with red head
-    travel = R.empty('rig_travelPivot', (-0.155, -0.51, 1.03), root)
-    P.lathe('mf_boot', [(0.0, 0), (0.045, 0), (0.05, 0.02), (0.032, 0.05),
-                        (0.026, 0.08), (0.0, 0.08)], M.grip_rubber(), travel,
-            loc=(0, 0, -0.01))
-    shaft = P.cyl('mf_shaft', 0.015, 0.16, (0, 0, 0.07), DARK(), travel)
-    shaft.rotation_euler = (0, 0.22, 0)
-    head = P.lathe('mf_head', [(0.0, 0), (0.030, 0.003), (0.040, 0.025),
-                               (0.044, 0.075), (0.034, 0.115), (0.016, 0.13),
-                               (0.0, 0.132)], M.button_red(), shaft, loc=(0, 0, 0.065))
-    R.tag_control(head, 'travel', 'Multifunction control handle', 'vertical', True)
-    lift = R.empty('rig_liftPivot', (-0.235, -0.44, 1.08), root)
-    rocker = P.rounded_box('mf_lift', (0.055, 0.06, 0.032), (0, 0, 0), M.button_red(),
-                           lift, radius=0.012)
-    R.tag_control(rocker, 'lift', 'Lift / lower rocker', 'vertical', True)
-    reach_p = R.empty('rig_reachPivot', (-0.235, -0.565, 1.08), root)
-    rocker2 = P.rounded_box('mf_reach', (0.055, 0.055, 0.030), (0, 0, 0),
-                            M.pbr('rocker_dark', 0x3A3D40, 0.45), reach_p, radius=0.01)
-    R.tag_control(rocker2, 'reach', 'Reach / retract rocker', 'horizontal', True)
-    horn = P.cyl('btn_horn', 0.024, 0.016, (-0.385, -0.44, 1.09), M.button_red(), root)
+    """Photo-matched 7500 Universal Stance compartment controls.
+
+    Reference configuration: the current 7000 Series Universal Stance publicity
+    compartment with integrated display, primary single-axis control handle and
+    optional secondary handle. Operator is at -Y, looking toward +Y.
+    """
+    molded = M.pbr('ray_console_charcoal', 0x292C2E, roughness=0.62)
+    inset = M.pbr('ray_console_inset', 0x17191B, roughness=0.68)
+    control = M.pbr('ray_control_black', 0x0E1012, roughness=0.5)
+    legend = M.decal_white()
+
+    # The real 7500 has one broad, asymmetric molded hood. Its left lobe wraps
+    # around the steering disc, the center rises around the display and the
+    # right lobe forms a deep pocket for the control handle.
+    plan = [(-0.52, -0.58), (-0.48, -0.22), (-0.42, -0.08), (-0.12, -0.06),
+            (0.06, -0.10), (0.22, -0.07), (0.44, -0.10), (0.52, -0.22),
+            (0.52, -0.62), (0.39, -0.67), (0.26, -0.58), (0.12, -0.53),
+            (-0.08, -0.51), (-0.22, -0.58), (-0.39, -0.66)]
+    P.extrude_profile('console_hood', plan, 0.18, molded, root, plane='XY',
+                      bevel=0.035, loc=(0, 0, 0.96))
+    P.rounded_box('console_front_wall', (1.01, 0.12, 0.58), (0, -0.13, 0.76),
+                  molded, root, radius=0.07, segments=6)
+    # Raised center bridge and sculpted knee bulge visible in the official
+    # overhead image. These prevent the dashboard from reading as a flat slab.
+    P.rounded_box('console_center_bridge', (0.30, 0.40, 0.24), (0.05, -0.30, 1.05),
+                  molded, root, radius=0.07, segments=7, rot=(-0.05, 0, 0))
+    P.rounded_box('console_knee_bulge', (0.30, 0.16, 0.48), (0.04, -0.48, 0.79),
+                  molded, root, radius=0.09, segments=7)
+
+    # Large flush steering disc and spinner. This is the defining Raymond
+    # control silhouette, not a conventional wheel or a Crown-style tiller.
+    P.lathe('steer_recess', [(0.0, 0), (0.145, 0), (0.155, 0.018),
+                             (0.155, 0.035), (0.0, 0.035)], inset, root,
+            loc=(-0.31, -0.38, 1.145))
+    steer = R.empty('rig_steerPivot', (-0.31, -0.38, 1.18), root)
+    disc = P.lathe('steer_disc', [(0.0, 0), (0.126, 0), (0.135, 0.012),
+                                  (0.132, 0.025), (0.0, 0.025)], control, steer)
+    R.tag_control(disc, 'steer', 'Raymond steering disc', 'radial', False,
+                  motion='radial')
+    P.cyl('steer_hub', 0.014, 0.012, (0, 0, 0.026), M.steel_dark(), steer,
+          verts=24, bevel=0.002)
+    spinner = P.cyl('steer_spinner', 0.018, 0.072, (0.085, 0.035, 0.062),
+                    control, steer, verts=32, bevel=0.008)
+    spinner.rotation_euler = (-0.10, 0, 0)
+    P.text_mesh('steer_brand', 'RAYMOND', 0.014, 0.001, M.decal_dark(), steer,
+                loc=(0, 0, 0.031), facing='+Z')
+
+    # Integrated center display is flush to the sloped hood and ringed by a
+    # printed status band. The runtime replaces only screen_ray with telemetry.
+    P.rounded_box('display_recess', (0.265, 0.19, 0.025), (0.05, -0.29, 1.165),
+                  inset, root, radius=0.025, segments=6, rot=(0, 0, 0))
+    screen = P.rounded_box('screen_ray', (0.185, 0.115, 0.008), (0.04, -0.29, 1.184),
+                           M.screen_glass(), root, radius=0.012, segments=5)
+    P.text_mesh('display_brand', 'RAYMOND', 0.016, 0.001, legend, root,
+                loc=(0.04, -0.365, 1.191), facing='+Z')
+    # Status lamps and membrane keys copied as separate readable hard points.
+    for index, x in enumerate((-0.055, -0.02, 0.015, 0.05, 0.085, 0.12)):
+        P.cyl(f'display_lamp_{index}', 0.006, 0.004, (x, -0.21, 1.193),
+              M.pbr(f'ray_lamp_{index}', 0xB7C4B1 if index > 1 else 0xC48A22,
+                    roughness=0.32, emission=0x6B7A68, emission_strength=0.5),
+              root, verts=18)
+    for index, x in enumerate((0.155, 0.19)):
+        P.cyl(f'display_key_{index}', 0.011, 0.005, (x, -0.30, 1.19), control,
+              root, verts=24, bevel=0.002)
+
+    # Primary control handle in a deep right-side pocket. The handle body is
+    # fixed. A separate travel paddle is the single-axis travel mechanism.
+    P.rounded_box('handle_pocket', (0.22, 0.28, 0.07), (0.37, -0.43, 1.125),
+                  inset, root, radius=0.055, segments=7)
+    handle_root = R.empty('primary_handle_root', (0.37, -0.43, 1.14), root)
+    P.lathe('handle_boot', [(0.0, 0), (0.05, 0), (0.055, 0.018),
+                            (0.036, 0.055), (0.024, 0.075), (0.0, 0.075)],
+            M.grip_rubber(), handle_root)
+    handle_outline = [(-0.035, 0.0), (0.035, 0.0), (0.052, 0.04),
+                      (0.048, 0.16), (0.025, 0.22), (-0.02, 0.23),
+                      (-0.052, 0.17), (-0.055, 0.055)]
+    handle = P.loft_shell('primary_handle', [(-0.032, handle_outline),
+                                              (0.032, handle_outline)],
+                          control, handle_root, subsurf=1, bevel=0.005)
+    handle.rotation_euler = (-0.18, 0.16, -0.04)
+    P.rounded_box('handle_thumb_rest', (0.085, 0.055, 0.045),
+                  (0.025, -0.045, 0.185), control, handle_root, radius=0.02,
+                  segments=5, rot=(-0.18, 0.16, -0.04))
+    travel = R.empty('rig_travelPivot', (0.046, -0.066, 0.19), handle_root)
+    travel_paddle = P.rounded_box('handle_travel_paddle', (0.032, 0.014, 0.065),
+                                  (0, 0, 0), M.pbr('ray_paddle_gray', 0x909497,
+                                                   roughness=0.5), travel,
+                                  radius=0.012, segments=5)
+    R.tag_control(travel_paddle, 'travel', 'Travel direction and speed paddle',
+                  'vertical', True, motion='fore-aft')
+    lift = R.empty('rig_liftPivot', (0.005, -0.066, 0.215), handle_root)
+    lift_btn = P.cyl('handle_lift', 0.020, 0.012, (0, 0, 0),
+                     M.pbr('ray_button_gray', 0x777B7E, roughness=0.5), lift,
+                     axis='Y', verts=24, bevel=0.003)
+    R.tag_control(lift_btn, 'lift', 'Lift and lower thumb control', 'vertical', True)
+    reach_p = R.empty('rig_reachPivot', (-0.035, -0.064, 0.17), handle_root)
+    reach_btn = P.rounded_box('handle_reach', (0.035, 0.014, 0.045), (0, 0, 0),
+                              M.pbr('ray_button_black', 0x2F3335, roughness=0.5),
+                              reach_p, radius=0.009, segments=4)
+    R.tag_control(reach_btn, 'reach', 'Reach and retract thumb control',
+                  'horizontal', True)
+    tilt_p = R.empty('rig_tiltPivot', (0.04, -0.064, 0.145), handle_root)
+    tilt_btn = P.rounded_box('handle_tilt', (0.033, 0.014, 0.04), (0, 0, 0),
+                             M.pbr('ray_button_dark', 0x45494C, roughness=0.5),
+                             tilt_p, radius=0.008, segments=4)
+    R.tag_control(tilt_btn, 'tilt', 'Tilt thumb control', 'horizontal', True)
+    horn = P.cyl('btn_horn', 0.015, 0.012, (0.04, -0.065, 0.11),
+                 M.button_red(), handle_root, axis='Y', verts=24, bevel=0.002)
     R.tag_control(horn, 'horn', 'Horn button', 'button', True)
-    # instrument strip high on the power-unit wall, under the mesh screen
-    P.rounded_box('cap_strip', (1.04, 0.12, 0.06), (0, -0.31, 1.285), CHAR(), root,
-                  radius=0.02)
-    P.rounded_box('panel_instr', (0.72, 0.05, 0.17), (0, -0.365, 1.43), DARK(), root,
-                  radius=0.02, rot=(-0.42, 0, 0))
-    P.display('display_ray', 0.17, 0.115, parent=root, loc=(0.20, -0.40, 1.445),
-              rot=(-0.42, 0, 0), screen_name='screen_ray')
-    estop_base = P.cyl('estop_base', 0.020, 0.026, (-0.26, -0.405, 1.45),
-                       M.pbr('estop_yellow', 0xC8A20A, 0.45), root,
-                       rot=(math.pi / 2 - 0.42, 0, 0))
-    P.cyl('estop_cap', 0.026, 0.018, (0, 0, 0.02), M.button_red(), estop_base)
-    bar_cluster('switch_bank',
-                [((0.018, 0.02, 0.030), (i * 0.045 - 0.065, 0, 0)) for i in range(4)],
-                DARK(), root, loc=(-0.05, -0.398, 1.425), rot=(-0.42, 0, 0))
-    # Battery / mast screen: one merged grid mesh. It sits forward against the
-    # power-unit wall rather than at the console, so the operator looks through
-    # it at a working distance instead of having it up against their face.
-    grid = [((0.010, 0.010, 0.72), (i * 0.15 - 0.45, 0, 1.66)) for i in range(7)]
-    grid += [((0.90, 0.010, 0.012), (0, 0, z)) for z in (1.36, 1.66, 1.96)]
-    bar_cluster('mast_screen', grid, M.steel_dark(), root, loc=(0, -0.02, 0),
-                bevel=0.0015)
-    # pedals on the open floor
-    brake = P.pedal('pedal_brake', (0.16, 0.14), parent=root, loc=(-0.20, -0.52, 0.262),
-                    angle=-0.22)
-    R.tag_control(brake, 'brake', 'Brake pedal', 'pedal', True)
-    presence = P.pedal('pedal_presence', (0.30, 0.22), parent=root,
-                       loc=(0.16, -0.70, 0.252), angle=0)
-    R.tag_control(presence, 'presence', 'Operator presence pedal', 'button', False)
+
+    # Exact right-side key and red emergency disconnect hard points.
+    key_bezel = P.cyl('key_bezel', 0.018, 0.012, (0.455, -0.31, 1.18),
+                      M.steel_dark(), root, verts=30, bevel=0.002)
+    P.box('key', (0.010, 0.030, 0.025), (0, 0, 0.016), control, key_bezel,
+          bevel=0.003, rot=(0, 0, 0.35))
+    estop_base = P.cyl('estop_base', 0.025, 0.014, (0.465, -0.145, 1.18),
+                       M.pbr('estop_yellow', 0xC8A20A, roughness=0.45), root,
+                       verts=30)
+    P.cyl('estop_cap', 0.032, 0.024, (0, 0, 0.02), M.button_red(), estop_base,
+          verts=32, bevel=0.004)
+
+    # Optional secondary control handle shown in Raymond's Universal Stance
+    # reference configuration. It sits in a molded right rear pocket.
+    P.rounded_box('secondary_pocket', (0.15, 0.30, 0.07), (0.405, -0.90, 0.82),
+                  inset, root, radius=0.055, segments=7, rot=(0, 0, -0.04))
+    secondary = P.cyl('secondary_handle', 0.032, 0.20, (0.405, -0.90, 0.86),
+                      control, root, axis='Y', verts=40, bevel=0.012,
+                      rot=(math.pi / 2, 0, -0.16))
+    P.cyl('secondary_end', 0.039, 0.05, (0, 0, 0.09), control, secondary,
+          verts=32, bevel=0.009)
+
+    # Universal Stance uses one deadman brake/presence pedal in the open floor.
+    deadman = P.pedal('pedal_presence', (0.14, 0.22), parent=root,
+                      loc=(-0.17, -0.72, 0.263), angle=-0.10)
+    R.tag_control(deadman, 'presence', 'Deadman brake pedal', 'pedal', False)
 
 
 # --------------------------------------------------------------- mast and reach
 def mast_and_reach(root):
     mast = R.empty('rig_mast', (0, 0.60, 0), root)
-    P.mast_assembly(mast, height=3.5, stages=2, outer_width=0.86, cylinder_center=True)
+    # Raymond's open-view mast deliberately removes the center cylinder from
+    # the operator sight line. Hydraulic cylinders and hose runs live outboard.
+    P.mast_assembly(mast, height=3.5, stages=2, outer_width=0.96, cylinder_center=False)
     for sx in (-1, 1):
         P.tube(f'hose_{"L" if sx < 0 else "R"}',
                [(sx * 0.09, 0.10, 0.18), (sx * 0.09, 0.12, 1.5),
@@ -322,12 +398,13 @@ def build():
     mast_and_reach(root)
     guard_and_drive(root)
     # Standing eye: 0.235 m compartment floor + 1.63 m standing eye height.
-    R.empty('rig_cameraMount', (0.02, -0.67, 1.87), root)
+    R.empty('rig_xrOrigin', (0.02, -0.98, 0.235), root)
+    R.empty('rig_cameraMount', (0.02, -0.98, 1.86), root)
     root['spec'] = 'Raymond 7500 Universal Stance 36V'
     return {
         'name': 'raymond_7500',
-        'cab_view': {'loc': (0.02, -0.67, 1.68), 'target': (-0.06, 0.3, 0.98),
-                     'focal': 19},
+        'cab_view': {'loc': (0.02, -0.98, 1.86), 'target': (0.0, -0.18, 1.05),
+                     'focal': 22},
         'closeups': {
             'console': {'loc': (0.75, -1.05, 1.45), 'target': (-0.30, -0.50, 1.02),
                         'focal': 28},

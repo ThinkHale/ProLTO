@@ -6,9 +6,10 @@ counterweight rear.
 
 Board cues: ivory body with sculpted curves, rounded counterweight with CROWN +
 SC wordmarks, charcoal seat deck, graphite curved-post overhead guard whose rear
-posts flow INTO the body line, black mast, suspension seat w/ armrest, raked
-steering column (round wheel + display pod), three hydraulic levers right of
-seat, accelerator + brake pedals, side vent grilles in the counterweight.
+posts flow INTO the body line, black mast, suspension seat, and the named
+SC 6200 standard-manual-lever operator configuration shown on page 10 of Crown
+operator manual 600094-000: 10 inch spinner wheel, low cowl, Crown display,
+three switch row, key switch, two pedals, and four chassis-mounted levers.
 
 Rig notes: rig_wheelPivot carries a rest rotation_euler.x = COLUMN_RAKE
 (0.60 rad, ~34 deg toward the operator) so its local Z runs along the column
@@ -27,7 +28,7 @@ IVORY = M.crown_ivory
 BLACK = M.frame_black
 ORANGE = M.safety_orange
 
-COLUMN_RAKE = 0.60  # rad; documented rest rotation_euler.x of rig_wheelPivot
+COLUMN_RAKE = 0.67  # rad; operator-manual photo matched column rake
 
 FRONT_AXLE_Y = 0.35
 REAR_AXLE_Y = -1.05   # wheelbase 1.4
@@ -85,7 +86,7 @@ def bodywork(root):
                           (-0.42, 0.26, 0.70), (-0.62, 0.28, 0.80)):
             sections.append((y, rounded_rect(0.16, z1 - z0, 0.03, 0.045, z0=z0, cx=sx * 0.462)))
         P.loft_shell(f'sill_{tag}', sections, ivory, root, subsurf=1)
-    # counterweight upper shell — sculpted rounded rump
+    # Counterweight upper shell with a sculpted, rounded rump.
     sections = []
     for y, w, z0, z1, rt in (
             (-0.58, 1.04, 0.55, 1.04, 0.10),
@@ -119,68 +120,149 @@ def bodywork(root):
 
 
 def operator_station(root):
-    """Floor, seat deck, seat, cowl + dash, console, pedals."""
+    """SC 6200 standard manual-lever cockpit, operator-manual page 10.
+
+    This is intentionally one configuration. It does not mix the optional D4
+    armrest, dual-axis, mini-lever, or foot-direction-control packages into the
+    standard chassis-mounted manual-lever layout.
+    """
     molded = M.plastic_molded()
-    # floor
-    P.tread_plate('floor', (0.82, 0.62), M.floor_mat(), root, (0, 0.10, 0.50), rib_axis='X')
-    # seat deck riser (charcoal)
+
+    # Wide dual-entry rubber floor. The manual photo shows the wheel and cowl
+    # floating above an uninterrupted floor mat, not a center console.
+    P.tread_plate('floor', (0.82, 0.70), M.floor_mat(), root,
+                  (0, 0.06, 0.50), rib_axis='X', rib_gap=0.085)
+
+    # Seat deck and standard suspension seat. No D4 armrest is authored on
+    # this configuration because its presence would identify a different cab.
     P.rounded_box('seat_deck', (0.88, 0.72, 0.46), (0, -0.55, 0.72), molded, root, radius=0.05)
     P.rounded_box('deck_cap', (0.84, 0.66, 0.05), (0, -0.55, 0.955), M.plastic_dark(), root, radius=0.02)
-    # suspension seat + armrest
-    seat = P.seat('seat', root, (0, -0.52, 0.98))
-    arm = P.rounded_box('armrest', (0.09, 0.32, 0.06), (0.33, -0.56, 1.24), M.grip_rubber(), root, radius=0.025)
-    P.box('armrest_post', (0.05, 0.05, 0.20), (0.33, -0.66, 1.12), M.plastic_dark(), root, bevel=0.008)
+    P.seat('seat', root, (0, -0.52, 0.98))
     presence = P.rounded_box('seat_switch', (0.055, 0.07, 0.035), (-0.26, -0.50, 0.985),
                              M.warning_amber(), root, radius=0.012)
-    R.tag_control(presence, 'presence', 'Seat presence switch', 'button', False)
+    R.tag_control(presence, 'presence', 'Seat presence switch', 'button', False,
+                  motion='vertical')
 
-    # front cowl (charcoal molded, rises from floor to dash)
-    sections = []
-    for y, w, z0, z1, rt in ((0.26, 0.88, 0.50, 0.98, 0.08),
-                             (0.44, 0.92, 0.50, 0.94, 0.10),
-                             (0.60, 0.84, 0.50, 0.78, 0.12)):
-        sections.append((y, rounded_rect(w, z1 - z0, 0.04, rt, z0=z0)))
-    P.loft_shell('cowl', sections, molded, root, subsurf=1)
-    # dash pod with display, tilted toward the operator
-    pod = P.rounded_box('dash_pod', (0.56, 0.18, 0.24), (0, 0.32, 1.10), molded, root, radius=0.05)
-    pod.rotation_euler = (0.28, 0, 0)
-    P.display('display_sc', 0.17, 0.11, parent=root, loc=(0.03, 0.27, 1.16),
-              rot=(0.36, 0, 0), screen_name='screen_sc')
-    for i in range(3):
-        P.cyl(f'dash_btn{i}', 0.011, 0.012, (0.14 + i * 0.04, 0.255, 1.07),
-              M.warning_amber() if i == 0 else M.plastic_dark(), root, rot=(0.36, 0, 0))
+    # Low, shallow molded cowl from the official operator-eye plate. Its top
+    # stays below the wheel hub so the forks remain visible over it.
+    cowl_sections = []
+    for y, w, z0, z1, rt in ((0.09, 0.98, 0.50, 0.78, 0.06),
+                             (0.22, 1.02, 0.50, 0.84, 0.07),
+                             (0.38, 0.96, 0.50, 0.80, 0.09),
+                             (0.53, 0.84, 0.50, 0.69, 0.09)):
+        cowl_sections.append((y, rounded_rect(w, z1 - z0, 0.035, rt, z0=z0)))
+    P.loft_shell('cowl_low', cowl_sections, molded, root, subsurf=1)
+    P.rounded_box('cowl_top_shelf', (0.92, 0.23, 0.055), (0, 0.15, 0.805),
+                  molded, root, radius=0.025, segments=5, rot=(-0.035, 0, 0))
 
-    # steering column + wheel on the raked pivot
-    pivot = R.empty('rig_wheelPivot', (-0.10, 0.18, 1.14), root)
+    # Compact sculpted column housing. The top leans toward the seat and the
+    # tapered sides match the narrow Crown column visible through the wheel.
+    column_profile = [(-0.01, 0.64), (0.24, 0.64), (0.25, 0.79),
+                      (0.13, 1.04), (-0.035, 1.10), (-0.10, 0.98),
+                      (-0.065, 0.76)]
+    P.extrude_profile('column_housing', column_profile, 0.22, molded, root,
+                      plane='YZ', bevel=0.025, loc=(-0.23, 0, 0))
+    P.rounded_box('column_upper_cap', (0.24, 0.13, 0.105), (-0.12, -0.025, 1.04),
+                  M.plastic_dark(), root, radius=0.035, segments=6,
+                  rot=(COLUMN_RAKE, 0, 0))
+
+    # Crown Access display is right of the wheel in the exact standard layout.
+    P.rounded_box('display_sc_recess', (0.25, 0.055, 0.145), (0.19, 0.075, 0.84),
+                  M.plastic_dark(), root, radius=0.025, segments=6,
+                  rot=(0.44, 0, 0))
+    _, screen = P.display('display_sc', 0.205, 0.105, parent=root,
+                          loc=(0.19, 0.042, 0.855), rot=(0.44, 0, 0),
+                          screen_name='screen_sc')
+    P.text_mesh('display_crown_wordmark', 'CROWN', 0.014, 0.001,
+                M.decal_white(), root, loc=(0.15, 0.004, 0.906),
+                facing='-Y')
+    for i, x in enumerate((0.275, 0.305, 0.335)):
+        P.cyl(f'display_key_{i}', 0.009, 0.006, (x, 0.006, 0.858),
+              M.plastic_dark(), root, rot=(math.pi / 2 + 0.44, 0, 0),
+              verts=20, bevel=0.002)
+
+    # Fan, rear work light, and front work light rocker row on the left cowl.
+    for i, (name, x) in enumerate((('fan', -0.39), ('rear_work', -0.33),
+                                    ('front_work', -0.27))):
+        P.rounded_box(f'switch_{name}', (0.044, 0.018, 0.063),
+                      (x, 0.040, 0.817), M.plastic_dark(), root, radius=0.008,
+                      segments=4, rot=(0.44, 0, 0))
+        P.box(f'switch_{name}_mark', (0.018, 0.004, 0.006),
+              (x, 0.027, 0.833), M.decal_white(), root, bevel=0.001,
+              rot=(0.44, 0, 0))
+
+    # 10 inch diameter wheel with spinner, exactly the standard SC 6200 item.
+    pivot = R.empty('rig_wheelPivot', (-0.12, -0.075, 1.075), root)
     pivot.rotation_euler = (COLUMN_RAKE, 0, 0)
-    P.cyl('column_shroud', 0.042, 0.44, (0, 0, -0.22), M.plastic_dark(), pivot)
-    wheel = P.steering_wheel('steering_wheel', 0.17, parent=pivot, loc=(0, 0, 0.02))
-    R.tag_control(wheel, 'steer', 'Steering wheel', 'horizontal', False)
-    horn = P.cyl('btn_horn', 0.032, 0.018, (0, 0, 0.045), M.warning_amber(), wheel)
-    R.tag_control(horn, 'horn', 'Horn button', 'button', True)
+    wheel = P.steering_wheel('steering_wheel_10in', 0.127, parent=pivot,
+                             loc=(0, 0, 0.02))
+    R.tag_control(wheel, 'steer', '10 inch steering wheel', 'radial', False,
+                  motion='radial')
+    spinner = P.lathe('steering_spinner',
+                      [(0.0, 0), (0.019, 0.004), (0.024, 0.027),
+                       (0.021, 0.052), (0.0, 0.058)],
+                      M.grip_rubber(), wheel, loc=(0.083, -0.078, 0.015))
+    horn = P.cyl('btn_horn', 0.041, 0.018, (0, 0, 0.061),
+                 M.plastic_dark(), pivot, bevel=0.008)
+    R.tag_control(horn, 'horn', 'Steering wheel horn', 'button', True,
+                  motion='vertical')
 
-    # pedals
-    accel = P.pedal('pedal_accel', (0.11, 0.18), parent=root, loc=(0.16, 0.30, 0.55), angle=-0.45)
-    R.tag_control(accel, 'travel', 'Accelerator pedal', 'vertical', True)
-    brake = P.pedal('pedal_brake', (0.17, 0.15), parent=root, loc=(-0.05, 0.31, 0.55), angle=-0.45)
-    R.tag_control(brake, 'brake', 'Brake pedal', 'vertical', True)
+    # Direction paddle and wheel-tilt release flank the column in the manual.
+    P.tube('direction_stalk', [(-0.015, 0.0, 0.0), (0.085, 0.0, 0.0)],
+           0.010, M.steel_dark(), pivot)
+    direction = P.rounded_box('direction_control', (0.045, 0.026, 0.052),
+                              (0.105, 0, 0), M.plastic_dark(), pivot,
+                              radius=0.009, segments=5)
+    R.tag_control(direction, 'travel', 'Forward and reverse direction control',
+                  'horizontal', False, motion='horizontal')
+    P.rounded_box('steer_tilt_release', (0.032, 0.050, 0.085),
+                  (-0.215, 0.018, 0.84), M.plastic_dark(), root, radius=0.01,
+                  segments=4, rot=(0.18, 0, 0))
 
-    # right console with three hydraulic levers + cupholder
-    P.rounded_box('console_body', (0.22, 0.72, 0.28), (0.41, -0.14, 0.86), molded, root, radius=0.06)
-    P.rounded_box('lever_pod', (0.20, 0.30, 0.10), (0.41, 0.10, 1.02), M.plastic_dark(), root, radius=0.03)
-    labels = ('Lift lever', 'Tilt lever', 'Sideshift lever')
-    actions = ('lift', 'tilt', 'sideshift')
-    knob_mats = (ORANGE(), M.plastic_dark(), M.plastic_dark())
-    for i in range(3):
-        piv = R.empty(f'rig_lever_{i}', (0.41, 0.18 - i * 0.09, 1.03), root)
-        shaft = P.cyl(f'lever_shaft_{i}', 0.010, 0.15, (0, 0, 0.075), M.steel_dark(), piv)
-        shaft.rotation_euler = (-0.30 + i * 0.10, 0, 0)
-        knob = P.lathe(f'lever_knob_{i}',
-                       [(0.0, 0), (0.020, 0.005), (0.026, 0.025), (0.021, 0.05), (0.0, 0.058)],
-                       knob_mats[i], shaft, loc=(0, 0, 0.145))
-        R.tag_control(knob, actions[i], labels[i], 'vertical', True)
-    P.lathe('cupholder', [(0.045, 0.0), (0.045, 0.03), (0.052, 0.032), (0.056, 0.04), (0.0, 0.04)],
-            M.plastic_dark(), root, loc=(0.42, -0.42, 0.97))
+    # Key switch sits below the display at the inner edge of the right cowl.
+    P.cyl('key_switch_bezel', 0.018, 0.012, (0.055, 0.012, 0.786),
+          M.steel_dark(), root, rot=(math.pi / 2 + 0.40, 0, 0), verts=28)
+    key = P.box('key_blade', (0.009, 0.006, 0.038), (0.055, -0.004, 0.805),
+                M.steel_dark(), root, bevel=0.002, rot=(0.40, 0, -0.18))
+
+    # Automotive-type service brake and accelerator, with distinct widths and
+    # exact left/right ordering from the manual photograph.
+    brake = P.pedal('pedal_brake', (0.145, 0.15), parent=root,
+                    loc=(-0.025, 0.17, 0.535), angle=-0.38)
+    R.tag_control(brake, 'brake', 'Service brake pedal', 'pedal', True,
+                  motion='fore-aft')
+    accel = P.pedal('pedal_accel', (0.085, 0.19), parent=root,
+                    loc=(0.205, 0.17, 0.53), angle=-0.42)
+    R.tag_control(accel, 'travel', 'Accelerator pedal', 'pedal', True,
+                  motion='fore-aft')
+
+    # Four chassis-mounted urethane manual hydraulic levers. Their bases are
+    # separate accordion boots and their offset handles carry tactile icons.
+    P.rounded_box('manual_lever_pod', (0.31, 0.25, 0.075), (0.385, 0.12, 0.80),
+                  molded, root, radius=0.025, segments=5)
+    lever_specs = (('lift', 'Lift and lower manual lever'),
+                   ('tilt', 'Mast tilt manual lever'),
+                   ('sideshift', 'Sideshift manual lever'),
+                   ('reach', 'Auxiliary hydraulic manual lever'))
+    for i, (action, label) in enumerate(lever_specs):
+        x = 0.285 + i * 0.072
+        piv = R.empty(f'rig_lever_{i}', (x, 0.10, 0.815), root)
+        P.lathe(f'lever_boot_{i}',
+                [(0.0, 0), (0.030, 0), (0.034, 0.012), (0.027, 0.024),
+                 (0.030, 0.036), (0.021, 0.048), (0.023, 0.058),
+                 (0.013, 0.072), (0.0, 0.074)],
+                M.grip_rubber(), piv)
+        shaft = P.cyl(f'lever_shaft_{i}', 0.009, 0.205,
+                      (0, -0.024, 0.105), M.steel_dark(), piv,
+                      rot=(0.23, 0, 0), verts=24)
+        handle = P.rounded_box(f'lever_handle_{i}', (0.043, 0.034, 0.085),
+                               (0, -0.052, 0.215), M.grip_rubber(), piv,
+                               radius=0.015, segments=6, rot=(0.23, 0, 0))
+        R.tag_control(handle, action, label, 'vertical', True,
+                      motion='fore-aft')
+        P.box(f'lever_icon_{i}', (0.020, 0.004, 0.013),
+              (0, -0.072, 0.225), M.decal_white(), piv, bevel=0.002,
+              rot=(0.23, 0, 0))
 
 
 def guard(root):
@@ -239,14 +321,15 @@ def build():
     guard(root)
     mast_and_forks(root)
     wheels(root)
-    # Seated eye: 1.11 m seat cushion top + 0.73 m seated eye height, which
-    # leaves head clearance under the 2.1 m overhead guard.
-    # Seated eye: above the cushion (top 1.11 m) and forward of the backrest.
+    # Tracked-floor origin and authored desktop eye are separate. The headset
+    # supplies the seated user's real eye height above the 0.506 m floor.
+    R.empty('rig_xrOrigin', (0, -0.48, 0.506), root)
     R.empty('rig_cameraMount', (0, -0.48, 1.84), root)
-    root['spec'] = 'Crown SC 6200 four-wheel 48V'
+    root['spec'] = 'Crown SC 6200 four-wheel 48V, standard manual-lever configuration'
+    root['control_configuration'] = 'SC6200_STD_MANUAL_4LEVER_10IN_WHEEL'
     return {
         'name': 'crown_sc6200',
-        'cab_view': {'loc': (0, -0.48, 1.69), 'target': (0.0, 0.55, 0.85), 'focal': 19},
+        'cab_view': {'loc': (0, -0.48, 1.84), 'target': (0.0, 0.42, 0.78), 'focal': 19},
         'closeups': {
             'console': {'loc': (0.95, -1.0, 1.6), 'target': (0.3, 0.0, 0.95), 'focal': 30},
             'forks': {'loc': (1.7, 2.4, 1.1), 'target': (0, 0.8, 0.8), 'focal': 40},

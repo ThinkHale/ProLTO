@@ -54,7 +54,7 @@ def compartment(root):
     """Side-stance operator compartment at the rear."""
     ivory = IVORY()
     pads = M.plastic_molded()
-    # rear cowl — lofted so the back is softly rounded like the real cover
+    # rear cowl, lofted so the back is softly rounded like the real cover
     sections = []
     for y, w, h in ((-1.02, 0.9, 0.98), (-0.98, 1.02, 1.03), (-0.9, 1.06, 1.05)):
         sections.append((y, rounded_rect(w, h, 0.07, 0.12, z0=0.08)))
@@ -71,52 +71,128 @@ def compartment(root):
     P.text_mesh('logo_rear', 'CROWN', 0.085, 0.002, M.decal_dark(), root,
                 loc=(0, -1.078, 0.78), facing='-Y')
     P.rounded_box('accent_rear', (0.84, 0.05, 0.1), (0, -1.045, 0.32), ORANGE(), root, radius=0.02)
-    # interior back pad the operator leans on
-    P.rounded_box('back_pad', (0.5, 0.06, 0.5), (0, -0.94, 1.0), M.grip_rubber(), root, radius=0.03)
+    # Full wraparound lean pad. The RR manual shows a broad center cushion with
+    # tall side bolsters, not the small rectangular pad used by the first pass.
+    P.rounded_box('back_pad', (0.62, 0.075, 0.63), (0, -0.955, 1.03), M.grip_rubber(), root, radius=0.075, segments=6)
+    P.rounded_box('back_pad_L', (0.17, 0.18, 0.72), (-0.39, -0.88, 1.0), M.grip_rubber(), root, radius=0.065, segments=6, rot=(0.04, 0, -0.05))
+    P.rounded_box('back_pad_R', (0.17, 0.18, 0.72), (0.39, -0.88, 1.0), M.grip_rubber(), root, radius=0.065, segments=6, rot=(0.04, 0, 0.05))
+    # Molded lower knee/hip pad visible when the operator turns tractor-first.
+    P.rounded_box('lower_hip_pad', (0.7, 0.12, 0.22), (0, -0.91, 0.59), M.plastic_molded(), root, radius=0.06, segments=5)
     P.grab_bar('grab_entry', [(0.5, -0.98, 1.3), (0.5, -0.98, 1.9)], 0.019, ORANGE(), root)
 
 
 def console(root):
-    """Front console: display + palm-steer left, Multi-Task handle right."""
+    """Photo-matched RR 5700 operator console.
+
+    Visual contract: Crown RR 5700 operator manual pp. 9-10 and Crown's
+    rr5700-precise-control.jpg. Operator is at -Y, looking toward +Y.
+    """
     molded = M.plastic_molded()
-    face = P.rounded_box('console_body', (0.98, 0.3, 0.3), (0, -0.28, 1.06), molded, root, radius=0.06)
-    face.rotation_euler = (0.14, 0, 0)
-    P.display('display_crown', 0.19, 0.13, parent=root, loc=(-0.14, -0.4, 1.24),
-              rot=(0.32, 0, 0), screen_name='screen_crown')
+    charcoal = M.pbr('rr_console_charcoal', 0x242629, roughness=0.58)
+    medium = M.pbr('rr_control_gray', 0x55585A, roughness=0.68)
+    switch_black = M.pbr('rr_switch_black', 0x101214, roughness=0.5)
 
-    steer = R.empty('rig_steerPivot', (-0.35, -0.36, 1.1), root)
-    P.lathe('steer_base', [(0.0, 0), (0.065, 0), (0.07, 0.05), (0.05, 0.08), (0.0, 0.09)],
-            molded, steer)
-    palm = P.lathe('steer_palm', [(0.0, 0.0), (0.085, 0.004), (0.095, 0.02), (0.075, 0.05),
-                                  (0.028, 0.062), (0.0, 0.062)], M.grip_rubber(), steer,
-                   loc=(0, 0, 0.07))
-    P.lathe('steer_knob', [(0.0, 0), (0.017, 0.004), (0.02, 0.028), (0.0, 0.036)],
-            M.plastic_dark(), palm, loc=(0.05, 0, 0.055))
-    R.tag_control(palm, 'steer', 'Crown palm steering tiller', 'horizontal', False)
+    # The real cockpit-facing surface is a tall sculpted black wall. It hides
+    # the ivory battery lid from the operator and rises into an arched binnacle.
+    dash_outline = [(-0.49, 0.85), (0.49, 0.85), (0.49, 1.27), (0.45, 1.39),
+                    (0.33, 1.48), (0.15, 1.52), (-0.15, 1.52), (-0.33, 1.48),
+                    (-0.45, 1.39), (-0.49, 1.27)]
+    dash = P.extrude_profile('console_body', dash_outline, 0.24, charcoal, root,
+                             plane='XZ', bevel=0.035, loc=(0, -0.36, 0))
+    P.rounded_box('console_lower', (0.88, 0.16, 0.3), (0, -0.31, 0.83), molded, root,
+                  radius=0.07, segments=6)
+    # Shallow Crown-gold reveal around the top, visible in the official photo.
+    P.tube('console_reveal', [(-0.39, -0.372, 1.39), (-0.27, -0.375, 1.47),
+                              (0.21, -0.375, 1.47), (0.34, -0.372, 1.39)],
+           0.004, ORANGE(), root, resolution=8, corner_radius=0.02)
 
-    travel = R.empty('rig_travelPivot', (0.37, -0.36, 1.08), root)
-    P.rounded_box('armrest', (0.26, 0.34, 0.09), (0, -0.05, -0.02), M.grip_rubber(), travel, radius=0.035)
-    grip = P.lathe('mt_grip', [(0.0, 0), (0.045, 0.004), (0.05, 0.05), (0.042, 0.1),
-                               (0.048, 0.16), (0.028, 0.2), (0.0, 0.21)],
-                   M.plastic_dark(), travel, loc=(0.02, 0.08, 0.02))
-    grip.rotation_euler = (-0.35, 0, 0)
-    R.tag_control(grip, 'travel', 'Crown Multi-Task Control Handle', 'vertical', True)
-    lift = R.empty('rig_liftPivot', (0.02, 0.14, 0.16), travel)
-    rocker = P.rounded_box('mt_lift', (0.05, 0.06, 0.03), (0, 0, 0), ORANGE(), lift, radius=0.01)
+    # Instrument cluster is a shallow arched insert molded into the dash. It is
+    # not the raised rectangular tablet used by the previous pass.
+    cluster_outline = [(-0.29, 1.29), (0.24, 1.29), (0.235, 1.41),
+                       (0.20, 1.47), (0.10, 1.495), (-0.18, 1.495),
+                       (-0.26, 1.46), (-0.30, 1.39)]
+    P.extrude_profile('cluster_bezel', cluster_outline, 0.026, M.plastic_dark(),
+                      root, plane='XZ', bevel=0.018, loc=(0, -0.405, 0))
+    P.display('display_crown', 0.18, 0.075, parent=root, loc=(-0.08, -0.435, 1.40),
+              rot=(0.03, 0, 0), screen_name='screen_crown')
+    for index in range(4):
+        x = -0.23 + index * 0.105
+        sw = P.rounded_box(f'dash_switch_{index}', (0.07, 0.035, 0.09),
+                           (x, -0.372, 1.235), switch_black, root, radius=0.012, segments=4,
+                           rot=(0.08, 0, 0))
+        P.box(f'dash_switch_mark_{index}', (0.025, 0.006, 0.005), (0, -0.02, 0.02),
+              M.decal_white(), sw, bevel=0.001)
+    for index, z in enumerate((1.43, 1.385, 1.34)):
+        P.cyl(f'cluster_status_{index}', 0.006, 0.007, (0.205, -0.407, z),
+              (M.warning_amber() if index == 0 else M.button_red()), root, axis='Y', verts=20)
+    for index, (x, z) in enumerate(((0.12, 1.435), (0.16, 1.405), (0.16, 1.355), (0.12, 1.325))):
+        P.cyl(f'cluster_key_{index}', 0.01, 0.007, (x, -0.41, z), medium, root, axis='Y', verts=20)
+    P.text_mesh('cluster_brand', 'CROWN', 0.013, 0.001, M.decal_white(), root,
+                loc=(0.10, -0.438, 1.462), facing='-Y')
+
+    # Left palm steering pod. Its large soft-gray oval and thumb nub dominate
+    # the left half of the operator photograph.
+    steer = R.empty('rig_steerPivot', (-0.33, -0.415, 1.06), root)
+    P.rounded_box('steer_pedestal', (0.17, 0.12, 0.19), (0, 0.025, 0.075),
+                  charcoal, steer, radius=0.055, segments=7, rot=(0.05, 0, 0))
+    palm_outline = [(-0.115, 0.0), (0.07, 0.0), (0.12, 0.045),
+                    (0.11, 0.145), (0.055, 0.205), (-0.07, 0.205),
+                    (-0.12, 0.15), (-0.135, 0.055)]
+    palm = P.loft_shell('steer_palm', [(-0.055, palm_outline),
+                                       (0.055, palm_outline)], medium, steer,
+                        subsurf=1, bevel=0.005)
+    palm.rotation_euler = (0.05, 0, -0.02)
+    P.lathe('steer_knob', [(0.0, 0), (0.025, 0.004), (0.031, 0.035),
+                            (0.022, 0.07), (0.0, 0.075)],
+            M.grip_rubber(), steer, loc=(0.07, -0.01, 0.20))
+    R.tag_control(palm, 'steer', 'Crown palm steering tiller', 'horizontal',
+                  False, motion='radial')
+
+    # Right orange Multi-Task Control Handle, reconstructed as a tapered molded
+    # shell with black grip insert and separate thumb controls.
+    travel = R.empty('rig_travelPivot', (0.34, -0.415, 1.02), root)
+    P.rounded_box('mt_armrest', (0.25, 0.3, 0.095), (0, 0.09, -0.005),
+                  M.grip_rubber(), travel, radius=0.04, segments=6, rot=(-0.08, 0, 0))
+    handle_pts = [(-0.055, 0.0), (0.04, 0.0), (0.072, 0.045), (0.06, 0.15),
+                  (0.025, 0.22), (-0.035, 0.22), (-0.07, 0.15), (-0.075, 0.045)]
+    grip = P.loft_shell('mt_grip', [(-0.035, handle_pts), (0.055, handle_pts)],
+                         ORANGE(), travel, subsurf=1, bevel=0.006)
+    grip.rotation_euler = (-0.2, 0, -0.08)
+    P.rounded_box('mt_grip_insert', (0.075, 0.025, 0.135), (-0.06, -0.045, 0.105),
+                  M.grip_rubber(), travel, radius=0.025, segments=5, rot=(-0.2, 0, -0.08))
+    R.tag_control(grip, 'travel', 'Crown Multi-Task Control Handle', 'vertical',
+                  True, motion='fore-aft')
+    lift = R.empty('rig_liftPivot', (0.015, -0.052, 0.19), travel)
+    rocker = P.rounded_box('mt_lift', (0.055, 0.028, 0.045), (0, 0, 0),
+                            M.decal_white(), lift, radius=0.012, segments=4)
     R.tag_control(rocker, 'lift', 'Lift / lower thumb wheel', 'vertical', True)
-    reach_p = R.empty('rig_reachPivot', (0.07, 0.12, 0.13), travel)
-    rocker2 = P.rounded_box('mt_reach', (0.04, 0.05, 0.025), (0, 0, 0), M.pbr('orange_dark', 0xB56A08, 0.42), reach_p, radius=0.008)
+    reach_p = R.empty('rig_reachPivot', (0.062, -0.05, 0.145), travel)
+    rocker2 = P.rounded_box('mt_reach', (0.04, 0.026, 0.05), (0, 0, 0),
+                             M.pbr('orange_dark', 0xB56A08, 0.42), reach_p, radius=0.009)
     R.tag_control(rocker2, 'reach', 'Reach / retract rocker', 'horizontal', True)
-    tilt_p = R.empty('rig_tiltPivot', (-0.04, 0.13, 0.13), travel)
-    rocker3 = P.rounded_box('mt_tilt', (0.04, 0.05, 0.025), (0, 0, 0), M.plastic_dark(), tilt_p, radius=0.008)
+    tilt_p = R.empty('rig_tiltPivot', (-0.038, -0.052, 0.15), travel)
+    rocker3 = P.rounded_box('mt_tilt', (0.04, 0.026, 0.05), (0, 0, 0),
+                             M.plastic_dark(), tilt_p, radius=0.009)
     R.tag_control(rocker3, 'tilt', 'Tilt rocker', 'horizontal', True)
-    horn = P.cyl('btn_horn', 0.016, 0.012, (-0.09, 0.1, 0.045), M.warning_amber(), travel)
+    horn = P.cyl('btn_horn', 0.018, 0.012, (-0.065, -0.055, 0.09),
+                 M.warning_amber(), travel, axis='Y', verts=24)
     R.tag_control(horn, 'horn', 'Horn button', 'button', True)
 
-    brake = P.pedal('pedal_brake', (0.2, 0.16), parent=root, loc=(-0.24, -0.42, 0.27))
+    # Right-side power disconnect and vertically stacked indicator lamps.
+    P.rounded_box('power_disconnect', (0.045, 0.035, 0.09), (0.455, -0.35, 1.12),
+                  switch_black, root, radius=0.01, segments=4)
+    for index, (z, mat) in enumerate(((1.245, M.warning_amber()), (1.215, M.pbr('led_green', 0x48A04B, 0.28, emission=0x48A04B, emission_strength=1.2)),
+                                      (1.185, M.button_red()))):
+        P.cyl(f'console_led_{index}', 0.008, 0.008, (0.385, -0.365, z), mat, root,
+              axis='Y', verts=18)
+
+    # Exact dual-pedal floor arrangement from the operator manual.
+    brake = P.pedal('pedal_brake', (0.19, 0.17), parent=root, loc=(-0.22, -0.47, 0.285), angle=-0.12)
     R.tag_control(brake, 'brake', 'Left brake pedal', 'pedal', True)
-    presence = P.pedal('pedal_presence', (0.3, 0.24), parent=root, loc=(0.2, -0.6, 0.265), angle=0)
-    R.tag_control(presence, 'presence', 'Operator presence pedal', 'button', False)
+    presence = P.pedal('pedal_presence', (0.34, 0.27), parent=root, loc=(0.18, -0.58, 0.275), angle=0)
+    R.tag_control(presence, 'presence', 'Operator presence sensor pad', 'button', False)
+    P.tube('entry_bar', [(0.46, -0.81, 0.28), (0.46, -0.48, 0.31)], 0.025,
+           M.plastic_dark(), root, corner_radius=0.02)
 
 
 def straddle_legs(root):
@@ -179,12 +255,14 @@ def build():
     load_wheels = straddle_legs(root)
     mast_and_reach(root)
     guard_and_drive(root)
-    # Standing eye: 0.246 m compartment floor + 1.63 m standing eye height.
-    R.empty('rig_cameraMount', (0.03, -0.69, 1.88), root)
+    # XR local-floor origin and desktop standing eye are separate. This avoids
+    # adding an authored eye height on top of the headset's tracked eye height.
+    R.empty('rig_xrOrigin', (0.03, -0.86, 0.246), root)
+    R.empty('rig_cameraMount', (0.03, -0.86, 1.84), root)
     root['spec'] = 'Crown RR 5725-45 36V'
     return {
         'name': 'crown_rr5725',
-        'cab_view': {'loc': (0.03, -0.69, 1.67), 'target': (0.0, 0.6, 0.85), 'focal': 19},
+        'cab_view': {'loc': (0.03, -0.86, 1.84), 'target': (0.0, -0.1, 1.12), 'focal': 22},
         'closeups': {
             'console': {'loc': (0.55, -1.3, 1.6), 'target': (0.0, -0.3, 1.05), 'focal': 32},
             'mast': {'loc': (1.6, 2.6, 1.2), 'target': (0, 0.64, 1.4), 'focal': 40},

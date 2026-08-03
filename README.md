@@ -15,8 +15,9 @@ Open the local URL in a desktop browser. WebXR immersive sessions require HTTPS 
 
 - Mouse or touch: drag visible controls in the operator station
 - Mouse drag on open space: look around
-- VR trigger: point to, grab, and move a physical control
-- Control: toggle operator-presence or deadman control; entering operator mode engages it automatically
+- VR trigger or hand pinch: reach to, grab, and move the modeled physical control through its constrained axis
+- VR presence control: hold the modeled deadman pedal or presence control continuously
+- Control key: toggle operator presence in desktop accessibility mode
 - W / S or arrow up / down: travel
 - A / D or arrow left / right: steer
 - E / Q: lift / lower
@@ -26,14 +27,14 @@ Open the local URL in a desktop browser. WebXR immersive sessions require HTTPS 
 - B: service brake
 - Space: horn
 
-Thumbsticks remain available as an accessibility fallback in VR. The primary VR interaction is grabbing the modeled truck controls.
+Laser selection and thumbstick driving are disabled during the practical assessment. They can be enabled explicitly in the control guide as an accessibility fallback. The default VR interaction uses near-hand pickup, controller or hand models, local mechanism axes, neutral detent haptics, and spring return.
 
 ## Equipment behavior
 
-- Crown RR 5725-45 and Raymond 7500 reach trucks: separate side-stance and universal-stance compartments, manufacturer-specific steering and multifunction controls, presence pads, rear drive and steer, outriggers, mast chains, and reach carriages.
+- Crown RR 5725-45 36V and Raymond 7500 Universal Stance reach trucks: fixed pilot configurations with separate side-stance and universal-stance compartments, manufacturer-specific steering and travel mechanisms, presence controls, open-view masts, outriggers, and reach carriages.
 - Crown SP 1500 and Raymond 5300 order pickers: distinct power units and operator enclosures, opposing hand controls, deadman pedals, elevating platforms and viewpoints, and lift-height-dependent travel speed.
 - Crown PE 4500 and Raymond 8210 pallet trucks: end-control rider and walkie configurations with distinct power units, operator positions, articulated tillers, travel controls, lift rockers, emergency reverse switches, forks, and load wheels.
-- Crown SC 6200 and Raymond 4460 counterbalance trucks: four-wheel and three-wheel chassis, seated cabs, steering wheels, independent pedals and hydraulic levers, rear steering, mast tilt, sideshift, and counterweight swing.
+- Crown SC 6200 manual-lever and Raymond 4460 legacy counterbalance trucks: fixed cockpit configurations with four-wheel and three-wheel chassis, seated cabs, steering wheels, pedals, mechanical hydraulic levers, rear steering, mast tilt, sideshift, and counterweight swing.
 
 ## Equipment assets
 

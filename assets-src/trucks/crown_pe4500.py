@@ -22,7 +22,7 @@ DARK = M.plastic_dark
 
 
 def grip_tan():
-    """X10 twist-grip elastomer — warm putty tan like the reference."""
+    """X10 twist-grip elastomer in warm putty tan like the reference."""
     return M.pbr('grip_tan', 0xB4A88F, roughness=0.62, metallic=0.0)
 
 
@@ -134,7 +134,7 @@ def power_unit(root):
 
 
 # ------------------------------------------------------------ tiller + X10 head
-def tiller(root):
+def _legacy_tiller(root):
     pivot = R.empty('rig_tillerPivot', (0, -0.16, 1.05), root)
     # round console dome the tiller rises from
     P.lathe('tiller_dome', [(0.0, 0.0), (0.205, 0.0), (0.215, 0.025), (0.19, 0.055),
@@ -151,7 +151,7 @@ def tiller(root):
     head = R.empty('rig_headGroup', (0, -0.20, 0.255), pivot)
     body = P.rounded_box('head_body', (0.11, 0.15, 0.095), (0, 0, 0.01), DARK(), head, radius=0.035)
     body.rotation_euler = (0.25, 0, 0)
-    R.tag_control(body, 'steer', 'X10 handle — steer', 'horizontal', False)
+    R.tag_control(body, 'steer', 'X10 handle: steer', 'horizontal', False)
     for sx in (-1, 1):
         cap = P.rounded_box(f'head_cap_{sx}', (0.035, 0.115, 0.075), (sx * 0.062, 0.005, 0.012),
                             grip_tan(), head, radius=0.016)
@@ -161,7 +161,7 @@ def tiller(root):
                       [(sx * 0.055, -0.045, 0.015), (sx * 0.155, -0.075, 0.03),
                        (sx * 0.195, 0.01, 0.015), (sx * 0.075, 0.065, -0.005)],
                       0.021, grip_tan(), head, corner_radius=0.09)
-        R.tag_control(grip, 'travel', 'Twist grip — travel', 'horizontal', True)
+        R.tag_control(grip, 'travel', 'Twist grip: travel', 'horizontal', True)
     # belly-button emergency reverse bar on the head front
     belly = P.rounded_box('head_belly', (0.15, 0.04, 0.055), (0, 0.093, -0.012), M.button_red(), head, radius=0.018)
     belly.rotation_euler = (0.3, 0, 0)
@@ -179,8 +179,88 @@ def tiller(root):
             rot=(1.25, 0, 0))
 
 
+def tiller(root):
+    """Photo-matched Crown X10 control arm and rectangular loop handle."""
+    pivot = R.empty('rig_tillerPivot', (0, -0.16, 1.02), root)
+
+    # The broad arm pivots from a round boot and carries the head rearward.
+    P.lathe('tiller_dome', [(0.0, 0.0), (0.205, 0.0), (0.215, 0.025),
+                            (0.19, 0.058), (0.115, 0.084), (0.0, 0.088)],
+            MOLD(), pivot)
+    P.lathe('tiller_boot', [(0.0, 0.06), (0.062, 0.06), (0.057, 0.12),
+                            (0.043, 0.19), (0.0, 0.19)], DARK(), pivot)
+    P.extrude_profile('control_arm',
+                      [(-0.035, 0.10), (0.075, 0.10),
+                       (-0.275, 0.55), (-0.405, 0.55)],
+                      0.14, DARK(), pivot, plane='YZ', bevel=0.018,
+                      loc=(-0.07, 0, 0))
+    P.rounded_box('arm_top_cap', (0.15, 0.19, 0.075),
+                  (0, -0.34, 0.55), DARK(), pivot, radius=0.025, segments=5)
+
+    head = R.empty('rig_headGroup', (0, -0.37, 0.58), pivot)
+    body = P.rounded_box('head_body', (0.15, 0.25, 0.075), (0, 0.01, 0),
+                         DARK(), head, radius=0.025, segments=6)
+    R.tag_control(body, 'steer', 'Crown X10 control handle steering', 'radial',
+                  False, motion='radial')
+
+    # Two rectangular loop handholds surround two ribbed urethane twist grips.
+    for sx, side in ((-1, 'left'), (1, 'right')):
+        inner_x = sx * 0.075
+        outer_x = sx * 0.31
+        loop = P.tube(f'head_loop_{side}',
+                      [(inner_x, -0.115, 0), (outer_x, -0.115, 0),
+                       (outer_x, 0.13, 0), (inner_x, 0.13, 0)],
+                      0.025, DARK(), head, corner_radius=0.055, cyclic=True)
+        R.tag_control(loop, 'steer', f'X10 {side} steering handhold',
+                      'radial', False, motion='radial')
+
+        grip_x = sx * 0.185
+        grip = P.cyl(f'head_twist_grip_{side}', 0.030, 0.18,
+                     (grip_x, -0.075, 0.006), grip_tan(), head,
+                     axis='X', verts=40, bevel=0.007)
+        R.tag_control(grip, 'travel', f'X10 {side} travel twist grip',
+                      'radial', True, motion='radial')
+        for ridge_index in range(7):
+            ridge_x = grip_x + sx * (-0.065 + ridge_index * 0.022)
+            P.cyl(f'head_grip_{side}_ridge_{ridge_index}', 0.033, 0.006,
+                  (ridge_x, -0.075, 0.006), grip_tan(), head,
+                  axis='X', verts=32, bevel=0.002)
+
+    # Central switch pad from the PE manual, each function separately tagged.
+    P.rounded_box('head_switch_pad', (0.13, 0.14, 0.025),
+                  (0, -0.015, 0.050), M.plastic_molded(), head,
+                  radius=0.014, segments=4)
+    lower = P.rounded_box('head_lower', (0.095, 0.042, 0.018),
+                          (0, 0.035, 0.071), M.decal_white(), head,
+                          radius=0.007, segments=4)
+    R.tag_control(lower, 'lift', 'Lower forks button', 'vertical', True,
+                  motion='vertical')
+    raise_btn = P.rounded_box('head_raise', (0.095, 0.042, 0.018),
+                              (0, -0.010, 0.071), ORANGE(), head,
+                              radius=0.007, segments=4)
+    R.tag_control(raise_btn, 'lift', 'Raise forks button', 'vertical', True,
+                  motion='vertical')
+    horn = P.rounded_box('head_horn', (0.095, 0.034, 0.018),
+                         (0, -0.052, 0.071), M.warning_amber(), head,
+                         radius=0.007, segments=4)
+    R.tag_control(horn, 'horn', 'Horn button', 'button', True, motion='button')
+
+    # The broad near-edge button reverses travel if the handle pins an operator.
+    belly = P.rounded_box('head_reversing_button', (0.15, 0.048, 0.055),
+                          (0, -0.145, -0.008),
+                          M.pbr('x10_reverse_gray', 0x4B4E4F, roughness=0.58),
+                          head, radius=0.015, segments=5)
+    R.tag_control(belly, 'belly', 'Reversing safety button', 'button', True,
+                  motion='button')
+
+    for sx, side in ((-1, 'left'), (1, 'right')):
+        P.rounded_box(f'quickpick_{side}', (0.045, 0.055, 0.018),
+                      (sx * 0.285, 0.075, 0.025), ORANGE(), head,
+                      radius=0.008, segments=4)
+
+
 # --------------------------------------------------------------------- deck pods
-def deck_pods(root):
+def _legacy_deck_pods(root):
     for sx in (-1, 1):
         pod = P.rounded_box(f'pod_{sx}', (0.17, 0.22, 0.09), (sx * 0.27, -0.36, 1.05), MOLD(), root, radius=0.03)
         pod.rotation_euler = (0.22, 0, sx * 0.12)
@@ -195,6 +275,58 @@ def deck_pods(root):
     # small status display left of the dome, angled to the operator
     P.display('display_pe', 0.11, 0.075, parent=root, loc=(-0.16, -0.315, 1.10),
               rot=(1.15, 0, -0.18), screen_name='screen_pe')
+
+
+def deck_pods(root):
+    """PE Access console, power controls and operator grab bar."""
+    molded = MOLD()
+    dark = DARK()
+
+    # The full-width black grab bar is immediately in front of the rider. Its
+    # shape and auxiliary button pod are copied from Crown's controls image.
+    P.tube('operator_grab_bar',
+                  [(-0.35, -0.55, 0.93), (-0.39, -0.55, 1.12),
+                   (-0.30, -0.55, 1.30), (0.30, -0.55, 1.30),
+                   (0.39, -0.55, 1.12), (0.35, -0.55, 0.93)],
+                  0.025, M.grip_rubber(), root, corner_radius=0.075)
+    P.rounded_box('grab_bar_control_pod', (0.14, 0.055, 0.14),
+                  (0.12, -0.575, 1.30), dark, root,
+                  radius=0.022, segments=5)
+    raise_btn = P.rounded_box('grab_raise', (0.075, 0.014, 0.043),
+                              (0.12, -0.611, 1.325), ORANGE(), root,
+                              radius=0.007, segments=4)
+    R.tag_control(raise_btn, 'lift', 'Grab bar raise button', 'vertical', True,
+                  motion='vertical')
+    lower = P.rounded_box('grab_lower', (0.075, 0.014, 0.043),
+                          (0.12, -0.611, 1.278), M.decal_white(), root,
+                          radius=0.007, segments=4)
+    R.tag_control(lower, 'lift', 'Grab bar lower button', 'vertical', True,
+                  motion='vertical')
+    horn = P.cyl('grab_horn', 0.013, 0.012, (0.12, -0.612, 1.235),
+                 M.warning_amber(), root, axis='Y', verts=24, bevel=0.003)
+    R.tag_control(horn, 'horn', 'Grab bar horn button', 'button', True,
+                  motion='button')
+
+    # Crown Access 1 2 3 module, key and emergency power disconnect occupy the
+    # center deck directly below the grab bar.
+    P.rounded_box('access_console', (0.43, 0.16, 0.19),
+                  (0, -0.43, 1.08), molded, root,
+                  radius=0.04, segments=6, rot=(-0.10, 0, 0))
+    P.display('display_pe', 0.19, 0.115, parent=root,
+              loc=(-0.055, -0.525, 1.115), screen_name='screen_pe')
+    P.text_mesh('access_brand', 'ACCESS', 0.017, 0.001,
+                M.decal_white(), root, loc=(-0.055, -0.545, 1.055),
+                facing='-Y')
+    key_bezel = P.cyl('key_switch_bezel', 0.021, 0.014,
+                      (-0.18, -0.525, 1.08), M.steel_dark(), root,
+                      axis='Y', verts=30, bevel=0.002)
+    P.box('key_switch', (0.010, 0.028, 0.024), (0, -0.013, 0), dark,
+          key_bezel, bevel=0.003, rot=(0.3, 0, 0))
+    disconnect_base = P.cyl('power_disconnect_base', 0.032, 0.016,
+                            (0.185, -0.525, 1.09), M.warning_amber(), root,
+                            axis='Y', verts=36)
+    P.cyl('power_disconnect', 0.027, 0.030, (0, -0.022, 0),
+          M.button_red(), disconnect_base, axis='Y', verts=36, bevel=0.005)
 
 
 # ------------------------------------------------------- fork carriage + wheels
@@ -236,7 +368,7 @@ def running_gear(root):
 
 
 # ------------------------------------------------------------- rider platform
-def platform(root):
+def _legacy_platform(root):
     # structural floor box, low skirt so it reads grounded
     P.rounded_box('platform_floor', (0.94, 0.84, 0.15), (0, -0.955, 0.115), BLACK(), root, radius=0.02)
     dot_mat('platform_mat', (0.78, 0.62), root, (0, -0.96, 0.196))
@@ -269,6 +401,39 @@ def platform(root):
             rot=(0, 0, 0), text='!', text_mat=M.decal_dark())
 
 
+def platform(root):
+    """Open end-rider platform from the official PE 4500 model photograph."""
+    # The PE has no seat enclosure or tall rear backrest. It is a low, open,
+    # wraparound deck with a dot-pattern mat and rounded rear impact bumper.
+    P.rounded_box('platform_floor', (0.94, 0.86, 0.15),
+                  (0, -0.97, 0.115), BLACK(), root,
+                  radius=0.055, segments=7)
+    dot_mat('platform_mat', (0.84, 0.69), root, (0, -0.97, 0.196),
+            pitch=0.052, dot_r=0.010)
+    presence = P.rounded_box('presence_pad', (0.50, 0.52, 0.022),
+                             (0, -1.00, 0.216), M.grip_rubber(), root,
+                             radius=0.018, segments=5)
+    R.tag_control(presence, 'presence', 'PE rider platform presence area',
+                  'button', False, motion='button')
+    P.rounded_box('rear_bumper', (0.94, 0.13, 0.14),
+                  (0, -1.43, 0.11), DARK(), root,
+                  radius=0.055, segments=7)
+    for sx, side in ((-1, 'left'), (1, 'right')):
+        P.rounded_box(f'platform_edge_{side}', (0.075, 0.72, 0.10),
+                      (sx * 0.435, -0.97, 0.20), DARK(), root,
+                      radius=0.025, segments=5)
+    # Orange C-shaped floor marker and entry wear strip visible in Crown media.
+    P.tube('platform_c_marker',
+           [(-0.055, -1.30, 0.229), (-0.09, -1.30, 0.229),
+            (-0.11, -1.27, 0.229), (-0.09, -1.24, 0.229),
+            (-0.055, -1.24, 0.229)], 0.009, ORANGE(), root,
+           corner_radius=0.02)
+    P.rounded_box('platform_entry_strip', (0.48, 0.035, 0.018),
+                  (0, -1.39, 0.225), M.pbr('entry_wear', 0x3C3E3D,
+                                           roughness=0.72), root,
+                  radius=0.008, segments=4)
+
+
 def build():
     root = R.empty('rig_root')
     power_unit(root)
@@ -277,8 +442,9 @@ def build():
     carriage(root)
     running_gear(root)
     platform(root)
-    # Standing eye: 0.196 m rider platform mat + 1.63 m standing eye height.
-    R.empty('rig_cameraMount', (0, -1.2, 1.83), root)
+    # Standing eye and tracked-floor origin are distinct reference points.
+    R.empty('rig_cameraMount', (0, -1.03, 1.83), root)
+    R.empty('rig_xrOrigin', (0, -1.03, 0.196), root)
     root['spec'] = 'Crown PE 4500-60'
     root['walkie'] = False
     root['platform'] = True

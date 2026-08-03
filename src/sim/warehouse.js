@@ -136,7 +136,7 @@ function palletGeometry() {
 
 function cartonStackGeometry(columns = 2, rows = 2, layers = 2, jitter = .012) {
   // Case-goods pallet: 24x20x18 in cartons, two per side per layer. Fewer and
-  // larger than a brick pile — that is what a real palletized load looks like.
+  // larger than a brick pile. That is what a real palletized load looks like.
   const parts = []
   const width = 1.18 / columns
   const depth = .98 / rows
@@ -391,7 +391,7 @@ function buildFixtures(scene) {
     cones.push(cone)
   })
 
-  // empty pallet stack and a battery charger against the wall — working-facility cues
+  // empty pallet stack and a battery charger against the wall, working-facility cues
   for (let index = 0; index < 6; index += 1) {
     const stack = new THREE.Mesh(palletGeometry(), index % 2 ? MATERIALS.palletWorn : MATERIALS.palletWood)
     stack.position.set(-9.4, index * .145, 13.4)

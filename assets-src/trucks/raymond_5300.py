@@ -6,12 +6,13 @@ the platform between fixed baselegs.
 
 Against the Crown SP 1500 the board shows a different design language: charcoal
 is the dominant colour with a Raymond-red power-unit body and skirt, the console
-is a wide molded charcoal wall carrying the signature large round fan grille and
-a red control strip, the side gates are dark rather than safety orange, and the
-overhead guard is a flat black frame.
+is a wide molded charcoal wall carrying the large steering disc, recessed
+multifunction handle and compact top display, the side gates are dark rather
+than safety orange, and the overhead guard is a flat black frame.
 
 Rig: rig_root > rig_mast > rig_carriage (global (0, 0.9, 0)) which carries
 rig_platform, the forks, and rig_cameraMount so the eye rises with the platform.
+rig_xrOrigin marks the tracked-floor origin on the moving operator platform.
 """
 import math
 
@@ -153,59 +154,106 @@ def mast(root):
 
 
 def console(platform):
-    """Wide molded charcoal console wall with the round fan grille."""
+    """Raymond 5300 operator wall, authored from the factory compartment view."""
     molded = CHARCOAL()
     dark = M.plastic_dark()
-    P.rounded_box('console_wall', (0.96, 0.2, 0.98), (0, -0.09, 0.83), molded, platform, radius=0.05)
-    P.rounded_box('console_top', (0.94, 0.3, 0.1), (0, -0.02, 1.33), molded, platform, radius=0.03)
-    P.box('console_seam', (0.9, 0.006, 0.008), (0, 0.008, 0.62), dark, platform, bevel=0.002)
 
-    # signature recessed circular fan grille, left of centre
-    P.lathe('fan_recess', [(0.0, 0), (0.15, 0), (0.155, 0.022), (0.14, 0.03), (0.0, 0.03)],
-            dark, platform, loc=(-0.24, 0.012, 0.98), rot=(-math.pi / 2, 0, 0))
-    P.lathe('fan_hub', [(0.0, 0), (0.05, 0.004), (0.055, 0.02), (0.0, 0.026)],
-            M.steel_dark(), platform, loc=(-0.24, -0.01, 0.98), rot=(-math.pi / 2, 0, 0))
-    # grille spokes lie in the console face (XZ) and radiate about the Y axis
-    for i in range(9):
-        bar = P.box(f'fan_bar_{i}', (0.012, 0.012, 0.27), (-0.24, 0.004, 0.98), M.steel_dark(),
-                    platform, bevel=0.002)
-        bar.rotation_euler = (0, i * math.pi / 9, 0)
+    # One-piece molded surround. The narrow waist and raised shoulders match the
+    # 5300 console instead of reading as a generic rectangular dashboard.
+    outline = [(-0.47, 0.38), (-0.48, 1.20), (-0.43, 1.34), (-0.29, 1.39),
+               (0.29, 1.39), (0.43, 1.34), (0.48, 1.20), (0.47, 0.38),
+               (0.36, 0.31), (-0.36, 0.31)]
+    P.extrude_profile('console_shell', outline, 0.19, molded, platform, plane='XZ',
+                      bevel=0.024, loc=(0, -0.14, 0))
+    P.rounded_box('console_brow', (0.76, 0.08, 0.085), (0, 0.015, 1.335), molded,
+                  platform, radius=0.025)
+    P.box('console_lower_seam', (0.72, 0.006, 0.007), (0, 0.057, 0.51),
+          M.steel_dark(), platform, bevel=0.002)
 
-    # red control strip low-left, instrument cluster and switches to the right
-    P.rounded_box('console_strip', (0.3, 0.06, 0.07), (-0.24, 0.02, 1.26), M.button_red(),
-                  platform, radius=0.012)
-    for i in range(3):
-        P.rounded_box(f'console_sw_{i}', (0.032, 0.03, 0.026), (-0.03 + i * 0.06, 0.03, 1.26),
-                      dark, platform, radius=0.006)
-    P.display('console_display', 0.16, 0.1, parent=platform, loc=(0.28, 0.02, 1.25),
-              rot=(-0.3, 0, math.pi), screen_name='screen_5300')
+    # Upper-left grab rail, fixed at both ends and clear of the steering disc.
+    P.tube('console_grab_rail', [(-0.42, 0.085, 1.30), (-0.40, 0.145, 1.36),
+                                 (-0.16, 0.145, 1.36), (-0.13, 0.085, 1.31)],
+           0.016, M.grip_rubber(), platform, corner_radius=0.025)
+    for x in (-0.42, -0.13):
+        P.cyl(f'console_grab_mount_{x}', 0.026, 0.016, (x, 0.075, 1.305),
+              dark, platform, axis='Y', bevel=0.004)
 
-    # left pod: steering disc with grab loop, at working height on the wall
-    steer = R.empty('rig_steerPivot', (-0.24, 0.1, 1.42), platform)
-    disc = P.lathe('steer_disc', [(0.0, 0), (0.08, 0.004), (0.087, 0.02), (0.06, 0.038), (0.0, 0.044)],
-                   M.grip_rubber(), steer, rot=(-math.pi / 2, 0, 0))
-    R.tag_control(disc, 'steer', 'Raymond order-picker steering control', 'horizontal', False)
-    P.tube('steer_loop', [(-0.055, 0.005, -0.005), (-0.055, 0.08, 0.05), (0.0, 0.105, 0.075),
-                          (0.055, 0.08, 0.05), (0.055, 0.005, -0.005)], 0.013,
-           M.steel_dark(), steer, corner_radius=0.05)
+    # Compact top display with the adjacent membrane status switches and lamps.
+    P.display('console_display', 0.145, 0.082, parent=platform,
+              loc=(0.055, 0.069, 1.302), rot=(0, 0, math.pi),
+              screen_name='screen_5300')
+    for i, x in enumerate((0.158, 0.202, 0.246)):
+        P.rounded_box(f'console_status_switch_{i}', (0.032, 0.018, 0.032),
+                      (x, 0.071, 1.302), dark, platform, radius=0.006)
+        P.cyl(f'console_status_lamp_{i}', 0.006, 0.006,
+              (x, 0.084, 1.326), M.warning_amber() if i == 1 else M.screen_glass(),
+              platform, axis='Y')
 
-    # right pod: multifunction travel/lift handle
-    travel = R.empty('rig_travelPivot', (0.26, 0.1, 1.42), platform)
-    P.lathe('travel_boss', [(0.0, 0), (0.07, 0.004), (0.075, 0.03), (0.06, 0.05), (0.0, 0.056)],
-            dark, travel, rot=(-math.pi / 2, 0, 0))
-    grip = P.lathe('travel_grip', [(0.0, 0), (0.036, 0.004), (0.04, 0.05), (0.034, 0.1),
-                                   (0.038, 0.15), (0.022, 0.185), (0.0, 0.19)],
-                   M.plastic_dark(), travel, loc=(0, 0.055, 0.0), rot=(-math.pi / 2 + 0.3, 0, 0))
-    R.tag_control(grip, 'travel', 'Travel / lift multifunction handle', 'vertical', True)
-    lift = R.empty('rig_liftPivot', (0.26, 0.19, 1.50), platform)
-    rocker = P.rounded_box('lift_rocker', (0.052, 0.05, 0.075), (0, 0, 0), M.button_red(), lift, radius=0.012)
-    R.tag_control(rocker, 'lift', 'Platform lift and lower rocker', 'vertical', True)
-    horn = P.cyl('btn_horn', 0.026, 0.016, (-0.07, 0.048, 1.24), M.warning_amber(), platform, axis='Y')
-    R.tag_control(horn, 'horn', 'Horn button', 'button', True)
-    P.lathe('btn_estop', [(0.0, 0), (0.018, 0), (0.018, 0.02), (0.027, 0.024), (0.027, 0.042), (0.0, 0.048)],
-            M.button_red(), platform, loc=(-0.42, 0.045, 1.24), rot=(-math.pi / 2, 0, 0))
-    P.label('console_warn', (0.1, 0.07), M.decal_white(), platform, (0.42, 0.042, 1.16),
-            rot=(0, 0, math.pi))
+    # Factory instruction plate, key switch and red emergency power disconnect.
+    P.label('console_instruction', (0.205, 0.155), M.decal_white(), platform,
+            (0.01, 0.065, 0.985), rot=(0, 0, math.pi), text='OPERATING\nINSTRUCTIONS',
+            text_size=0.020)
+    P.cyl('console_key_bezel', 0.025, 0.018, (0.10, 0.079, 0.825),
+          M.steel_dark(), platform, axis='Y', bevel=0.003)
+    key = P.box('console_key', (0.012, 0.036, 0.034), (0.10, 0.097, 0.825),
+                M.steel_dark(), platform, bevel=0.003, rot=(0, 0, -0.35))
+    key['control_label'] = 'Key switch'
+    P.lathe('console_epo', [(0.0, 0), (0.024, 0), (0.024, 0.016),
+                            (0.040, 0.022), (0.040, 0.043), (0.0, 0.049)],
+            M.button_red(), platform, loc=(0.205, 0.082, 0.835),
+            rot=(-math.pi / 2, 0, 0))
+    P.text_mesh('console_epo_label', 'POWER', 0.018, 0.0012, M.decal_white(),
+                platform, loc=(0.205, 0.067, 0.778), facing='+Y')
+
+    # Large left steering disc with an offset spinner knob. It is a steering
+    # control, not a fan grille.
+    steer = R.empty('rig_steerPivot', (-0.285, 0.105, 1.055), platform)
+    P.lathe('steer_recess', [(0.0, 0), (0.125, 0), (0.135, 0.010),
+                             (0.135, 0.027), (0.0, 0.032)],
+            dark, steer, rot=(-math.pi / 2, 0, 0))
+    disc = P.lathe('steer_disc', [(0.0, 0), (0.098, 0.002), (0.108, 0.016),
+                                  (0.100, 0.031), (0.0, 0.038)],
+                   M.grip_rubber(), steer, loc=(0, 0.026, 0),
+                   rot=(-math.pi / 2, 0, 0))
+    R.tag_control(disc, 'steer', 'Raymond 5300 steering disc', 'radial', False,
+                  motion='radial')
+    P.cyl('steer_center', 0.026, 0.020, (0, 0.061, 0), molded, steer,
+          axis='Y', bevel=0.004)
+    spinner = P.cyl('steer_spinner', 0.023, 0.075, (0.068, 0.078, 0.068),
+                    M.grip_rubber(), steer, axis='Y', bevel=0.008)
+    R.tag_control(spinner, 'steer', 'Steering spinner knob', 'radial', False,
+                  motion='radial')
+
+    # Deep right-hand molded recess and contoured multifunction handle.
+    P.rounded_box('control_recess', (0.285, 0.030, 0.40), (0.285, 0.065, 1.055),
+                  dark, platform, radius=0.035)
+    travel = R.empty('rig_travelPivot', (0.285, 0.092, 1.035), platform)
+    grip_outline = [(-0.064, -0.15), (-0.075, 0.05), (-0.055, 0.17),
+                    (-0.015, 0.205), (0.052, 0.145), (0.064, -0.08),
+                    (0.032, -0.16)]
+    grip = P.extrude_profile('travel_grip', grip_outline, 0.085, M.grip_rubber(),
+                             travel, plane='XZ', bevel=0.018,
+                             loc=(0, -0.012, 0), rot=(0, 0, -0.04))
+    R.tag_control(grip, 'travel', 'Raymond multifunction travel handle',
+                  'vertical', True, motion='fore-aft')
+    P.rounded_box('travel_paddle', (0.072, 0.022, 0.045),
+                  (0.012, 0.085, 0.105), molded, travel, radius=0.010)
+    lift = R.empty('rig_liftPivot', (0.268, 0.187, 1.105), platform)
+    rocker = P.rounded_box('lift_rocker', (0.055, 0.025, 0.082), (0, 0, 0),
+                           M.button_red(), lift, radius=0.012)
+    R.tag_control(rocker, 'lift', 'Platform lift and lower rocker', 'vertical',
+                  True, motion='vertical')
+    horn = P.cyl('btn_horn', 0.022, 0.014, (0.345, 0.187, 0.955),
+                 M.warning_amber(), platform, axis='Y')
+    R.tag_control(horn, 'horn', 'Horn button', 'button', True, motion='press')
+
+    # Lower storage pocket and branding molded into the operator wall.
+    P.rounded_box('storage_cavity', (0.37, 0.022, 0.19), (0, 0.067, 0.625),
+                  dark, platform, radius=0.028)
+    P.rounded_box('storage_lip', (0.39, 0.055, 0.045), (0, 0.101, 0.545),
+                  molded, platform, radius=0.015)
+    P.text_mesh('console_brand', 'RAYMOND', 0.044, 0.0018, M.decal_white(),
+                platform, loc=(-0.285, 0.069, 0.765), facing='+Y')
 
 
 def platform_assembly(carriage):
@@ -226,7 +274,8 @@ def platform_assembly(carriage):
     for sx in (-1, 1):
         P.rounded_box(f'guard_post_{int(sx > 0)}', (0.055, 0.07, 2.25), (sx * 0.41, -0.16, 1.315),
                       BLACK(), platform, radius=0.012)
-    mesh_grid('back_mesh', 0.76, 0.72, platform, (0, -0.185, 1.52), nx=9, nz=4)
+    mesh_grid('back_mesh', 0.80, 1.10, platform, (0, -0.185, 1.20),
+              bar=0.005, nx=12, nz=8)
     # flat black overhead guard frame
     P.tube('roof_frame', [(-0.45, -0.3, 2.47), (-0.45, 0.6, 2.47), (0.45, 0.6, 2.47),
                           (0.45, -0.3, 2.47)], 0.034, BLACK(), platform, corner_radius=0.05, cyclic=True)
@@ -245,8 +294,10 @@ def platform_assembly(carriage):
     console_root = R.empty('console_root', (0, 0.60, 0.05), platform)
     console_root.rotation_euler = (0, 0, math.pi)
     console(console_root)
-    presence = P.pedal('pedal_presence', (0.16, 0.2), parent=platform, loc=(0.2, 0.12, 0.305), angle=0)
-    R.tag_control(presence, 'presence', 'Deadman brake pedal', 'button', False)
+    presence = P.pedal('pedal_presence', (0.21, 0.24), parent=platform,
+                       loc=(0.18, 0.10, 0.305), angle=0)
+    R.tag_control(presence, 'presence', 'Single operator presence pedal',
+                  'button', False, motion='press')
     return platform
 
 
@@ -264,6 +315,7 @@ def carriage_assembly(mast_node):
     platform_assembly(carriage)
     # Standing eye: 0.29 m platform floor + 1.63 m, at the rear of the platform
     # (platform-local y = 0.05) so the console reads in the lower view.
+    R.empty('rig_xrOrigin', (0, -0.85, 0.29), carriage)
     R.empty('rig_cameraMount', (0, -0.85, 1.92), carriage)
     return carriage
 

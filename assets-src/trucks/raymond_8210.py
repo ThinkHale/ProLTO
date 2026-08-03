@@ -6,7 +6,8 @@ Measured basis (8210 spec sheet + fleet reference board, column 3):
   power unit shell top ~0.92, tiller head (rest, raised) ~1.38, backrest ~1.38.
 Blender axes: forks +Y, operator -Y, up +Z. See lib/rig.py for the node contract.
 Rig: rig_root, rig_carriage (forks + load wheels + apron + backrest),
-  rig_tillerPivot (top rear of power unit) > rig_headGroup, rig_cameraMount.
+  rig_tillerPivot (top rear of power unit) > rig_headGroup, rig_xrOrigin,
+  rig_cameraMount.
 """
 import math
 
@@ -206,54 +207,71 @@ def tiller(root):
 
 
 def tiller_head(head_grp):
-    """Butterfly head: red cap, loop grips, throttle wings, rockers, belly button."""
+    """Raymond 8210 symmetric loop-grip control head."""
     molded = M.plastic_molded()
     dark = M.plastic_dark()
 
-    # main body carries the rest tilt; everything else is a child in its frame
-    body = P.rounded_box('head_body', (0.16, 0.24, 0.13), (0, 0, 0), dark, head_grp,
-                         radius=0.045)
+    # Compact center casting. The actual head is dominated by two matched black
+    # loop grips, not broad paddle wings.
+    body = P.rounded_box('head_body', (0.205, 0.245, 0.145), (0, 0, 0), dark,
+                         head_grp, radius=0.045)
     body.rotation_euler = (-0.62, 0, 0)
-    R.tag_control(body, 'steer', 'Tiller head - steer', 'horizontal', False)
+    R.tag_control(body, 'steer', 'Raymond 8210 tiller steering', 'horizontal',
+                  False, motion='horizontal')
 
-    # red bumper cap on the top, toward the truck
-    P.rounded_box('head_cap', (0.155, 0.11, 0.062), (0, 0.075, 0.085), M.button_red(),
-                  body, radius=0.026)
+    # Upper equipment/status pod with optional keypad and display.
+    P.rounded_box('head_status_pod', (0.14, 0.075, 0.075), (0, 0.065, 0.080),
+                  molded, body, radius=0.022)
+    P.display('head_display', 0.070, 0.040, parent=body,
+              loc=(0, -0.126, 0.067), screen_name='head_screen')
+    for index, (x, z) in enumerate(((-0.026, 0.027), (0.026, 0.027),
+                                    (-0.026, 0.001), (0.026, 0.001))):
+        P.rounded_box(f'head_keypad_{index}', (0.021, 0.010, 0.016),
+                      (x, -0.132, z), molded, body, radius=0.004)
 
-    # loop grips both sides (closed D-loops, grip rubber)
+    # Exact mirrored D-loop grip geometry. Each side uses the same coordinates
+    # reflected across X so the operator can work the controls ambidextrously.
     for sx in (-1, 1):
         P.tube(f'head_loop_{ "L" if sx < 0 else "R"}',
-               [(sx * 0.065, 0.075, 0.03), (sx * 0.20, 0.06, 0.01),
-                (sx * 0.235, -0.03, -0.01), (sx * 0.16, -0.10, -0.015),
-                (sx * 0.065, -0.075, 0.0)],
-               0.020, M.grip_rubber(), body, corner_radius=0.05, cyclic=True)
+               [(sx * 0.075, 0.085, 0.035), (sx * 0.205, 0.078, 0.020),
+                (sx * 0.265, 0.005, -0.005), (sx * 0.245, -0.090, -0.025),
+                (sx * 0.145, -0.135, -0.030), (sx * 0.075, -0.080, 0.000)],
+               0.022, M.grip_rubber(), body, corner_radius=0.045, cyclic=True)
 
-    # butterfly throttle wings (both tagged travel)
+    # Mirrored directional and speed thumb wheels sit at the inner edge of each
+    # grip. Both have the same travel semantics.
     for sx in (-1, 1):
-        wing = P.rounded_box(f'head_wing_{ "L" if sx < 0 else "R"}', (0.075, 0.05, 0.02),
-                             (sx * 0.10, -0.065, 0.052), molded, body, radius=0.008)
-        wing.rotation_euler = (-0.25, 0, sx * -0.18)
-        R.tag_control(wing, 'travel', 'Butterfly throttle', 'horizontal', True)
+        wheel = P.cyl(f'head_speed_wheel_{ "L" if sx < 0 else "R"}', 0.034,
+                      0.056, (sx * 0.112, -0.132, 0.020), molded, body,
+                      axis='X', verts=32, bevel=0.006)
+        R.tag_control(wheel, 'travel',
+                      f'{"Left" if sx < 0 else "Right"} direction and speed thumb wheel',
+                      'vertical', True, motion='fore-aft')
+        for rib_index in (-1, 0, 1):
+            P.box(f'head_speed_rib_{sx}_{rib_index}', (0.004, 0.009, 0.045),
+                  (sx * (0.112 + rib_index * 0.012), -0.165, 0.020),
+                  dark, body, bevel=0.001)
 
-    # face panel: display, lift/lower rockers, horn
-    P.display('head_display', 0.085, 0.06, parent=body, loc=(0, -0.105, 0.026),
-              rot=(math.pi / 2 - 0.25, 0, 0), screen_name='head_screen')
+    # One centered lift/lower rocker with matched horn buttons to either side.
+    lift = R.empty('rig_liftPivot', (0, -0.137, -0.028), body)
+    rocker = P.rounded_box('head_lift_rocker', (0.050, 0.018, 0.070),
+                           (0, 0, 0), molded, lift, radius=0.010)
+    R.tag_control(rocker, 'lift', 'Centered lift and lower rocker', 'vertical',
+                  True, motion='vertical')
     for sx in (-1, 1):
-        rocker = P.rounded_box(f'head_rocker_{ "L" if sx < 0 else "R"}',
-                               (0.042, 0.022, 0.05), (sx * 0.052, -0.122, -0.032),
-                               molded, body, radius=0.007)
-        rocker.rotation_euler = (-0.25, 0, 0)
-        R.tag_control(rocker, 'lift', 'Lift / lower rocker', 'vertical', True)
-    horn = P.cyl('head_horn', 0.02, 0.014, (0, -0.125, -0.035), M.button_red(), body,
-                 axis='Y')
-    horn.rotation_euler = (math.pi / 2 - 0.25, 0, 0)
-    R.tag_control(horn, 'horn', 'Horn button', 'button', True)
+        horn = P.cyl(f'head_horn_{ "L" if sx < 0 else "R"}', 0.017, 0.013,
+                     (sx * 0.066, -0.139, -0.041), M.warning_amber(), body,
+                     axis='Y', bevel=0.002)
+        R.tag_control(horn, 'horn',
+                      f'{"Left" if sx < 0 else "Right"} horn button',
+                      'button', True, motion='press')
 
-    # belly-button emergency reverse across the head's lower front
-    belly = P.rounded_box('head_belly', (0.17, 0.10, 0.05), (0, -0.045, -0.098),
-                          M.grip_rubber(), body, radius=0.02)
-    belly.rotation_euler = (0.35, 0, 0)
-    R.tag_control(belly, 'belly', 'Emergency reverse belly button', 'button', True)
+    # The lower red pad is the operator-contact emergency reverse control.
+    belly = P.rounded_box('head_belly_reverse', (0.205, 0.095, 0.068),
+                          (0, -0.032, -0.112), M.button_red(), body, radius=0.025)
+    belly.rotation_euler = (0.32, 0, 0)
+    R.tag_control(belly, 'belly', 'Emergency reverse belly pad', 'button',
+                  True, motion='press')
 
 
 # ------------------------------------------------------------------------ build
@@ -265,8 +283,9 @@ def build():
     tiller(root)
     # Walk-behind: the operator stands on the floor beside the tiller, so the
     # eye is a plain standing eye height above ground.
-    cam = R.empty('rig_cameraMount', (0.34, -1.45, 1.64), root)
-    cam.rotation_euler = (0, 0, -0.12)  # walk-beside stance (allowed on this empty)
+    R.empty('rig_xrOrigin', (0.24, -1.52, 0.0), root)
+    cam = R.empty('rig_cameraMount', (0.24, -1.52, 1.64), root)
+    cam.rotation_euler = (0, 0, -0.08)  # natural walk-behind offset
     root['spec'] = 'Raymond 8210 walkie pallet truck 24V'
     return {
         'name': 'raymond_8210',

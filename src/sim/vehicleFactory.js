@@ -58,6 +58,7 @@ function attachControlMetadata(object) {
     label: extras.ctrl_label || extras.ctrl_action,
     axis: extras.ctrl_axis || 'vertical',
     spring: !!extras.ctrl_spring,
+    motion: extras.ctrl_motion || extras.ctrl_axis || 'vertical',
   }
   if (object.material) {
     object.material = object.material.clone()
@@ -119,6 +120,7 @@ function mapRig(gltfScene, profile) {
     reachGroup: get('rig_reachGroup'),
     platform: get('rig_platform'),
     cameraMount: get('rig_cameraMount') || gltfScene,
+    xrOrigin: get('rig_xrOrigin'),
     controls: gltfScene,
     steerPivot: get('rig_steerPivot'),
     travelPivot: get('rig_travelPivot'),

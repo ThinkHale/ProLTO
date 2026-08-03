@@ -4,11 +4,17 @@ Spec anchors (m): overall width 1.07, overhead guard 2.1, mast lowered 3.3,
 cushion front tires d0.457 (outer faces at +-0.5335), single centered rear
 steer wheel d0.35, tapered red counterweight, head length ~2.0.
 
+Operator configuration: legacy 4460 cowl shown in Raymond's official
+operator-eye photograph, with left-offset three-spoke spinner wheel, tapered
+sculpted column, three long cowl-mounted levers in accordion boots, and a small
+right-side monochrome display. This file does not mix in the later 4750 color
+touchscreen or armrest fingertip-control package.
+
 Blender axes: forks +Y, operator -Y, up +Z, truck-right +X.
 
 RIG NOTES
   rig_wheelPivot sits at the steering-wheel hub with a documented rest
-  rotation of +0.745 rad (42.7 deg) about +X — the tilt-column rake toward
+  rotation of +0.745 rad (42.7 deg) about +X, the tilt-column rake toward
   the operator. Its local Z runs along the column axis; the Simulator spins
   local Z for steering and preserves the X rake. All other rig empties are
   unrotated; rest tilts live on child meshes.
@@ -22,7 +28,7 @@ from lib import rig as R
 RED = M.raymond_red
 BLACK = M.frame_black
 
-COLUMN_RAKE = 0.745  # rad about +X, top of column leans toward operator (-Y)
+COLUMN_RAKE = 0.70  # rad about +X, photo matched legacy column rake
 
 
 def rounded_rect(w, h, r_bottom, r_top, z0=0.0, n=4):
@@ -62,7 +68,7 @@ def chassis_and_wheels(root):
         P.extrude_profile(f'fender_{"R" if side > 0 else "L"}', pts, 0.17, RED(), root,
                           plane='YZ', bevel=0.012, loc=(x0, 0, 0))
 
-    # cushion front tires — outer faces at +-0.5335 (overall width 1.07)
+    # Cushion front tires, with outer faces at +-0.5335 (overall width 1.07).
     wheels = []
     for index, sx in enumerate((-1, 1)):
         wheels.append(P.tire_cushion(f'rig_frontWheel_{index}', 0.2285, 0.152,
@@ -163,10 +169,12 @@ def mast_and_carriage(root):
     mast = R.empty('rig_mast', (0, 0.84, 0), root)
     P.mast_assembly(mast, height=3.3, stages=2, outer_width=0.90, rail_web=0.16,
                     cylinder_center=False, side_cylinders=True, chains=True)
-    # hydraulic hose pair up the mast center
+    # Hydraulic hoses stay at the rail edges. The official operator-eye image
+    # has twin chain runs and an open center window with no center cylinder.
     for sx in (-1, 1):
         P.tube(f'mast_hose_{"R" if sx > 0 else "L"}',
-               [(sx * 0.05, 0.10, 0.35), (sx * 0.05, 0.14, 1.6), (sx * 0.05, 0.10, 2.5)],
+               [(sx * 0.405, 0.10, 0.35), (sx * 0.405, 0.14, 1.6),
+                (sx * 0.405, 0.10, 2.5)],
                0.011, M.grip_rubber(), mast)
     carriage = R.empty('rig_carriage', (0, 0.16, 0.02), mast)
     P.box('carriage_plate', (0.88, 0.045, 0.40), (0, 0.10, 0.42), BLACK(), carriage, bevel=0.006)
@@ -189,62 +197,117 @@ def mast_and_carriage(root):
 
 # ------------------------------------------------------------- operator area
 def cowl_and_controls(root):
-    """Molded dash cowl, tilt column + wheel, cowl-mounted hydraulic levers."""
+    """Legacy Raymond 4460 cockpit from the official operator-eye photo."""
     molded = M.plastic_molded()
     rr = rounded_rect
-    sections = [(0.14, rr(0.80, 0.42, 0.03, 0.10, z0=0.40)),
-                (0.20, rr(0.88, 0.47, 0.03, 0.09, z0=0.40)),
-                (0.34, rr(0.88, 0.42, 0.03, 0.08, z0=0.40)),
-                (0.52, rr(0.86, 0.26, 0.03, 0.06, z0=0.40))]
-    P.loft_shell('cowl', sections, molded, root, subsurf=1)
-    P.box('cowl_kick', (0.84, 0.06, 0.34), (0, 0.52, 0.23), M.plastic_dark(), root, bevel=0.008)
-    P.box('cowl_seam', (0.52, 0.004, 0.006), (0, 0.517, 0.58), M.plastic_dark(), root, bevel=0.0015)
+    # Low cowl bridges the full entry width, then narrows around the column.
+    # It stays below the display and lever boots just as it does in the photo.
+    cowl_sections = [(0.05, rr(0.86, 0.30, 0.03, 0.07, z0=0.40)),
+                     (0.20, rr(0.92, 0.38, 0.03, 0.08, z0=0.40)),
+                     (0.38, rr(0.90, 0.35, 0.03, 0.08, z0=0.40)),
+                     (0.53, rr(0.82, 0.24, 0.03, 0.06, z0=0.40))]
+    P.loft_shell('cowl_low', cowl_sections, molded, root, subsurf=1)
+    P.box('cowl_kick', (0.84, 0.06, 0.34), (0, 0.52, 0.23),
+          M.plastic_dark(), root, bevel=0.008)
+    P.rounded_box('cowl_control_shelf', (0.70, 0.34, 0.09),
+                  (0.08, 0.105, 0.725), molded, root, radius=0.035,
+                  segments=6, rot=(-0.04, 0, 0))
 
-    # tilt steering column: shroud + boot are static, wheel spins on rig_wheelPivot
-    P.cyl('column_shroud', 0.042, 0.34, (0, 0.14, 0.93), M.plastic_dark(), root,
-          rot=(COLUMN_RAKE, 0, 0))
-    P.lathe('column_boot', [(0.075, 0.0), (0.062, 0.03), (0.050, 0.06), (0.046, 0.09)],
-            M.grip_rubber(), root, loc=(0, 0.26, 0.78), rot=(COLUMN_RAKE, 0, 0))
-    pivot = R.empty('rig_wheelPivot', (0, 0.02, 1.06), root)
+    # Tapered column molded as one housing. Its upper section leans rearward
+    # toward the operator instead of reading as a bare cylindrical post.
+    column_root = R.empty('column_housing_root', (-0.15, 0, 0), root)
+    column_sections = [(0.22, rr(0.26, 0.37, 0.035, 0.065, z0=0.45)),
+                       (0.12, rr(0.25, 0.47, 0.035, 0.065, z0=0.46)),
+                       (0.02, rr(0.24, 0.51, 0.035, 0.070, z0=0.52)),
+                       (-0.08, rr(0.22, 0.43, 0.035, 0.075, z0=0.66))]
+    P.loft_shell('column_housing', column_sections, molded, column_root,
+                 subsurf=1, bevel=0.008)
+    P.rounded_box('column_neck', (0.22, 0.16, 0.11), (-0.15, -0.075, 1.075),
+                  M.plastic_dark(), root, radius=0.04, segments=6,
+                  rot=(COLUMN_RAKE, 0, 0))
+    # Concentric bellows around the column tilt joint.
+    for i, radius in enumerate((0.075, 0.068, 0.060, 0.052)):
+        P.lathe(f'column_bellow_{i}', [(0.0, 0), (radius, 0),
+                                      (radius, 0.012), (0.0, 0.012)],
+                M.grip_rubber(), root,
+                loc=(-0.15, -0.015 - i * 0.018, 0.995 + i * 0.020),
+                rot=(COLUMN_RAKE, 0, 0))
+
+    # Left-offset three-spoke steering wheel with large lower-left spinner.
+    pivot = R.empty('rig_wheelPivot', (-0.15, -0.11, 1.12), root)
     pivot.rotation_euler = (COLUMN_RAKE, 0, 0)  # documented rake; local Z = column axis
-    wheel = P.steering_wheel('steer_wheel', radius=0.16, parent=pivot, loc=(0, 0, 0.03))
-    R.tag_control(wheel, 'steer', 'Tilt steering wheel', 'horizontal', False)
-    P.lathe('steer_spinner', [(0.0, 0.0), (0.017, 0.004), (0.020, 0.030), (0.0, 0.038)],
-            M.plastic_dark(), wheel, loc=(0.10, 0.0, 0.012))
+    wheel = P.steering_wheel('steer_wheel_legacy', radius=0.16,
+                             parent=pivot, loc=(0, 0, 0.03))
+    R.tag_control(wheel, 'steer', 'Legacy three-spoke steering wheel',
+                  'radial', False, motion='radial')
+    P.text_mesh('wheel_brand', 'RAYMOND', 0.016, 0.001,
+                M.decal_dark(), wheel, loc=(0, 0, 0.034), facing='+Z')
+    P.lathe('steer_spinner',
+            [(0.0, 0.0), (0.025, 0.004), (0.030, 0.030),
+             (0.027, 0.060), (0.0, 0.066)],
+            M.plastic_dark(), wheel, loc=(-0.105, -0.085, 0.020))
     horn = P.cyl('btn_horn', 0.05, 0.022, (0, 0, 0.075), M.grip_rubber(), pivot, bevel=0.006)
-    R.tag_control(horn, 'horn', 'Horn pad', 'button', True)
+    R.tag_control(horn, 'horn', 'Horn pad', 'button', True,
+                  motion='vertical')
 
-    # cowl-mounted hydraulic levers right of the column (lift / tilt / sideshift)
-    lever_specs = (('lift', 'Lift / lower lever', 0.15),
-                   ('tilt', 'Mast tilt lever', 0.24),
-                   ('sideshift', 'Sideshift lever', 0.33))
-    lean = 0.18  # child meshes lean toward the operator; empties stay unrotated
+    # Three long cowl-mounted levers in individual accordion boots. This is
+    # the named three-function legacy configuration, not an optional fourth
+    # auxiliary lever or any later fingertip-control package.
+    lever_specs = (('lift', 'Lift and lower lever', 0.16),
+                   ('tilt', 'Mast tilt lever', 0.27),
+                   ('sideshift', 'Integral sideshift lever', 0.38))
     for i, (action, label, x) in enumerate(lever_specs):
-        piv = R.empty(f'rig_lever_{i}', (x, 0.20, 0.845), root)
-        P.lathe(f'lever_boot_{i}', [(0.034, 0.0), (0.026, 0.018), (0.016, 0.038), (0.013, 0.05)],
+        piv = R.empty(f'rig_lever_{i}', (x, 0.17, 0.765), root)
+        P.lathe(f'lever_boot_{i}',
+                [(0.0, 0), (0.037, 0), (0.041, 0.012), (0.032, 0.026),
+                 (0.036, 0.040), (0.027, 0.054), (0.030, 0.068),
+                 (0.018, 0.084), (0.0, 0.086)],
                 M.grip_rubber(), piv)
-        shaft = P.cyl(f'lever_shaft_{i}', 0.009, 0.20, (0, -0.018, 0.098), M.steel_dark(),
-                      piv, rot=(lean, 0, 0))
-        knob = P.lathe(f'lever_knob_{i}', [(0.0, 0.0), (0.020, 0.002), (0.027, 0.020),
-                                           (0.024, 0.044), (0.012, 0.056), (0.0, 0.058)],
-                       M.plastic_dark(), shaft, loc=(0, 0, 0.10))
-        R.tag_control(knob, action, label, 'vertical', True)
+        shaft = P.cyl(f'lever_shaft_{i}', 0.010, 0.255,
+                      (0, -0.032, 0.132), M.steel_dark(), piv,
+                      rot=(0.25, 0, 0), verts=24)
+        knob = P.rounded_box(f'lever_knob_{i}', (0.050, 0.040, 0.078),
+                             (0, -0.066, 0.268), M.plastic_dark(), piv,
+                             radius=0.017, segments=6, rot=(0.25, 0, 0))
+        R.tag_control(knob, action, label, 'vertical', True,
+                      motion='fore-aft')
+        P.box(f'lever_pictogram_{i}', (0.025, 0.004, 0.016),
+              (0, -0.089, 0.278), M.decal_white(), piv, bevel=0.002,
+              rot=(0.25, 0, 0))
 
-    # instrumentation: display pod left of column, key switch, e-stop
-    P.display('display_4460', 0.15, 0.10, parent=root, loc=(-0.24, 0.20, 0.86),
-              rot=(0.35, 0, 0), screen_name='screen_4460')
+    # Small monochrome display sits below and to the right of the lever bank.
+    # It is deliberately not the large later-generation color touchscreen.
+    P.rounded_box('display_4460_recess', (0.205, 0.055, 0.125),
+                  (0.315, -0.025, 0.738), M.plastic_dark(), root,
+                  radius=0.018, segments=5, rot=(0.62, 0, 0))
+    P.display('display_4460', 0.165, 0.082, parent=root,
+              loc=(0.315, -0.055, 0.752), rot=(0.62, 0, 0),
+              screen_name='screen_4460')
+    for i, x in enumerate((0.265, 0.300, 0.335, 0.370)):
+        P.cyl(f'display_button_{i}', 0.007, 0.005,
+              (x, -0.102, 0.716), M.plastic_dark(), root,
+              rot=(math.pi / 2 + 0.62, 0, 0), verts=18)
+
+    # Legacy key switch and parking-brake rocker on the inner cowl face.
     P.lathe('key_switch', [(0.0, 0.0), (0.020, 0.0), (0.022, 0.014), (0.007, 0.02),
                            (0.007, 0.032), (0.0, 0.032)],
-            M.steel_dark(), root, loc=(-0.12, 0.30, 0.825), rot=(0.35, 0, 0))
-    P.cyl('btn_estop', 0.024, 0.030, (0.12, 0.30, 0.83), M.button_red(), root,
-          rot=(0.35, 0, 0), bevel=0.005)
-    P.label('label_warn', (0.07, 0.09), M.warning_amber(), root, (0.30, 0.138, 0.70))
+            M.steel_dark(), root, loc=(-0.01, 0.08, 0.725),
+            rot=(0.48, 0, 0))
+    P.rounded_box('parking_brake_switch', (0.045, 0.020, 0.060),
+                  (0.055, 0.055, 0.725), M.plastic_dark(), root,
+                  radius=0.008, segments=4, rot=(0.48, 0, 0))
+    P.label('label_warn', (0.07, 0.09), M.warning_amber(), root,
+            (0.46, 0.12, 0.62))
 
     # pedals: accelerator right, service brake center-left
-    accel = P.pedal('pedal_accel', (0.10, 0.20), parent=root, loc=(0.20, 0.10, 0.44), angle=-0.35)
-    R.tag_control(accel, 'travel', 'Accelerator pedal', 'vertical', True)
-    brake = P.pedal('pedal_brake', (0.11, 0.14), parent=root, loc=(-0.03, 0.10, 0.455), angle=-0.30)
-    R.tag_control(brake, 'brake', 'Service brake pedal', 'vertical', True)
+    accel = P.pedal('pedal_accel', (0.10, 0.20), parent=root,
+                    loc=(0.20, 0.05, 0.44), angle=-0.35)
+    R.tag_control(accel, 'travel', 'Accelerator pedal', 'pedal', True,
+                  motion='fore-aft')
+    brake = P.pedal('pedal_brake', (0.12, 0.15), parent=root,
+                    loc=(-0.02, 0.05, 0.455), angle=-0.30)
+    R.tag_control(brake, 'brake', 'Service brake pedal', 'pedal', True,
+                  motion='fore-aft')
 
 
 def seat_4460(root):
@@ -254,7 +317,8 @@ def seat_4460(root):
     P.rounded_box('seat_frame', (0.42, 0.44, 0.07), (0, 0, -0.02), BLACK(), base, radius=0.012)
     cushion = P.rounded_box('seat_cushion', (0.50, 0.48, 0.13), (0, 0.01, 0.08), vinyl,
                             base, radius=0.05)
-    R.tag_control(cushion, 'presence', 'Operator presence (seat switch)', 'button', False)
+    R.tag_control(cushion, 'presence', 'Operator presence (seat switch)',
+                  'button', False, motion='vertical')
     for sx in (-1, 1):
         P.rounded_box(f'seat_bolster_{"R" if sx > 0 else "L"}', (0.09, 0.44, 0.15),
                       (sx * 0.235, 0.0, 0.10), vinyl, base, radius=0.04)
@@ -277,10 +341,12 @@ def build():
     mast_and_carriage(root)
     cowl_and_controls(root)
     seat_4460(root)
-    # Seated eye, matched to the seat deck height and the 2.1 m overhead guard.
-    # Seated eye: cushion top 0.945 m + 0.73 m seated eye height.
+    # Tracked-floor origin and desktop eye stay separate. WebXR supplies the
+    # seated user's real tracked eye height above the 0.431 m floorboard.
+    R.empty('rig_xrOrigin', (0, -0.44, 0.431), root)
     R.empty('rig_cameraMount', (0, -0.44, 1.68), root)
-    root['spec'] = 'Raymond 4460 three-wheel sit-down counterbalance 36V'
+    root['spec'] = 'Raymond 4460 three-wheel sit-down 36V, legacy three-lever cowl'
+    root['control_configuration'] = 'RAYMOND4460_LEGACY_3LEVER_MONO_DISPLAY'
     return {
         'name': 'raymond_4460',
         'cab_view': {'loc': (0, -0.48, 1.69), 'target': (0.0, 0.9, 0.55), 'focal': 19},

@@ -54,7 +54,7 @@ converts this to the Y-up, forks-toward `-Z` orientation the simulator drives.
 module silently disables the motion it drives. The full list lives in
 `assets-src/lib/rig.py`; the load-bearing ones are `rig_root`, `rig_mast`,
 `rig_carriage`, `rig_reachGroup`, `rig_platform`, the control pivots, the wheel
-meshes, and `rig_cameraMount`.
+meshes, `rig_cameraMount`, and `rig_xrOrigin`.
 
 Two rules make the animation code correct:
 
@@ -64,10 +64,11 @@ Two rules make the animation code correct:
   overwriting it, so a carriage or reach group may sit at a non-zero offset.
 
 Interactive controls are meshes tagged with `ctrl_action`, `ctrl_label`,
-`ctrl_axis`, and `ctrl_spring` custom properties. These export as glTF `extras`
-and are read back into `object.userData` in the browser, where the raycaster
-uses them for pointer and controller interaction. Controls must be real meshes
-large enough to hit reliably with a VR pointer.
+`ctrl_axis`, `ctrl_spring`, and optional `ctrl_motion` custom properties. These
+export as glTF `extras` and are read back into `object.userData` in the browser.
+Desktop uses pointer picking. WebXR first tests near-hand contact, then resolves
+movement in the control's own local frame. A laser ray is available only when
+the evaluator enables accessibility input.
 
 Verify an export before committing it:
 

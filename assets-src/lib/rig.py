@@ -20,10 +20,11 @@ whose documented rest rotation the Simulator preserves on other axes):
   rig_lever_0..2    counterbalance hydraulic lever pivots
   rig_gate_0..1     order picker side gates
   rig_cameraMount   operator eye point empty
+  rig_xrOrigin      tracked-floor origin at the operator's physical floor
 
 Interactive controls are MESH objects tagged with custom properties
-(ctrl_action/ctrl_label/ctrl_axis/ctrl_spring) which export as glTF extras and
-surface in three.js as object.userData.
+(ctrl_action/ctrl_label/ctrl_axis/ctrl_spring/ctrl_motion) which export as glTF
+extras and surface in three.js as object.userData.
 """
 import bpy
 
@@ -41,12 +42,14 @@ def empty(name, location=(0, 0, 0), parent=None):
     return obj
 
 
-def tag_control(obj, action, label, axis='vertical', spring=True):
+def tag_control(obj, action, label, axis='vertical', spring=True, motion=None):
     assert action in CONTROL_ACTIONS, f'unknown control action {action}'
     obj['ctrl_action'] = action
     obj['ctrl_label'] = label
     obj['ctrl_axis'] = axis
     obj['ctrl_spring'] = 1 if spring else 0
+    if motion:
+        obj['ctrl_motion'] = motion
     return obj
 
 

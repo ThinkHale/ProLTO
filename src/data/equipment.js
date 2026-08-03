@@ -7,20 +7,20 @@ export const equipmentFamilies = [
 
 export const equipmentProfiles = {
   'Crown:reach': {
-    manufacturer: 'Crown', family: 'reach', model: 'RR 5725-45', capacity: 4500, maxLift: 400,
+    manufacturer: 'Crown', family: 'reach', model: 'RR 5725-45, 36V', capacity: 4500, maxLift: 400,
     maxSpeed: 8, forksFirstSpeed: 6.8, loadedPowerUnitSpeed: 7.2, loadedForksSpeed: 5.7,
     liftEmptyFpm: 153, liftLoadedFpm: 82, lowerFpm: 110, tiltForward: 3, tiltBack: 4,
     safeSpeed: 4.5, stance: 'Variable side stance', steerRatio: 1.15,
     driveUnit: 'rear', control: 'Multi-Task Control Handle', color: 0xd9d7cf,
     functions: ['Travel speed and direction', 'Lift / lower', 'Reach / retract', 'Tilt', 'Sideshift'],
-    guidance: 'RR 5725-45 36V benchmark. Rated travel and hydraulic values follow Crown specifications. Site limits still govern operation.',
+    guidance: 'Fixed pilot configuration: standard non-S RR 5725-45 36V compartment with Multi-Task handle, brake pedal, presence pad, and Entry Bar.',
   },
   'Raymond:reach': {
-    manufacturer: 'Raymond', family: 'reach', model: '7500 Universal Stance', capacity: 4500, maxLift: 444,
+    manufacturer: 'Raymond', family: 'reach', model: '7500 Universal Stance + secondary handle', capacity: 4500, maxLift: 444,
     maxSpeed: 7.5, safeSpeed: 4.5, stance: 'Universal stance', steerRatio: 1.2,
     driveUnit: 'rear', control: 'Single-axis control handle', color: 0xd94a3a,
     functions: ['Travel speed and direction', 'Lift / lower', 'Reach / retract', 'Tilt', 'Sideshift'],
-    guidance: 'The control handle supports simultaneous hydraulic functions. Confirm the configured steering mode before operation.',
+    guidance: 'Fixed pilot configuration: 36V Universal Stance compartment with integrated display, primary control handle, secondary handle, and deadman pedal.',
   },
   'Crown:order-picker': {
     manufacturer: 'Crown', family: 'order-picker', model: 'SP 1500', capacity: 3000, maxLift: 402,
@@ -51,18 +51,18 @@ export const equipmentProfiles = {
     guidance: 'The tiller brake zones and emergency reverse switch are critical. Walk to the side with a clear path, never directly ahead of the load.',
   },
   'Crown:counterbalance': {
-    manufacturer: 'Crown', family: 'counterbalance', model: 'SC 6200', capacity: 4000, maxLift: 312,
+    manufacturer: 'Crown', family: 'counterbalance', model: 'SC 6200, manual levers', capacity: 4000, maxLift: 312,
     maxSpeed: 10.5, safeSpeed: 5, stance: 'Seated, four-wheel', steerRatio: 0.72,
     driveUnit: 'front', control: 'Steering wheel + hydraulic levers', color: 0xd9d7cf,
     functions: ['Accelerator / brake', 'Lift / lower', 'Tilt', 'Sideshift', 'Horn'],
     guidance: 'Use the operator restraint. Rear steering causes counterweight swing. Keep the load upgrade on grades.',
   },
   'Raymond:counterbalance': {
-    manufacturer: 'Raymond', family: 'counterbalance', model: '4460', capacity: 4000, maxLift: 283,
+    manufacturer: 'Raymond', family: 'counterbalance', model: '4460, legacy cockpit', capacity: 4000, maxLift: 283,
     maxSpeed: 10.2, safeSpeed: 5, stance: 'Seated, three-wheel', steerRatio: 0.82,
     driveUnit: 'front', control: 'Tilt wheel + cowl hydraulic levers', color: 0xd94a3a,
     functions: ['Accelerator / brake', 'Lift / lower', 'Tilt', 'Integral sideshift', 'Horn'],
-    guidance: 'The automatic parking brake applies at a full stop. Rear swing, visibility, and attachment capacity must be managed.',
+    guidance: 'Fixed legacy cockpit configuration with monochrome display, three mechanical cowl levers, and open-view mast. Do not treat it as the 2024 enhanced 4460.',
   },
 }
 

@@ -1,6 +1,8 @@
 import { forwardRef, useEffect, useImperativeHandle, useRef, useState } from 'react'
 import * as THREE from 'three'
 import { HDRLoader } from 'three/addons/loaders/HDRLoader.js'
+import { XRControllerModelFactory } from 'three/addons/webxr/XRControllerModelFactory.js'
+import { XRHandModelFactory } from 'three/addons/webxr/XRHandModelFactory.js'
 import { Crosshair, Gamepad2, Headphones, Keyboard, MousePointer2, RotateCcw, Volume2 } from 'lucide-react'
 import { controlMeshes, createVehicleRig } from '../sim/vehicleFactory.js'
 import { createWarehouse } from '../sim/warehouse.js'
@@ -17,20 +19,27 @@ const DYNAMICS = {
 // Resting head pose per family. Stand-up trucks look down into a near console;
 // seated and walk-behind operators sit back from theirs.
 const VIEWS = {
-  reach: { fov: 68, pitch: -.26 },
+  reach: { fov: 70, pitch: -.38 },
   'order-picker': { fov: 70, pitch: -.4 },
   pallet: { fov: 72, pitch: -.2 },
-  counterbalance: { fov: 70, pitch: -.32 },
+  counterbalance: { fov: 74, pitch: -.5 },
+}
+
+const FALLBACK_XR_EYE_HEIGHT = {
+  reach: 1.63,
+  'order-picker': 1.63,
+  pallet: 1.58,
+  counterbalance: 1.18,
 }
 
 const clampInput = (value) => THREE.MathUtils.clamp(value, -1, 1)
 
 function controlPrompt(profile) {
-  if (profile.family === 'reach') return 'Drag the left steering tiller and right Multi-Task handle. Presence engages when you enter.'
-  if (profile.family === 'order-picker') return 'Use the opposing hand controls. The deadman engages on entry, and your eye point rises with the platform.'
+  if (profile.family === 'reach') return 'Operate the modeled steering and travel controls. The deadman or presence control must be held before movement.'
+  if (profile.family === 'order-picker') return 'Use the opposing hand controls while holding the deadman control. Your eye point rises with the platform.'
   if (profile.family === 'pallet' && profile.stance.includes('Walk')) return 'Drag the tiller head to steer and use either butterfly throttle while staying beside the truck.'
-  if (profile.family === 'pallet') return 'Operate the X10 handle from the rider platform. Fork lift is limited to pallet clearance.'
-  return 'Turn the wheel, press the pedals, and manipulate each hydraulic lever. Account for rear counterweight swing.'
+  if (profile.family === 'pallet') return 'Operate the X10 handle from the rider platform while holding the presence control. Fork lift is limited to pallet clearance.'
+  return 'Hold the presence control, turn the wheel, press the pedals, and manipulate each hydraulic lever. Account for rear counterweight swing.'
 }
 
 const Simulator = forwardRef(function Simulator({ profile, onTelemetry, onSafetyEvent, running, onRunningChange }, ref) {
@@ -39,8 +48,10 @@ const Simulator = forwardRef(function Simulator({ profile, onTelemetry, onSafety
   const runningRef = useRef(running)
   const previousRunningRef = useRef(running)
   const audioRef = useRef(true)
+  const assistiveXRRef = useRef(false)
   const [xrSupported, setXrSupported] = useState(false)
   const [audioOn, setAudioOn] = useState(true)
+  const [assistiveXR, setAssistiveXR] = useState(false)
   const [guideOpen, setGuideOpen] = useState(false)
   const [activeControl, setActiveControl] = useState('Cab controls armed')
   const [stability, setStability] = useState(100)
@@ -51,7 +62,14 @@ const Simulator = forwardRef(function Simulator({ profile, onTelemetry, onSafety
       const engine = engineRef.current
       if (!engine || !navigator.xr) return false
       const session = await navigator.xr.requestSession('immersive-vr', { requiredFeatures: ['local-floor'], optionalFeatures: ['bounded-floor', 'hand-tracking'] })
-      await engine.renderer.xr.setSession(session)
+      engine.prepareXR(session)
+      try {
+        await engine.renderer.xr.setSession(session)
+      } catch (error) {
+        engine.restoreDesktopCamera()
+        await session.end().catch(() => {})
+        throw error
+      }
       onRunningChange(true)
       return true
     },
@@ -66,11 +84,12 @@ const Simulator = forwardRef(function Simulator({ profile, onTelemetry, onSafety
   useEffect(() => {
     const wasRunning = previousRunningRef.current
     runningRef.current = running
-    if (running && !wasRunning) engineRef.current?.setPresence(true, 'Presence engaged on operator entry')
+    if (running && !wasRunning) engineRef.current?.setPresence(false, 'Engage the physical presence control')
     if (!running && wasRunning) engineRef.current?.setPresence(false, 'Operator station exited')
     previousRunningRef.current = running
   }, [running])
   useEffect(() => { audioRef.current = audioOn }, [audioOn])
+  useEffect(() => { assistiveXRRef.current = assistiveXR }, [assistiveXR])
 
   useEffect(() => {
     const mount = mountRef.current
@@ -79,7 +98,7 @@ const Simulator = forwardRef(function Simulator({ profile, onTelemetry, onSafety
     setPresence(false)
     const scene = new THREE.Scene()
     scene.background = new THREE.Color(0x6a7173)
-    // Light haze only at the far end of the building — enough for depth without
+    // Light haze only at the far end of the building, enough for depth without
     // graying out rack faces the operator is judging distance against.
     scene.fog = new THREE.Fog(0x767d7f, 34, 78)
     const view = VIEWS[profile.family]
@@ -128,13 +147,24 @@ const Simulator = forwardRef(function Simulator({ profile, onTelemetry, onSafety
     const { pallet, pedestrians } = createWarehouse(scene)
     let disposed = false
     const disposers = []
-    setActiveControl('Loading equipment model…')
+    setActiveControl('Loading equipment model...')
     createVehicleRig(profile).then((rig) => {
     if (disposed) return
     setActiveControl('Cab controls armed')
     rig.root.position.set(0, 0, 11.5)
-    rig.cameraMount.add(camera)
+    const desktopCameraMount = rig.cameraMount
+    desktopCameraMount.add(camera)
+    camera.position.set(0, 0, 0)
     scene.add(rig.root)
+    let xrOrigin = rig.xrOrigin
+    if (!xrOrigin) {
+      xrOrigin = new THREE.Group()
+      xrOrigin.name = 'derived_xr_floor_origin'
+      xrOrigin.position.copy(desktopCameraMount.position)
+      xrOrigin.quaternion.copy(desktopCameraMount.quaternion)
+      xrOrigin.position.y = Math.max(0, xrOrigin.position.y - FALLBACK_XR_EYE_HEIGHT[profile.family])
+      desktopCameraMount.parent.add(xrOrigin)
+    }
     const interactables = controlMeshes(rig)
     const presenceControl = interactables.find((object) => object.userData.control.action === 'presence')
     if (presenceControl) presenceControl.userData.restY = presenceControl.position.y
@@ -145,8 +175,36 @@ const Simulator = forwardRef(function Simulator({ profile, onTelemetry, onSafety
     const manual = { ...ZERO }
     const state = {
       x: 0, z: 11.5, heading: 0, speed: 0, steer: 0, fork: 0, reach: 0, tilt: 0, sideshift: 0,
-      load: 0, horn: false, presence: !requiresPresence || runningRef.current, presenceLatched: runningRef.current, viewYaw: 0, viewPitch: defaultViewPitch, lastTelemetry: 0,
+      load: 0, horn: false, presence: !requiresPresence, presenceLatched: false, viewYaw: 0, viewPitch: defaultViewPitch, lastTelemetry: 0,
       eventLocks: {}, keys: new Set(), pointerDrag: null, lookDrag: null, xrDrags: new Map(), hovered: null,
+    }
+    let activeXRSession = null
+    let xrSessionEnd = null
+    let clearXRInteractions = () => {}
+    const restoreDesktopCamera = () => {
+      if (activeXRSession && xrSessionEnd) activeXRSession.removeEventListener('end', xrSessionEnd)
+      activeXRSession = null
+      xrSessionEnd = null
+      desktopCameraMount.add(camera)
+      camera.position.set(0, 0, 0)
+      state.viewYaw = 0
+      state.viewPitch = defaultViewPitch
+      camera.rotation.set(defaultViewPitch, 0, 0)
+    }
+    const prepareXR = (session) => {
+      if (activeXRSession) restoreDesktopCamera()
+      state.viewYaw = 0
+      state.viewPitch = 0
+      xrOrigin.add(camera)
+      camera.position.set(0, 0, 0)
+      camera.rotation.set(0, 0, 0)
+      activeXRSession = session
+      xrSessionEnd = () => {
+        clearXRInteractions('XR session ended, controls released')
+        restoreDesktopCamera()
+        if (!disposed) onRunningChange(false)
+      }
+      session.addEventListener('end', xrSessionEnd, { once: true })
     }
     const updatePresence = (engaged, label = engaged ? 'Presence control engaged' : 'Presence control released') => {
       state.presenceLatched = engaged
@@ -166,11 +224,11 @@ const Simulator = forwardRef(function Simulator({ profile, onTelemetry, onSafety
       rig.root.position.set(0, 0, 11.5)
       rig.root.rotation.y = 0
       camera.rotation.set(defaultViewPitch, 0, 0)
-      updatePresence(runningRef.current, runningRef.current ? 'Presence engaged after reset' : 'Cab controls armed')
+      updatePresence(false, runningRef.current ? 'Engage the physical presence control' : 'Cab controls armed')
       setStability(100)
     }
-    engineRef.current = { renderer, reset, state, rig, setPresence: updatePresence }
-    updatePresence(runningRef.current, runningRef.current ? 'Presence engaged on operator entry' : 'Cab controls armed')
+    engineRef.current = { renderer, reset, state, rig, setPresence: updatePresence, prepareXR, restoreDesktopCamera }
+    updatePresence(false, runningRef.current ? 'Engage the physical presence control' : 'Cab controls armed')
 
     const soundHorn = () => {
       if (!audioRef.current) return
@@ -231,6 +289,34 @@ const Simulator = forwardRef(function Simulator({ profile, onTelemetry, onSafety
       if (control.spring || ['horn', 'belly', 'brake'].includes(control.action)) manual[control.action] = 0
       if (control.action === 'horn') state.horn = false
     }
+    const endXRInteraction = (controller, label) => {
+      const drag = state.xrDrags.get(controller)
+      if (!drag) return
+      if (!drag.presenceOnly) releaseControl(drag.object)
+      state.xrDrags.delete(controller)
+      if (drag.presenceOnly) {
+        const presenceStillHeld = [...state.xrDrags.values()].some((candidate) => candidate.presenceOnly)
+        updatePresence(
+          presenceStillHeld,
+          presenceStillHeld ? 'Another presence control remains engaged' : label || `${drag.object.userData.control.label} released`,
+        )
+      } else if (label) setActiveControl(label)
+    }
+    clearXRInteractions = (label, updateUI = true) => {
+      state.xrDrags.forEach((drag) => { if (!drag.presenceOnly) releaseControl(drag.object) })
+      state.xrDrags.clear()
+      if (state.pointerDrag?.object) releaseControl(state.pointerDrag.object)
+      state.pointerDrag = null
+      state.lookDrag = null
+      state.keys.clear()
+      Object.assign(manual, ZERO)
+      state.horn = false
+      if (updateUI) updatePresence(false, label)
+      else {
+        state.presenceLatched = false
+        state.presence = !requiresPresence
+      }
+    }
     const pointerDown = (event) => {
       const object = event.button === 2 ? null : pickControl(event)
       if (object) {
@@ -277,45 +363,119 @@ const Simulator = forwardRef(function Simulator({ profile, onTelemetry, onSafety
     renderer.domElement.addEventListener('pointercancel', pointerUp)
     renderer.domElement.addEventListener('contextmenu', preventMenu)
 
-    const controllers = [0, 1].map((index) => {
-      const controller = renderer.xr.getController(index)
-      const line = new THREE.Line(new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(), new THREE.Vector3(0, 0, -2.5)]), new THREE.LineBasicMaterial({ color: 0xffad21 }))
-      controller.add(line)
-      scene.add(controller)
-      const selectStart = () => {
-        const origin = new THREE.Vector3()
-        const direction = new THREE.Vector3(0, 0, -1)
-        controller.getWorldPosition(origin)
-        direction.applyQuaternion(controller.getWorldQuaternion(new THREE.Quaternion()))
-        raycaster.set(origin, direction)
-        const object = raycaster.intersectObjects(interactables, false)[0]?.object
-        if (!object) return
-        if (object.userData.control.action === 'presence') {
-          setActiveControl(object.userData.control.label)
-          togglePresence()
+    const pulseSource = (source, intensity = .35, duration = 24) => {
+      if (!renderer.xr.getSession()) return
+      try {
+        const actuator = source?.gamepad?.hapticActuators?.[0]
+        if (actuator?.pulse) {
+          const result = actuator.pulse(intensity, duration)
+          result?.catch?.(() => {})
           return
         }
-        const position = new THREE.Vector3()
-        controller.getWorldPosition(position)
-        state.xrDrags.set(controller, { object, position, start: manual[object.userData.control.action] || 0 })
+        const result = source?.gamepad?.vibrationActuator?.playEffect?.('dual-rumble', {
+          duration, strongMagnitude: intensity, weakMagnitude: intensity * .7,
+        })
+        result?.catch?.(() => {})
+      } catch {
+        // Haptics are optional and may disappear before input-source cleanup runs.
+      }
+    }
+    const nearControl = (position) => {
+      let closest = null
+      let closestDistance = .12
+      let closestSurfaceArea = Infinity
+      const box = new THREE.Box3()
+      const size = new THREE.Vector3()
+      for (const object of interactables) {
+        box.setFromObject(object)
+        const distance = box.distanceToPoint(position)
+        box.getSize(size)
+        const surfaceArea = 2 * (size.x * size.y + size.x * size.z + size.y * size.z)
+        const nearer = distance < closestDistance - .001
+        const tiedAndSmaller = Math.abs(distance - closestDistance) <= .001 && surfaceArea < closestSurfaceArea
+        if (nearer || tiedAndSmaller) {
+          closest = object
+          closestDistance = distance
+          closestSurfaceArea = surfaceArea
+        }
+      }
+      return closest
+    }
+    const controllerModelFactory = new XRControllerModelFactory()
+    const handModelFactory = new XRHandModelFactory()
+    const hands = [0, 1].map((index) => {
+      const hand = renderer.xr.getHand(index)
+      hand.add(handModelFactory.createHandModel(hand, 'mesh'))
+      scene.add(hand)
+      return hand
+    })
+    const controllers = [0, 1].map((index) => {
+      const controller = renderer.xr.getController(index)
+      const grip = renderer.xr.getControllerGrip(index)
+      grip.add(controllerModelFactory.createControllerModel(grip))
+      scene.add(grip)
+      const line = new THREE.Line(new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(), new THREE.Vector3(0, 0, -2.5)]), new THREE.LineBasicMaterial({ color: 0xffad21 }))
+      line.visible = false
+      controller.add(line)
+      scene.add(controller)
+      const interactionPose = (source) => {
+        const hand = hands[index]
+        const fingertip = hand.joints?.['index-finger-tip']
+        if ((source?.hand || hand.visible) && fingertip) return { node: fingertip, root: hand }
+        if (source?.gripSpace) return { node: grip, root: grip }
+        return { node: controller, root: controller }
+      }
+      const selectStart = (event) => {
+        if (state.xrDrags.has(controller)) endXRInteraction(controller, 'Previous control released')
+        const pose = interactionPose(event.data)
+        const origin = new THREE.Vector3()
+        pose.node.getWorldPosition(origin)
+        let object = nearControl(origin)
+        if (!object && assistiveXRRef.current) {
+          const rayOrigin = new THREE.Vector3()
+          const direction = new THREE.Vector3(0, 0, -1)
+          controller.getWorldPosition(rayOrigin)
+          direction.applyQuaternion(controller.getWorldQuaternion(new THREE.Quaternion()))
+          raycaster.set(rayOrigin, direction)
+          object = raycaster.intersectObjects(interactables, false)[0]?.object
+        }
+        if (!object) return
+        pulseSource(event.data, .28, 18)
+        if (object.userData.control.action === 'presence') {
+          setActiveControl(object.userData.control.label)
+          updatePresence(true, `${object.userData.control.label} engaged`)
+          state.xrDrags.set(controller, { object, pose: pose.node, poseRoot: pose.root, presenceOnly: true, source: event.data })
+          return
+        }
+        const frame = object.parent || rig.root
+        const localStart = frame.worldToLocal(origin.clone())
+        state.xrDrags.set(controller, {
+          object,
+          frame,
+          pose: pose.node,
+          poseRoot: pose.root,
+          localStart,
+          startAngle: Math.atan2(localStart.z, localStart.x),
+          start: manual[object.userData.control.action] || 0,
+          source: event.data,
+          lastDetent: 0,
+        })
         setActiveControl(object.userData.control.label)
         if (['button', 'pedal'].includes(object.userData.control.axis)) {
           manual[object.userData.control.action] = 1
           if (object.userData.control.action === 'horn') soundHorn()
         }
       }
-      const selectEnd = () => {
-        const drag = state.xrDrags.get(controller)
-        if (drag) releaseControl(drag.object)
-        state.xrDrags.delete(controller)
-      }
+      const selectEnd = () => endXRInteraction(controller)
+      const disconnected = () => endXRInteraction(controller, 'XR input disconnected, control released')
       controller.addEventListener('selectstart', selectStart)
       controller.addEventListener('selectend', selectEnd)
-      return { controller, selectStart, selectEnd }
+      controller.addEventListener('disconnected', disconnected)
+      return { controller, grip, line, selectStart, selectEnd, disconnected }
     })
 
     const readXRAxes = () => {
-      if (!renderer.xr.isPresenting) return ZERO
+      if (!renderer.xr.isPresenting || !assistiveXRRef.current) return ZERO
       const sources = [...(renderer.xr.getSession()?.inputSources || [])]
       const left = sources.find((source) => source.handedness === 'left')?.gamepad
       const right = sources.find((source) => source.handedness === 'right')?.gamepad
@@ -330,13 +490,37 @@ const Simulator = forwardRef(function Simulator({ profile, onTelemetry, onSafety
       timer.update()
       const dt = Math.min(timer.getDelta(), .04)
       const enabled = runningRef.current
+      controllers.forEach(({ line }) => { line.visible = renderer.xr.isPresenting && assistiveXRRef.current })
       const xr = readXRAxes()
       state.xrDrags.forEach((drag, controller) => {
+        if (drag.presenceOnly) return
+        if (!drag.poseRoot.visible) {
+          endXRInteraction(controller, 'XR tracking lost, control released')
+          return
+        }
         const position = new THREE.Vector3()
-        controller.getWorldPosition(position)
+        drag.pose.getWorldPosition(position)
         const control = drag.object.userData.control
-        const delta = control.axis === 'horizontal' ? position.x - drag.position.x : position.y - drag.position.y
-        manual[control.action] = clampInput(drag.start + delta * 2.6)
+        if (['button', 'pedal'].includes(control.axis)) return
+        const local = drag.frame.worldToLocal(position.clone())
+        let delta
+        if (control.motion === 'radial') {
+          const angle = Math.atan2(local.z, local.x)
+          delta = Math.atan2(Math.sin(angle - drag.startAngle), Math.cos(angle - drag.startAngle)) * 1.6
+        } else if (control.motion === 'fore-aft') {
+          delta = (drag.localStart.z - local.z) * 4.5
+        } else if (control.motion === 'horizontal') {
+          delta = (local.x - drag.localStart.x) * 5
+        } else {
+          delta = (local.y - drag.localStart.y) * 5
+        }
+        const value = clampInput(drag.start + delta)
+        manual[control.action] = value
+        const detent = Math.round(value * 2)
+        if (detent !== drag.lastDetent) {
+          drag.lastDetent = detent
+          pulseSource(drag.source, detent === 0 ? .5 : .22, detent === 0 ? 30 : 16)
+        }
       })
       const keyboard = {
         travel: (state.keys.has('KeyW') || state.keys.has('ArrowUp') ? 1 : 0) - (state.keys.has('KeyS') || state.keys.has('ArrowDown') ? 1 : 0),
@@ -453,6 +637,16 @@ const Simulator = forwardRef(function Simulator({ profile, onTelemetry, onSafety
     })
 
     disposers.push(() => {
+      const session = activeXRSession || renderer.xr.getSession()
+      if (activeXRSession && xrSessionEnd) activeXRSession.removeEventListener('end', xrSessionEnd)
+      activeXRSession = null
+      xrSessionEnd = null
+      clearXRInteractions('XR session closed', false)
+      try {
+        session?.end()?.catch?.(() => {})
+      } catch {
+        // A session that is already ending needs no additional cleanup.
+      }
       window.removeEventListener('keydown', keyDown)
       window.removeEventListener('keyup', keyUp)
       renderer.domElement.removeEventListener('pointerdown', pointerDown)
@@ -460,10 +654,14 @@ const Simulator = forwardRef(function Simulator({ profile, onTelemetry, onSafety
       renderer.domElement.removeEventListener('pointerup', pointerUp)
       renderer.domElement.removeEventListener('pointercancel', pointerUp)
       renderer.domElement.removeEventListener('contextmenu', preventMenu)
-      controllers.forEach(({ controller, selectStart, selectEnd }) => {
+      controllers.forEach(({ controller, grip, selectStart, selectEnd, disconnected }) => {
         controller.removeEventListener('selectstart', selectStart)
         controller.removeEventListener('selectend', selectEnd)
+        controller.removeEventListener('disconnected', disconnected)
+        scene.remove(controller)
+        scene.remove(grip)
       })
+      hands.forEach((hand) => scene.remove(hand))
     })
     }).catch((error) => console.error('ProLTO simulator init failed:', error))
 
@@ -498,7 +696,7 @@ const Simulator = forwardRef(function Simulator({ profile, onTelemetry, onSafety
         <button onClick={() => setAudioOn((value) => !value)} aria-label={audioOn ? 'Mute audio' : 'Enable audio'}>{audioOn ? <Volume2 size={17} /> : <Headphones size={17} />}</button>
         <button onClick={() => engineRef.current?.reset()} aria-label="Reset vehicle"><RotateCcw size={17} /></button>
       </div>
-      {guideOpen && <div className="control-guide"><header><Gamepad2 size={18} /><b>{profile.control}</b></header><p><MousePointer2 size={14} /> Drag a visible cab control to manipulate it. Drag empty space, or right-drag, to look around.</p><p>Keyboard fallback: Control toggles presence, W/S travel, A/D steer, E/Q lift, R/F reach, T/G tilt, Z/C sideshift, B brake, Space horn.</p><p>VR: point at a physical control, hold trigger, and move it. Thumbsticks remain available for accessibility.</p><small>{profile.guidance}</small></div>}
+      {guideOpen && <div className="control-guide"><header><Gamepad2 size={18} /><b>{profile.control}</b></header><p><MousePointer2 size={14} /> Drag a visible cab control to manipulate it. Drag empty space, or right-drag, to look around.</p><p>Keyboard fallback: Control toggles presence, W/S travel, A/D steer, E/Q lift, R/F reach, T/G tilt, Z/C sideshift, B brake, Space horn.</p><p>VR assessment: reach to the modeled control, hold trigger or pinch, and move it through its physical axis. Hold the deadman control continuously.</p><label className="xr-accessibility"><input type="checkbox" checked={assistiveXR} onChange={(event) => setAssistiveXR(event.target.checked)} /> Enable laser and thumbstick accessibility controls</label><small>{profile.guidance}</small></div>}
       {!running && <div className="start-overlay"><MousePointer2 size={24} /><div><strong>First-person practical exercise</strong><span>{controlPrompt(profile)}</span></div><button onClick={() => onRunningChange(true)}>Enter operator station</button></div>}
     </section>
   )

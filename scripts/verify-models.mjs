@@ -4,14 +4,14 @@
 import { readFileSync, existsSync } from 'node:fs'
 
 const REQUIRED = {
-  crown_rr5725: { nodes: ['rig_root', 'rig_mast', 'rig_carriage', 'rig_reachGroup', 'rig_steerPivot', 'rig_travelPivot', 'rig_driveWheel', 'rig_cameraMount'], controls: ['steer', 'travel', 'lift', 'reach', 'horn', 'brake', 'presence'] },
-  raymond_7500: { nodes: ['rig_root', 'rig_mast', 'rig_carriage', 'rig_reachGroup', 'rig_steerPivot', 'rig_travelPivot', 'rig_driveWheel', 'rig_cameraMount'], controls: ['steer', 'travel', 'lift', 'reach', 'horn', 'brake', 'presence'] },
-  crown_sp1500: { nodes: ['rig_root', 'rig_mast', 'rig_carriage', 'rig_platform', 'rig_steerPivot', 'rig_travelPivot', 'rig_cameraMount'], controls: ['steer', 'travel', 'lift', 'horn', 'presence'] },
-  raymond_5300: { nodes: ['rig_root', 'rig_mast', 'rig_carriage', 'rig_platform', 'rig_steerPivot', 'rig_travelPivot', 'rig_cameraMount'], controls: ['steer', 'travel', 'lift', 'horn', 'presence'] },
-  crown_pe4500: { nodes: ['rig_root', 'rig_carriage', 'rig_tillerPivot', 'rig_headGroup', 'rig_cameraMount'], controls: ['steer', 'travel', 'lift', 'horn', 'belly', 'presence'] },
-  raymond_8210: { nodes: ['rig_root', 'rig_carriage', 'rig_tillerPivot', 'rig_headGroup', 'rig_cameraMount'], controls: ['steer', 'travel', 'lift', 'horn', 'belly'] },
-  crown_sc6200: { nodes: ['rig_root', 'rig_mast', 'rig_carriage', 'rig_wheelPivot', 'rig_lever_0', 'rig_lever_1', 'rig_lever_2', 'rig_cameraMount'], controls: ['steer', 'travel', 'brake', 'lift', 'tilt', 'sideshift', 'horn', 'presence'] },
-  raymond_4460: { nodes: ['rig_root', 'rig_mast', 'rig_carriage', 'rig_wheelPivot', 'rig_lever_0', 'rig_lever_1', 'rig_lever_2', 'rig_cameraMount'], controls: ['steer', 'travel', 'brake', 'lift', 'tilt', 'sideshift', 'horn', 'presence'] },
+  crown_rr5725: { nodes: ['rig_root', 'rig_mast', 'rig_carriage', 'rig_reachGroup', 'rig_steerPivot', 'rig_travelPivot', 'rig_driveWheel', 'rig_cameraMount', 'rig_xrOrigin'], controls: ['steer', 'travel', 'lift', 'reach', 'horn', 'brake', 'presence'] },
+  raymond_7500: { nodes: ['rig_root', 'rig_mast', 'rig_carriage', 'rig_reachGroup', 'rig_steerPivot', 'rig_travelPivot', 'rig_driveWheel', 'rig_cameraMount', 'rig_xrOrigin'], controls: ['steer', 'travel', 'lift', 'reach', 'horn', 'presence'] },
+  crown_sp1500: { nodes: ['rig_root', 'rig_mast', 'rig_carriage', 'rig_platform', 'rig_steerPivot', 'rig_travelPivot', 'rig_cameraMount', 'rig_xrOrigin'], controls: ['steer', 'travel', 'lift', 'horn', 'presence'] },
+  raymond_5300: { nodes: ['rig_root', 'rig_mast', 'rig_carriage', 'rig_platform', 'rig_steerPivot', 'rig_travelPivot', 'rig_cameraMount', 'rig_xrOrigin'], controls: ['steer', 'travel', 'lift', 'horn', 'presence'] },
+  crown_pe4500: { nodes: ['rig_root', 'rig_carriage', 'rig_tillerPivot', 'rig_headGroup', 'rig_cameraMount', 'rig_xrOrigin'], controls: ['steer', 'travel', 'lift', 'horn', 'belly', 'presence'] },
+  raymond_8210: { nodes: ['rig_root', 'rig_carriage', 'rig_tillerPivot', 'rig_headGroup', 'rig_cameraMount', 'rig_xrOrigin'], controls: ['steer', 'travel', 'lift', 'horn', 'belly'] },
+  crown_sc6200: { nodes: ['rig_root', 'rig_mast', 'rig_carriage', 'rig_wheelPivot', 'rig_lever_0', 'rig_lever_1', 'rig_lever_2', 'rig_cameraMount', 'rig_xrOrigin'], controls: ['steer', 'travel', 'brake', 'lift', 'tilt', 'sideshift', 'horn', 'presence'] },
+  raymond_4460: { nodes: ['rig_root', 'rig_mast', 'rig_carriage', 'rig_wheelPivot', 'rig_lever_0', 'rig_lever_1', 'rig_lever_2', 'rig_cameraMount', 'rig_xrOrigin'], controls: ['steer', 'travel', 'brake', 'lift', 'tilt', 'sideshift', 'horn', 'presence'] },
 }
 
 function readGlb(path) {
