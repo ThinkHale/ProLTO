@@ -292,6 +292,12 @@ function buildRackRun(scene, x, zStart, bays, facing) {
 
 function buildStructure(scene) {
   const clearHeight = 28 * FT
+  const colliders = [
+    { id: 'west-wall', label: 'west wall', kind: 'wall', minX: -11.35, maxX: -11.05, minZ: -21.35, maxZ: 19.35 },
+    { id: 'east-wall', label: 'east wall', kind: 'wall', minX: 11.05, maxX: 11.35, minZ: -21.35, maxZ: 19.35 },
+    { id: 'north-wall', label: 'north wall', kind: 'wall', minX: -11.35, maxX: 11.35, minZ: -21.35, maxZ: -21.05 },
+    { id: 'south-wall', label: 'south wall', kind: 'wall', minX: -11.35, maxX: 11.35, minZ: 19.05, maxZ: 19.35 },
+  ]
   const wallMaterial = material(0x9aa1a3, { roughness: .93, metalness: .02 })
   const wallParts = []
   ;[-11.2, 11.2].forEach((x) => wallParts.push(boxGeometry([.3, clearHeight, 44], [x, clearHeight / 2, -1])))
@@ -317,6 +323,15 @@ function buildStructure(scene) {
     for (let z = -18; z <= 16; z += 12) {
       columnParts.push(boxGeometry([.26, clearHeight - .95, .26], [x, (clearHeight - .95) / 2, z]))
       columnParts.push(boxGeometry([.6, .05, .6], [x, .03, z]))
+      colliders.push({
+        id: `column-${x}-${z}`,
+        label: 'building column',
+        kind: 'column',
+        minX: x - .3,
+        maxX: x + .3,
+        minZ: z - .3,
+        maxZ: z + .3,
+      })
     }
   })
   merged(columnParts, material(0x39474d, { roughness: .6, metalness: .5 }), scene)
@@ -345,6 +360,7 @@ function buildStructure(scene) {
     light.target.position.set(0, 0, z)
     scene.add(light, light.target)
   }
+  return colliders
 }
 
 function buildFloorMarkings(scene) {
@@ -457,6 +473,7 @@ function buildFixtures(scene) {
   return {
     cones,
     colliders: [
+      { id: 'empty-pallet-stack', label: 'empty pallet stack', kind: 'pallet-stack', minX: -10.05, maxX: -8.75, minZ: 12.85, maxZ: 13.95 },
       { id: 'battery-charger', label: 'Battery charger', kind: 'fixture', minX: 9.5, maxX: 10.3, minZ: 12.18, maxZ: 12.82 },
     ],
   }
@@ -468,7 +485,7 @@ export function createWarehouse(scene) {
   floor.receiveShadow = true
   scene.add(floor)
 
-  buildStructure(scene)
+  const structureColliders = buildStructure(scene)
   buildFloorMarkings(scene)
   const leftRack = buildRackRun(scene, -6.4, -16, 11, 1)
   const rightRack = buildRackRun(scene, 6.4, -16, 11, -1)
@@ -485,6 +502,6 @@ export function createWarehouse(scene) {
     pedestrians,
     cones: fixtures.cones,
     rackSlots: [...leftRack.slots, ...rightRack.slots],
-    staticColliders: [leftRack.collider, rightRack.collider, ...fixtures.colliders],
+    staticColliders: [...structureColliders, leftRack.collider, rightRack.collider, ...fixtures.colliders],
   }
 }

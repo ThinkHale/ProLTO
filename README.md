@@ -32,7 +32,7 @@ Laser selection and thumbstick driving are disabled during the practical assessm
 
 ## Warehouse exercise
 
-The practical area uses swept truck collision envelopes, solid racks and fixtures, knockable safety cones, and individually tracked 48 x 40 inch palletized loads. A pallet engages only when both forks enter its pockets with sufficient alignment and penetration, then lift clear of the floor or rack support. An engaged pallet follows the animated carriage or reach assembly as a rigid load and can be lowered onto the floor, placed into an open rack slot, or removed from an occupied slot. Reset restores the truck, every pallet and rack slot, and all cones to their initial state.
+The practical area uses swept truck collision envelopes, solid walls, columns, racks, fixtures and pallet stacks, knockable safety cones, and individually tracked 48 x 40 inch palletized loads. A pallet engages only when both forks enter its pockets with sufficient alignment and penetration, then lift clear of the floor or rack support. An engaged pallet follows the animated carriage or reach assembly as a rigid load and can be lowered onto the floor, placed into an open rack slot, or removed from an occupied slot. Reset restores the truck, every pallet and rack slot, and all cones to their initial state.
 
 ## Equipment behavior
 

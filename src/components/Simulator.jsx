@@ -8,7 +8,9 @@ import { createWarehouseLoadPhysics, forkConfigurationForProfile } from '../sim/
 import { controlMeshes, createVehicleRig } from '../sim/vehicleFactory.js'
 import { createWarehouse } from '../sim/warehouse.js'
 
-const WORLD = { minX: -8.6, maxX: 8.6, minZ: -18, maxZ: 16 }
+// Broad fail-safe bounds sit just inside the authored walls. Exact contact is
+// resolved by the warehouse wall, column, rack, and fixture colliders below.
+const WORLD = { minX: -10.9, maxX: 10.9, minZ: -20.9, maxZ: 18.9 }
 const ZERO = { travel: 0, steer: 0, lift: 0, reach: 0, tilt: 0, sideshift: 0, brake: 0, horn: 0, presence: 0, belly: 0 }
 const DYNAMICS = {
   reach: { acceleration: 2.45, braking: 6.8, turnRate: 1.42, liftRate: 30.6, reverseScale: .86 },
