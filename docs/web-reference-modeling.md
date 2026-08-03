@@ -1,8 +1,10 @@
 # Web reference modeling record
 
-ProLTO's truck meshes are original procedural Three.js models reconstructed from publicly available manufacturer product photography, specification sheets, brochures, and operator-area imagery. Manufacturer images are used as visual reference only. They are not copied into the shipped application.
+ProLTO's truck meshes are original parametric Blender models reconstructed from publicly available manufacturer product photography, specification sheets, brochures, and operator-area imagery. Manufacturer images are used as visual reference only. They are not copied into the shipped application.
 
 The reconstruction process uses published dimensions where available, repeated visual landmarks across multiple views, known component sizes such as standard fork sections, and perspective comparison from the operator eye point. The resulting assets are designed for interactive assessment and Quest performance. They are not manufacturer CAD and should not be described as manufacturer-approved digital twins.
+
+The build system, rig contract, and visual QA loops are documented in [the asset pipeline](asset-pipeline.md). Source modules live in `assets-src/trucks/`; exported runtime assets live in `public/models/`.
 
 ## Reference matrix
 
@@ -21,9 +23,10 @@ The reconstruction process uses published dimensions where available, repeated v
 
 - Every family has a separate first-person station, eye point, chassis, control set, interlock behavior, and hydraulic animation.
 - Crown and Raymond variants use separate body geometry, stance, wheel arrangement, control placement, color treatment, and model labels.
-- Rounded power units use low-segment bevel geometry and shared physically based materials. Small hardware is represented only when it materially affects operator recognition or control use.
+- Bodywork is lofted from cross-sections and subdivided, so power units carry the compound curvature of pressed and molded covers rather than beveled boxes. Structural members are extruded profiles: mast rails are C-channels, forks are tapered ITA sections with radiused heels.
+- Hardware that operators use to recognize a truck is modeled explicitly: mast chains and pulleys, hydraulic cylinders with chrome rods, bolt circles, guard tubing, tread plate, grab bars, labels, and display bezels.
 - Nested mast rails, cylinders, chains, carriages, load backrests, outriggers, forks, wheels, guards, seats, pedals, and hand controls are separate meshes so their motion and collision behavior remain legible.
-- Only the selected truck is instantiated. This preserves runtime headroom for warehouse traffic, WebXR rendering, and future sound and training scenarios.
+- Only the selected truck is instantiated, and it loads as a single glTF binary. This preserves runtime headroom for warehouse traffic, WebXR rendering, and future sound and training scenarios.
 
 ## Visual development references
 

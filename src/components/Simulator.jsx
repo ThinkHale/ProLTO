@@ -1,5 +1,6 @@
 import { forwardRef, useEffect, useImperativeHandle, useRef, useState } from 'react'
 import * as THREE from 'three'
+import { HDRLoader } from 'three/addons/loaders/HDRLoader.js'
 import { Crosshair, Gamepad2, Headphones, Keyboard, MousePointer2, RotateCcw, Volume2 } from 'lucide-react'
 import { controlMeshes, createVehicleRig } from '../sim/vehicleFactory.js'
 import { createWarehouse } from '../sim/warehouse.js'
@@ -11,6 +12,15 @@ const DYNAMICS = {
   'order-picker': { acceleration: 2.05, braking: 6.4, turnRate: 1.14, liftRate: 40, reverseScale: .82 },
   pallet: { acceleration: 3.2, braking: 8.2, turnRate: 1.72, liftRate: 4.2, reverseScale: .72 },
   counterbalance: { acceleration: 2.15, braking: 6.1, turnRate: .9, liftRate: 43, reverseScale: .86 },
+}
+
+// Resting head pose per family. Stand-up trucks look down into a near console;
+// seated and walk-behind operators sit back from theirs.
+const VIEWS = {
+  reach: { fov: 68, pitch: -.26 },
+  'order-picker': { fov: 70, pitch: -.4 },
+  pallet: { fov: 72, pitch: -.2 },
+  counterbalance: { fov: 70, pitch: -.32 },
 }
 
 const clampInput = (value) => THREE.MathUtils.clamp(value, -1, 1)
@@ -68,37 +78,60 @@ const Simulator = forwardRef(function Simulator({ profile, onTelemetry, onSafety
     setActiveControl('Cab controls armed')
     setPresence(false)
     const scene = new THREE.Scene()
-    scene.background = new THREE.Color(0x2c3437)
-    scene.fog = new THREE.Fog(0x2c3437, 24, 58)
-    const crownReach = profile.family === 'reach' && profile.manufacturer === 'Crown'
-    const defaultViewPitch = profile.family === 'order-picker' ? -.22 : crownReach ? -.22 : -.16
-    const camera = new THREE.PerspectiveCamera(crownReach ? 68 : 72, mount.clientWidth / mount.clientHeight, .035, 90)
+    scene.background = new THREE.Color(0x6a7173)
+    // Light haze only at the far end of the building — enough for depth without
+    // graying out rack faces the operator is judging distance against.
+    scene.fog = new THREE.Fog(0x767d7f, 34, 78)
+    const view = VIEWS[profile.family]
+    const defaultViewPitch = view.pitch
+    const camera = new THREE.PerspectiveCamera(view.fov, mount.clientWidth / mount.clientHeight, .035, 90)
     camera.rotation.order = 'YXZ'
     const renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: 'high-performance' })
     renderer.setPixelRatio(Math.min(window.devicePixelRatio, 1.7))
     renderer.setSize(mount.clientWidth, mount.clientHeight)
     renderer.shadowMap.enabled = true
-    renderer.shadowMap.type = THREE.PCFShadowMap
+    renderer.shadowMap.type = THREE.PCFSoftShadowMap
     renderer.outputColorSpace = THREE.SRGBColorSpace
-    renderer.toneMapping = THREE.ACESFilmicToneMapping
-    renderer.toneMappingExposure = 1.08
+    // PBR Neutral preserves saturated manufacturer paint (Raymond red washes out
+    // to salmon under AgX/ACES) while still rolling off highlights.
+    renderer.toneMapping = THREE.NeutralToneMapping
+    renderer.toneMappingExposure = .98
     renderer.xr.enabled = true
     renderer.xr.setReferenceSpaceType('local-floor')
     mount.appendChild(renderer.domElement)
 
-    scene.add(new THREE.HemisphereLight(0xe7f3f4, 0x313638, 1.45))
-    const sun = new THREE.DirectionalLight(0xfffbef, 4.2)
-    sun.position.set(-7, 14, 8)
+    // Image-based lighting: PBR paint/clearcoat on the trucks needs a real
+    // environment to reflect, or it reads as flat plastic.
+    const pmrem = new THREE.PMREMGenerator(renderer)
+    new HDRLoader().load(`${import.meta.env.BASE_URL}env/warehouse_1k.hdr`, (hdr) => {
+      scene.environment = pmrem.fromEquirectangular(hdr).texture
+      scene.environmentIntensity = .62
+      hdr.dispose()
+      pmrem.dispose()
+    })
+    scene.add(new THREE.HemisphereLight(0xe7f3f4, 0x40484b, .8))
+    // Key light stands in for the high-bay array: shadows follow the truck so
+    // the 2k map stays dense enough to resolve mast and fork shadows.
+    const sun = new THREE.DirectionalLight(0xfff4e2, 2.6)
+    sun.position.set(-6, 13, 7)
     sun.castShadow = true
     sun.shadow.mapSize.set(2048, 2048)
-    sun.shadow.camera.left = -20
-    sun.shadow.camera.right = 20
-    sun.shadow.camera.top = 20
-    sun.shadow.camera.bottom = -20
-    scene.add(sun)
+    sun.shadow.camera.left = -9
+    sun.shadow.camera.right = 9
+    sun.shadow.camera.top = 9
+    sun.shadow.camera.bottom = -9
+    sun.shadow.camera.far = 42
+    sun.shadow.bias = -.0006
+    sun.shadow.normalBias = .022
+    scene.add(sun, sun.target)
 
     const { pallet, pedestrians } = createWarehouse(scene)
-    const rig = createVehicleRig(profile)
+    let disposed = false
+    const disposers = []
+    setActiveControl('Loading equipment model…')
+    createVehicleRig(profile).then((rig) => {
+    if (disposed) return
+    setActiveControl('Cab controls armed')
     rig.root.position.set(0, 0, 11.5)
     rig.cameraMount.add(camera)
     scene.add(rig.root)
@@ -368,8 +401,15 @@ const Simulator = forwardRef(function Simulator({ profile, onTelemetry, onSafety
       state.sideshift = THREE.MathUtils.clamp(state.sideshift + sideshiftInput * .48 * dt, -.15, .15)
       rig.root.position.set(state.x, 0, state.z)
       rig.root.rotation.y = state.heading
-      if (rig.carriage) { rig.carriage.position.y = state.fork * .0254; rig.carriage.position.x = state.sideshift }
-      if (rig.reachGroup) rig.reachGroup.position.z = -state.reach * .0254
+      sun.position.set(state.x - 6, 13, state.z + 7)
+      sun.target.position.set(state.x, 0, state.z)
+      sun.target.updateMatrixWorld()
+      if (rig.carriage) {
+        const rest = rig.carriage.userData.rest
+        rig.carriage.position.y = (rest?.y || 0) + state.fork * .0254
+        rig.carriage.position.x = (rest?.x || 0) + state.sideshift
+      }
+      if (rig.reachGroup) rig.reachGroup.position.z = (rig.reachGroup.userData.rest?.z || 0) - state.reach * .0254
       if (rig.tiltGroup) rig.tiltGroup.rotation.x = THREE.MathUtils.degToRad(state.tilt)
       else if (rig.mast) rig.mast.rotation.x = THREE.MathUtils.degToRad(state.tilt)
       if (rig.tillerPivot) rig.tillerPivot.rotation.y = -state.steer * .72
@@ -383,7 +423,7 @@ const Simulator = forwardRef(function Simulator({ profile, onTelemetry, onSafety
       if (rig.loadWheels) rig.loadWheels.forEach((loadWheel) => { loadWheel.rotation.x -= state.speed * dt / .075 })
       if (rig.levers) {
         const values = [liftInput, tiltInput, sideshiftInput]
-        rig.levers.forEach((lever, index) => { lever.rotation.x = -.18 + values[index] * .25 })
+        rig.levers.forEach((lever, index) => { lever.rotation.x = (lever.userData.restRX ?? -.18) + values[index] * .25 })
       }
       if (presenceControl) {
         const targetY = presenceControl.userData.restY - (state.presenceLatched ? .025 : 0)
@@ -412,16 +452,7 @@ const Simulator = forwardRef(function Simulator({ profile, onTelemetry, onSafety
       renderer.render(scene, camera)
     })
 
-    const resize = () => {
-      if (!mount.clientWidth || !mount.clientHeight) return
-      camera.aspect = mount.clientWidth / mount.clientHeight
-      camera.updateProjectionMatrix()
-      renderer.setSize(mount.clientWidth, mount.clientHeight)
-    }
-    const observer = new ResizeObserver(resize)
-    observer.observe(mount)
-    return () => {
-      observer.disconnect()
+    disposers.push(() => {
       window.removeEventListener('keydown', keyDown)
       window.removeEventListener('keyup', keyUp)
       renderer.domElement.removeEventListener('pointerdown', pointerDown)
@@ -433,6 +464,21 @@ const Simulator = forwardRef(function Simulator({ profile, onTelemetry, onSafety
         controller.removeEventListener('selectstart', selectStart)
         controller.removeEventListener('selectend', selectEnd)
       })
+    })
+    }).catch((error) => console.error('ProLTO simulator init failed:', error))
+
+    const resize = () => {
+      if (!mount.clientWidth || !mount.clientHeight) return
+      camera.aspect = mount.clientWidth / mount.clientHeight
+      camera.updateProjectionMatrix()
+      renderer.setSize(mount.clientWidth, mount.clientHeight)
+    }
+    const observer = new ResizeObserver(resize)
+    observer.observe(mount)
+    return () => {
+      disposed = true
+      observer.disconnect()
+      disposers.forEach((dispose) => dispose())
       renderer.setAnimationLoop(null)
       renderer.dispose()
       if (renderer.domElement.parentElement === mount) mount.removeChild(renderer.domElement)

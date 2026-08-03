@@ -35,7 +35,18 @@ Thumbsticks remain available as an accessibility fallback in VR. The primary VR 
 - Crown PE 4500 and Raymond 8210 pallet trucks: end-control rider and walkie configurations with distinct power units, operator positions, articulated tillers, travel controls, lift rockers, emergency reverse switches, forks, and load wheels.
 - Crown SC 6200 and Raymond 4460 counterbalance trucks: four-wheel and three-wheel chassis, seated cabs, steering wheels, independent pedals and hydraulic levers, rear steering, mast tilt, sideshift, and counterweight swing.
 
-The original truck meshes are reconstructed from traceable public Crown and Raymond references. See [the web reference modeling record](docs/web-reference-modeling.md) for source links, modeling decisions, and validation limits.
+## Equipment assets
+
+Trucks are authored as parametric Blender models under [assets-src/](assets-src/) and
+shipped as articulated glTF binaries in [public/models/](public/models/). The simulator
+binds to named rig nodes for mast, carriage, reach, platform, control, and wheel
+motion, and reads control metadata from glTF `extras`. See
+[the asset pipeline](docs/asset-pipeline.md) for the build commands, the rig
+contract, and the visual QA loops.
+
+The models are reconstructed from traceable public Crown and Raymond references.
+See [the web reference modeling record](docs/web-reference-modeling.md) for source
+links, modeling decisions, and validation limits.
 
 ## Important scope boundary
 

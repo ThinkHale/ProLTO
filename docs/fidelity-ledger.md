@@ -12,6 +12,10 @@ Stage 4 web-reference modeling boards: `design/stage4-crown-fleet-reference.png`
 
 Stage 4 verified fleet renders: `qa/stage4-crown-rr5725-final.png`, `qa/stage4-raymond-7500-final.png`, `qa/stage4-crown-sp1500-final.png`, `qa/stage4-raymond-5300-final.png`, `qa/stage4-crown-pe4500-final.png`, `qa/stage4-raymond-8210-final.png`, `qa/stage4-crown-sc6200-final.png`, and `qa/stage4-raymond-4460-final.png`
 
+Stage 5 Blender asset renders: `qa/blender/<truck>/` — one directory per truck with hero, side, cab, and component closeups
+
+Stage 5 verified operator stations: `qa/app/<manufacturer>-<family>-cab.png` — all eight profiles captured from the running application at the operator eye point
+
 ## Comparison points
 
 1. Information architecture: the left navigation, equipment rail, central simulator viewport, evaluator rail, telemetry, and readiness controls follow the concept's screen hierarchy. The rendered viewport preserves the same dominant center-of-gravity and evaluator visibility.
@@ -27,9 +31,16 @@ Stage 4 verified fleet renders: `qa/stage4-crown-rr5725-final.png`, `qa/stage4-r
 
 No unapproved marketing copy, claims, certification language, hero eyebrow, or promotional metrics were added. `Pallet Jack` was changed to the more inclusive `Pallet Truck` because the current profile includes both an end-control rider and a walkie model. `Overall Score` is labeled `Overall evidence score` to avoid implying certification.
 
+## Stage 5 equipment realism
+
+9. Truck geometry moved from runtime Three.js primitives to parametric Blender models exported as articulated glTF binaries. Bodywork is lofted and subdivided rather than beveled boxes, structural members are extruded profiles, and recognition hardware — mast chains, cylinders with chrome rods, bolt circles, guard tubing, tread plate, labels, and displays — is modeled explicitly. Each truck lands between 10k and 31k triangles, inside the Quest budget.
+10. Operator eye points are derived from anthropometry against each truck's own floor or seat height rather than copied between profiles: standing stations place the eye 1.63 m above the compartment floor, seated stations 0.73 m above the seat cushion. Default view pitch is set per family so the truck's primary controls fall inside the resting sightline.
+11. The warehouse was rebuilt to real dimensions: 12 ft aisle, selective pallet rack on 8 ft beam elevations with teardrop uprights and wire decking, 48x40 GMA pallets, 28 ft clear height with open-web joists and high-bay fixtures, saw-cut concrete, pedestrian walkway hatching, and hi-vis personnel. Static structure is merged per material to hold the draw-call budget.
+12. Lighting uses a CC0 warehouse HDRI through `PMREMGenerator` for image-based lighting plus a shadow-casting key light that tracks the truck. Tone mapping is Khronos PBR Neutral, which preserves saturated manufacturer paint that AgX and ACES desaturate.
+
 ## Intentional deviations
 
-- Manufacturer photography is used as modeling evidence but is not embedded in the application. The original procedural meshes are optimized for Quest and can be refined as more measurements become available.
+- Manufacturer photography is used as modeling evidence but is not embedded in the application. The models are optimized for Quest and can be refined as more measurements become available.
 - The concept's ten checklist items are consolidated to eight evidence categories in this prototype. The checklist is data-driven and ready for company-specific expansion.
 - Manufacturer logos are not reproduced. Manufacturer and model names identify the selected control profile only.
 

@@ -1,0 +1,119 @@
+# Equipment asset pipeline
+
+ProLTO's trucks are authored as parametric Blender models and shipped to the
+browser as articulated glTF binaries. This replaced the earlier approach of
+assembling trucks from Three.js primitives at runtime, which could not produce
+the surface quality or hardware density operators recognize.
+
+## Why Blender instead of runtime primitives
+
+Runtime primitive assembly limits every part to a box, cylinder, or sphere with
+a bevel. Real powered industrial trucks are pressed and molded shells with
+compound curvature, structural rolled sections, and dense visible hardware. The
+Blender pipeline gives us lofted bodywork, extruded structural profiles, swept
+tubing, lathed hardware, and subdivision surfaces, then bakes the result to a
+static mesh the browser loads in one request.
+
+## Layout
+
+| Path | Contents |
+| --- | --- |
+| `assets-src/build.py` | Headless entry point run by Blender |
+| `assets-src/lib/parts.py` | Parametric component library (shells, masts, forks, guards, wheels, controls) |
+| `assets-src/lib/materials.py` | Shared PBR material palette |
+| `assets-src/lib/rig.py` | Node-naming contract and glTF export |
+| `assets-src/lib/qa.py` | HDRI-lit GPU render harness |
+| `assets-src/trucks/<truck>.py` | One module per truck, exposing `build()` |
+| `public/models/<truck>.glb` | Exported runtime assets |
+| `qa/blender/<truck>/` | Reference renders per truck |
+| `qa/app/` | In-app screenshots from the Playwright harness |
+
+## Building a truck
+
+Blender is not vendored in the repository. Install Blender 4.2+ or newer, then:
+
+```bash
+BLENDER=/path/to/blender
+"$BLENDER" -b -P assets-src/build.py -- --truck crown_rr5725 --render --views hero,side,cab
+"$BLENDER" -b -P assets-src/build.py -- --truck crown_rr5725 --export
+```
+
+`--render` writes QA views to `qa/blender/<truck>/` using Cycles on the GPU when
+one is available. `--export` writes `public/models/<truck>.glb`. The QA floor and
+cameras are prefixed `qa_` and are excluded from export.
+
+## Coordinate and unit convention
+
+Models are authored at real scale in meters. In Blender the forks point toward
+`+Y`, the operator station is toward `-Y`, and up is `+Z`. The glTF exporter
+converts this to the Y-up, forks-toward `-Z` orientation the simulator drives.
+
+## Rig contract
+
+`src/sim/vehicleFactory.js` binds to nodes by name, so renaming a node in a truck
+module silently disables the motion it drives. The full list lives in
+`assets-src/lib/rig.py`; the load-bearing ones are `rig_root`, `rig_mast`,
+`rig_carriage`, `rig_reachGroup`, `rig_platform`, the control pivots, the wheel
+meshes, and `rig_cameraMount`.
+
+Two rules make the animation code correct:
+
+- Rig empties are authored unrotated. The simulator writes absolute Euler angles
+  to the pivots, so any rest tilt belongs on a child mesh, not the pivot.
+- The simulator adds motion to a node's authored rest position rather than
+  overwriting it, so a carriage or reach group may sit at a non-zero offset.
+
+Interactive controls are meshes tagged with `ctrl_action`, `ctrl_label`,
+`ctrl_axis`, and `ctrl_spring` custom properties. These export as glTF `extras`
+and are read back into `object.userData` in the browser, where the raycaster
+uses them for pointer and controller interaction. Controls must be real meshes
+large enough to hit reliably with a VR pointer.
+
+Verify an export before committing it:
+
+```bash
+node -e "const fs=require('fs');const b=fs.readFileSync('public/models/crown_rr5725.glb');
+const j=JSON.parse(b.slice(20,20+b.readUInt32LE(12)).toString());
+console.log((j.nodes||[]).filter(n=>n.name?.startsWith('rig_')).map(n=>n.name).join(', '))"
+```
+
+## Runtime loading and fallback
+
+`createVehicleRig(profile)` is asynchronous. It loads the GLB for the selected
+manufacturer and family, maps the rig nodes, and attaches control metadata. If
+the asset is missing or fails to parse, it logs a warning and falls back to the
+original procedural rig in `src/sim/proceduralFactory.js`, so a bad or absent
+asset degrades the visuals without breaking the assessment.
+
+## Lighting
+
+The simulator lights the scene with an image-based environment
+(`public/env/warehouse_1k.hdr`, CC0 from Poly Haven) processed through
+`PMREMGenerator`, plus a shadow-casting key light that follows the truck. PBR
+paint with a clearcoat layer needs an environment to reflect; without one the
+bodywork reads as flat plastic regardless of mesh quality.
+
+## Visual QA
+
+Two loops guard realism:
+
+1. **Blender renders** compare each truck against the manufacturer reference
+   boards in `design/` from fixed hero, side, front, rear-quarter, and cab views.
+2. **In-app screenshots** capture what the trainee actually sees, including the
+   operator eye point, which Blender views cannot validate:
+
+```bash
+npm run dev
+node scripts/screenshot.mjs --family reach --manufacturer Crown --enter true --out qa/app/crown-reach.png
+```
+
+The harness can hold control keys (`--hold KeyE:1800`) and drag the view
+(`--look -260,40`) to capture articulated states.
+
+## Provenance
+
+These are original parametric models reconstructed from published manufacturer
+specifications, product photography, and brochures. They are not manufacturer
+CAD, and they are not manufacturer-approved digital twins. See
+`docs/web-reference-modeling.md` for the reference matrix and the validation
+boundary that still applies before any hiring or authorization decision.
