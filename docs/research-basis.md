@@ -29,7 +29,9 @@ The knowledge bank and safety detectors cover truck controls, differences from a
 
 ## Technical architecture
 
-React manages the evaluator interface, knowledge assessment, truck profiles, and state. Three.js renders a shared warehouse around model-specific equipment rigs. Each rig owns a desktop operator eye, a separate tracked-floor XR origin, control geometry, near-hand targets, hydraulic animation, and family dynamics. Desktop users drag the modeled controls directly. Quest users reach to a control, hold trigger or pinch, and move it through its local mechanical axis. Laser and thumbstick input is an explicit accessibility mode. GitHub Pages supplies the HTTPS secure context required by WebXR. No server is required for the current local-only prototype. Candidate record persistence and organization access control should be added before production use.
+React manages the evaluator interface, knowledge assessment, truck profiles, and state. Three.js renders a shared warehouse around model-specific equipment rigs. Each rig owns a desktop operator eye, a separate tracked-floor XR origin, control geometry, near-hand targets, hydraulic animation, and family dynamics. Desktop users drag the modeled controls directly and can inspect the full cockpit through unrestricted 360-degree look. Quest users reach to a control, hold trigger or pinch, and move it through its local mechanical axis. Laser and thumbstick input is an explicit accessibility mode.
+
+A deterministic warehouse solver performs swept compound-body collision against racks, fixtures, palletized loads, and knockable cones. Fork engagement requires alignment, pocket-height eligibility, insertion depth, and lift clearance. Carried loads remain rigidly attached to the animated fork frame and can settle on the floor or in an available rack slot. GitHub Pages supplies the HTTPS secure context required by WebXR. No server is required for the current local-only prototype. Candidate record persistence and organization access control should be added before production use.
 
 ## Primary references
 

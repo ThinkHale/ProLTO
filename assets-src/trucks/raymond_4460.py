@@ -242,13 +242,16 @@ def cowl_and_controls(root):
                   'radial', False, motion='radial')
     P.text_mesh('wheel_brand', 'RAYMOND', 0.016, 0.001,
                 M.decal_dark(), wheel, loc=(0, 0, 0.034), facing='+Z')
-    P.lathe('steer_spinner',
-            [(0.0, 0.0), (0.025, 0.004), (0.030, 0.030),
-             (0.027, 0.060), (0.0, 0.066)],
-            M.plastic_dark(), wheel, loc=(-0.105, -0.085, 0.020))
+    spinner = P.lathe('steer_spinner',
+                      [(0.0, 0.0), (0.022, 0.004), (0.026, 0.024),
+                       (0.024, 0.052), (0.018, 0.061), (0.0, 0.064)],
+                      M.plastic_dark(), wheel,
+                      loc=(-0.105, -0.085, 0.020))
+    R.tag_control(spinner, 'steer', 'Steering spinner knob', 'radial', False,
+                  motion='radial')
     horn = P.cyl('btn_horn', 0.05, 0.022, (0, 0, 0.075), M.grip_rubber(), pivot, bevel=0.006)
     R.tag_control(horn, 'horn', 'Horn pad', 'button', True,
-                  motion='vertical')
+                  motion='button')
 
     # Three long cowl-mounted levers in individual accordion boots. This is
     # the named three-function legacy configuration, not an optional fourth
@@ -263,16 +266,22 @@ def cowl_and_controls(root):
                  (0.036, 0.040), (0.027, 0.054), (0.030, 0.068),
                  (0.018, 0.084), (0.0, 0.086)],
                 M.grip_rubber(), piv)
-        shaft = P.cyl(f'lever_shaft_{i}', 0.010, 0.255,
-                      (0, -0.032, 0.132), M.steel_dark(), piv,
-                      rot=(0.25, 0, 0), verts=24)
-        knob = P.rounded_box(f'lever_knob_{i}', (0.050, 0.040, 0.078),
-                             (0, -0.066, 0.268), M.plastic_dark(), piv,
-                             radius=0.017, segments=6, rot=(0.25, 0, 0))
+        P.cyl(f'lever_shaft_{i}', 0.009, 0.235,
+              (0, -0.029, 0.124), M.steel_dark(), piv,
+              rot=(0.25, 0, 0), verts=24)
+        # Raymond's legacy lever caps are narrow molded hand pieces, not the
+        # large rectangular blocks used in the first reconstruction.
+        knob = P.lathe(f'lever_knob_{i}',
+                       [(0.0, 0.0), (0.016, 0.002), (0.021, 0.012),
+                        (0.022, 0.040), (0.019, 0.055), (0.013, 0.064),
+                        (0.0, 0.066)],
+                       M.plastic_dark(), piv,
+                       loc=(0, -0.060, 0.238), rot=(0.25, 0, 0))
         R.tag_control(knob, action, label, 'vertical', True,
                       motion='fore-aft')
-        P.box(f'lever_pictogram_{i}', (0.025, 0.004, 0.016),
-              (0, -0.089, 0.278), M.decal_white(), piv, bevel=0.002,
+        P.rounded_box(f'lever_pictogram_{i}', (0.018, 0.003, 0.012),
+              (0, -0.079, 0.273), M.decal_white(), piv, radius=0.003,
+              segments=4,
               rot=(0.25, 0, 0))
 
     # Small monochrome display sits below and to the right of the lever bank.
@@ -303,11 +312,11 @@ def cowl_and_controls(root):
     accel = P.pedal('pedal_accel', (0.10, 0.20), parent=root,
                     loc=(0.20, 0.05, 0.44), angle=-0.35)
     R.tag_control(accel, 'travel', 'Accelerator pedal', 'pedal', True,
-                  motion='fore-aft')
+                  motion='pedal')
     brake = P.pedal('pedal_brake', (0.12, 0.15), parent=root,
                     loc=(-0.02, 0.05, 0.455), angle=-0.30)
     R.tag_control(brake, 'brake', 'Service brake pedal', 'pedal', True,
-                  motion='fore-aft')
+                  motion='pedal')
 
 
 def seat_4460(root):
@@ -318,7 +327,7 @@ def seat_4460(root):
     cushion = P.rounded_box('seat_cushion', (0.50, 0.48, 0.13), (0, 0.01, 0.08), vinyl,
                             base, radius=0.05)
     R.tag_control(cushion, 'presence', 'Operator presence (seat switch)',
-                  'button', False, motion='vertical')
+                  'button', False, motion='button')
     for sx in (-1, 1):
         P.rounded_box(f'seat_bolster_{"R" if sx > 0 else "L"}', (0.09, 0.44, 0.15),
                       (sx * 0.235, 0.0, 0.10), vinyl, base, radius=0.04)
@@ -351,7 +360,7 @@ def build():
         'name': 'raymond_4460',
         'cab_view': {'loc': (0, -0.48, 1.69), 'target': (0.0, 0.9, 0.55), 'focal': 19},
         'closeups': {
-            'cockpit': {'loc': (-0.95, -1.45, 1.60), 'target': (0.05, -0.15, 0.9), 'focal': 30},
+            'cockpit': {'loc': (0.0, -0.48, 1.68), 'target': (0.10, 0.14, 0.84), 'focal': 22},
             'forks': {'loc': (1.7, 2.4, 1.0), 'target': (0, 1.0, 0.5), 'focal': 35},
         },
     }

@@ -272,42 +272,48 @@ def console(root):
     P.lathe('handle_boot', [(0.0, 0), (0.05, 0), (0.055, 0.018),
                             (0.036, 0.055), (0.024, 0.075), (0.0, 0.075)],
             M.grip_rubber(), handle_root)
-    handle_outline = [(-0.035, 0.0), (0.035, 0.0), (0.052, 0.04),
-                      (0.048, 0.16), (0.025, 0.22), (-0.02, 0.23),
-                      (-0.052, 0.17), (-0.055, 0.055)]
+    # One pose frame carries the grip and every thumb control. Previously the
+    # grip alone was raked while its controls stayed upright, which made the
+    # buttons cut through the shell whenever the handle moved.
+    handle_pose = R.empty('primary_handle_pose', (0, 0, 0), handle_root)
+    handle_pose.rotation_euler = (-0.18, 0.16, -0.04)
+    handle_outline = [(-0.031, 0.0), (0.031, 0.0), (0.045, 0.034),
+                      (0.042, 0.132), (0.024, 0.184), (-0.018, 0.192),
+                      (-0.045, 0.142), (-0.047, 0.045)]
     handle = P.loft_shell('primary_handle', [(-0.032, handle_outline),
                                               (0.032, handle_outline)],
-                          control, handle_root, subsurf=1, bevel=0.005)
-    handle.rotation_euler = (-0.18, 0.16, -0.04)
-    P.rounded_box('handle_thumb_rest', (0.085, 0.055, 0.045),
-                  (0.025, -0.045, 0.185), control, handle_root, radius=0.02,
-                  segments=5, rot=(-0.18, 0.16, -0.04))
-    travel = R.empty('rig_travelPivot', (0.046, -0.066, 0.19), handle_root)
-    travel_paddle = P.rounded_box('handle_travel_paddle', (0.032, 0.014, 0.065),
-                                  (0, 0, 0), M.pbr('ray_paddle_gray', 0x909497,
+                          control, handle_pose, subsurf=1, bevel=0.005)
+    P.rounded_box('handle_thumb_rest', (0.074, 0.048, 0.036),
+                  (0.019, -0.043, 0.154), control, handle_pose, radius=0.018,
+                  segments=6)
+    travel = R.empty('rig_travelPivot', (0.032, -0.068, 0.164), handle_pose)
+    travel_paddle = P.rounded_box('handle_travel_paddle', (0.026, 0.012, 0.052),
+                                  (0, 0, 0), M.pbr('ray_paddle_gray', 0x606568,
                                                    roughness=0.5), travel,
-                                  radius=0.012, segments=5)
+                                  radius=0.011, segments=6)
     R.tag_control(travel_paddle, 'travel', 'Travel direction and speed paddle',
                   'vertical', True, motion='fore-aft')
-    lift = R.empty('rig_liftPivot', (0.005, -0.066, 0.215), handle_root)
-    lift_btn = P.cyl('handle_lift', 0.020, 0.012, (0, 0, 0),
-                     M.pbr('ray_button_gray', 0x777B7E, roughness=0.5), lift,
-                     axis='Y', verts=24, bevel=0.003)
-    R.tag_control(lift_btn, 'lift', 'Lift and lower thumb control', 'vertical', True)
-    reach_p = R.empty('rig_reachPivot', (-0.035, -0.064, 0.17), handle_root)
-    reach_btn = P.rounded_box('handle_reach', (0.035, 0.014, 0.045), (0, 0, 0),
+    lift = R.empty('rig_liftPivot', (-0.004, -0.067, 0.176), handle_pose)
+    lift_btn = P.rounded_box('handle_lift', (0.025, 0.012, 0.046), (0, 0, 0),
+                             M.pbr('ray_button_gray', 0x555A5D, roughness=0.5),
+                             lift, radius=0.010, segments=6)
+    R.tag_control(lift_btn, 'lift', 'Lift and lower thumb control', 'vertical',
+                  True, motion='vertical')
+    reach_p = R.empty('rig_reachPivot', (-0.030, -0.066, 0.138), handle_pose)
+    reach_btn = P.rounded_box('handle_reach', (0.027, 0.012, 0.036), (0, 0, 0),
                               M.pbr('ray_button_black', 0x2F3335, roughness=0.5),
-                              reach_p, radius=0.009, segments=4)
+                              reach_p, radius=0.010, segments=6)
     R.tag_control(reach_btn, 'reach', 'Reach and retract thumb control',
-                  'horizontal', True)
-    tilt_p = R.empty('rig_tiltPivot', (0.04, -0.064, 0.145), handle_root)
-    tilt_btn = P.rounded_box('handle_tilt', (0.033, 0.014, 0.04), (0, 0, 0),
+                  'horizontal', True, motion='horizontal')
+    tilt_p = R.empty('rig_tiltPivot', (0.027, -0.066, 0.119), handle_pose)
+    tilt_btn = P.rounded_box('handle_tilt', (0.026, 0.012, 0.034), (0, 0, 0),
                              M.pbr('ray_button_dark', 0x45494C, roughness=0.5),
-                             tilt_p, radius=0.008, segments=4)
-    R.tag_control(tilt_btn, 'tilt', 'Tilt thumb control', 'horizontal', True)
-    horn = P.cyl('btn_horn', 0.015, 0.012, (0.04, -0.065, 0.11),
-                 M.button_red(), handle_root, axis='Y', verts=24, bevel=0.002)
-    R.tag_control(horn, 'horn', 'Horn button', 'button', True)
+                             tilt_p, radius=0.009, segments=6)
+    R.tag_control(tilt_btn, 'tilt', 'Tilt thumb control', 'horizontal', True,
+                  motion='horizontal')
+    horn = P.cyl('btn_horn', 0.012, 0.010, (0.027, -0.067, 0.078),
+                 M.button_red(), handle_pose, axis='Y', verts=28, bevel=0.003)
+    R.tag_control(horn, 'horn', 'Horn button', 'button', True, motion='button')
 
     # Exact right-side key and red emergency disconnect hard points.
     key_bezel = P.cyl('key_bezel', 0.018, 0.012, (0.455, -0.31, 1.18),
@@ -397,13 +403,15 @@ def build():
     console(root)
     mast_and_reach(root)
     guard_and_drive(root)
-    # Standing eye: 0.235 m compartment floor + 1.63 m standing eye height.
+    # XR stays floor referenced, so the headset supplies each operator's true
+    # eye height. The desktop mount uses a representative 1.55 m standing eye
+    # height above the compartment floor for a neutral training sightline.
     R.empty('rig_xrOrigin', (0.02, -0.98, 0.235), root)
-    R.empty('rig_cameraMount', (0.02, -0.98, 1.86), root)
+    R.empty('rig_cameraMount', (0.02, -0.98, 1.785), root)
     root['spec'] = 'Raymond 7500 Universal Stance 36V'
     return {
         'name': 'raymond_7500',
-        'cab_view': {'loc': (0.02, -0.98, 1.86), 'target': (0.0, -0.18, 1.05),
+        'cab_view': {'loc': (0.02, -0.98, 1.785), 'target': (0.0, -0.18, 1.05),
                      'focal': 22},
         'closeups': {
             'console': {'loc': (0.75, -1.05, 1.45), 'target': (-0.30, -0.50, 1.02),

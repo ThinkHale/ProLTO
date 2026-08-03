@@ -171,10 +171,10 @@ def console(platform):
           M.steel_dark(), platform, bevel=0.002)
 
     # Upper-left grab rail, fixed at both ends and clear of the steering disc.
-    P.tube('console_grab_rail', [(-0.42, 0.085, 1.30), (-0.40, 0.145, 1.36),
-                                 (-0.16, 0.145, 1.36), (-0.13, 0.085, 1.31)],
+    P.tube('console_grab_rail', [(0.42, 0.085, 1.30), (0.40, 0.145, 1.36),
+                                 (0.16, 0.145, 1.36), (0.13, 0.085, 1.31)],
            0.016, M.grip_rubber(), platform, corner_radius=0.025)
-    for x in (-0.42, -0.13):
+    for x in (0.42, 0.13):
         P.cyl(f'console_grab_mount_{x}', 0.026, 0.016, (x, 0.075, 1.305),
               dark, platform, axis='Y', bevel=0.004)
 
@@ -182,11 +182,11 @@ def console(platform):
     P.display('console_display', 0.145, 0.082, parent=platform,
               loc=(0.055, 0.069, 1.302), rot=(0, 0, math.pi),
               screen_name='screen_5300')
-    for i, x in enumerate((0.158, 0.202, 0.246)):
-        P.rounded_box(f'console_status_switch_{i}', (0.032, 0.018, 0.032),
+    for i, x in enumerate((0.158, 0.194, 0.230)):
+        P.rounded_box(f'console_status_switch_{i}', (0.022, 0.009, 0.019),
                       (x, 0.071, 1.302), dark, platform, radius=0.006)
         P.cyl(f'console_status_lamp_{i}', 0.006, 0.006,
-              (x, 0.084, 1.326), M.warning_amber() if i == 1 else M.screen_glass(),
+              (x, 0.080, 1.324), M.warning_amber() if i == 1 else M.screen_glass(),
               platform, axis='Y')
 
     # Factory instruction plate, key switch and red emergency power disconnect.
@@ -207,45 +207,54 @@ def console(platform):
 
     # Large left steering disc with an offset spinner knob. It is a steering
     # control, not a fan grille.
-    steer = R.empty('rig_steerPivot', (-0.285, 0.105, 1.055), platform)
+    # The steering disc is vertical in the compartment, but its working plane
+    # must remain local XY so WebXR radial travel resolves around its true
+    # center. A raked mount supplies the visible orientation while the rig
+    # pivot remains an unrotated child in the disc's mechanical frame.
+    steer_mount = R.empty('steer_disc_mount', (0.285, 0.105, 1.055), platform)
+    steer_mount.rotation_euler = (-math.pi / 2, 0, 0)
     P.lathe('steer_recess', [(0.0, 0), (0.125, 0), (0.135, 0.010),
                              (0.135, 0.027), (0.0, 0.032)],
-            dark, steer, rot=(-math.pi / 2, 0, 0))
+            dark, steer_mount)
+    steer = R.empty('rig_steerPivot', (0, 0, 0.016), steer_mount)
     disc = P.lathe('steer_disc', [(0.0, 0), (0.098, 0.002), (0.108, 0.016),
                                   (0.100, 0.031), (0.0, 0.038)],
-                   M.grip_rubber(), steer, loc=(0, 0.026, 0),
-                   rot=(-math.pi / 2, 0, 0))
+                   M.grip_rubber(), steer)
     R.tag_control(disc, 'steer', 'Raymond 5300 steering disc', 'radial', False,
                   motion='radial')
-    P.cyl('steer_center', 0.026, 0.020, (0, 0.061, 0), molded, steer,
-          axis='Y', bevel=0.004)
-    spinner = P.cyl('steer_spinner', 0.023, 0.075, (0.068, 0.078, 0.068),
-                    M.grip_rubber(), steer, axis='Y', bevel=0.008)
+    P.cyl('steer_center', 0.026, 0.018, (0, 0, 0.047), molded, steer,
+          bevel=0.004)
+    spinner = P.cyl('steer_spinner', 0.020, 0.060, (0.068, 0.068, 0.063),
+                    M.grip_rubber(), steer, bevel=0.008)
     R.tag_control(spinner, 'steer', 'Steering spinner knob', 'radial', False,
                   motion='radial')
 
     # Deep right-hand molded recess and contoured multifunction handle.
-    P.rounded_box('control_recess', (0.285, 0.030, 0.40), (0.285, 0.065, 1.055),
+    P.rounded_box('control_recess', (0.285, 0.030, 0.40), (-0.285, 0.065, 1.055),
                   dark, platform, radius=0.035)
-    travel = R.empty('rig_travelPivot', (0.285, 0.092, 1.035), platform)
-    grip_outline = [(-0.064, -0.15), (-0.075, 0.05), (-0.055, 0.17),
-                    (-0.015, 0.205), (0.052, 0.145), (0.064, -0.08),
-                    (0.032, -0.16)]
-    grip = P.extrude_profile('travel_grip', grip_outline, 0.085, M.grip_rubber(),
+    travel = R.empty('rig_travelPivot', (-0.285, 0.092, 1.035), platform)
+    grip_outline = [(-0.053, -0.145), (-0.060, 0.045), (-0.048, 0.145),
+                    (-0.014, 0.180), (0.045, 0.132), (0.053, -0.072),
+                    (0.028, -0.150)]
+    grip = P.extrude_profile('travel_grip', grip_outline, 0.074, M.grip_rubber(),
                              travel, plane='XZ', bevel=0.018,
                              loc=(0, -0.012, 0), rot=(0, 0, -0.04))
     R.tag_control(grip, 'travel', 'Raymond multifunction travel handle',
                   'vertical', True, motion='fore-aft')
-    P.rounded_box('travel_paddle', (0.072, 0.022, 0.045),
-                  (0.012, 0.085, 0.105), molded, travel, radius=0.010)
-    lift = R.empty('rig_liftPivot', (0.268, 0.187, 1.105), platform)
-    rocker = P.rounded_box('lift_rocker', (0.055, 0.025, 0.082), (0, 0, 0),
-                           M.button_red(), lift, radius=0.012)
+    P.rounded_box('travel_paddle', (0.058, 0.016, 0.034),
+                  (0.008, 0.065, 0.102), molded, travel, radius=0.011,
+                  segments=6)
+    # Lift and horn belong to the handle, rather than floating from the cowl.
+    # Parenting them to the travel grip also keeps every switch clear through
+    # the handle's full fore and aft travel.
+    lift = R.empty('rig_liftPivot', (0.000, 0.074, 0.125), travel)
+    rocker = P.rounded_box('lift_rocker', (0.040, 0.014, 0.054), (0, 0, 0),
+                           M.button_red(), lift, radius=0.012, segments=6)
     R.tag_control(rocker, 'lift', 'Platform lift and lower rocker', 'vertical',
                   True, motion='vertical')
-    horn = P.cyl('btn_horn', 0.022, 0.014, (0.345, 0.187, 0.955),
-                 M.warning_amber(), platform, axis='Y')
-    R.tag_control(horn, 'horn', 'Horn button', 'button', True, motion='press')
+    horn = P.cyl('btn_horn', 0.014, 0.010, (0.042, 0.072, 0.045),
+                 M.warning_amber(), travel, axis='Y', verts=28, bevel=0.003)
+    R.tag_control(horn, 'horn', 'Horn button', 'button', True, motion='button')
 
     # Lower storage pocket and branding molded into the operator wall.
     P.rounded_box('storage_cavity', (0.37, 0.022, 0.19), (0, 0.067, 0.625),
@@ -253,7 +262,7 @@ def console(platform):
     P.rounded_box('storage_lip', (0.39, 0.055, 0.045), (0, 0.101, 0.545),
                   molded, platform, radius=0.015)
     P.text_mesh('console_brand', 'RAYMOND', 0.044, 0.0018, M.decal_white(),
-                platform, loc=(-0.285, 0.069, 0.765), facing='+Y')
+                platform, loc=(0.285, 0.069, 0.765), facing='+Y')
 
 
 def platform_assembly(carriage):
@@ -297,7 +306,7 @@ def platform_assembly(carriage):
     presence = P.pedal('pedal_presence', (0.21, 0.24), parent=platform,
                        loc=(0.18, 0.10, 0.305), angle=0)
     R.tag_control(presence, 'presence', 'Single operator presence pedal',
-                  'button', False, motion='press')
+                  'pedal', False, motion='pedal')
     return platform
 
 
@@ -313,10 +322,11 @@ def carriage_assembly(mast_node):
     for name in ('forks_L', 'forks_R'):
         bpy.data.objects[name].location.y = -CARRIAGE_Y - 0.14
     platform_assembly(carriage)
-    # Standing eye: 0.29 m platform floor + 1.63 m, at the rear of the platform
-    # (platform-local y = 0.05) so the console reads in the lower view.
+    # XR remains floor referenced so the headset supplies the actual operator
+    # height. The desktop eye uses a representative 1.55 m standing eye height
+    # above the platform instead of the earlier upper-percentile 1.63 m value.
     R.empty('rig_xrOrigin', (0, -0.85, 0.29), carriage)
-    R.empty('rig_cameraMount', (0, -0.85, 1.92), carriage)
+    R.empty('rig_cameraMount', (0, -0.85, 1.84), carriage)
     return carriage
 
 
@@ -329,9 +339,9 @@ def build():
     root['spec'] = 'Raymond 5300 order picker'
     return {
         'name': 'raymond_5300',
-        'cab_view': {'loc': (0.0, 0.35, 2.25), 'target': (0.0, -0.85, 0.95), 'focal': 18},
+        'cab_view': {'loc': (0.0, 0.05, 1.84), 'target': (0.0, 0.58, 1.06), 'focal': 20},
         'closeups': {
-            'console': {'loc': (0.45, 0.9, 1.6), 'target': (0.0, -0.02, 1.0), 'focal': 30},
+            'console': {'loc': (0.45, 0.03, 1.52), 'target': (0.0, 0.58, 1.04), 'focal': 32},
             'platform': {'loc': (1.6, 1.8, 1.0), 'target': (0.0, 0.2, 0.8), 'focal': 33},
         },
     }

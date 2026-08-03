@@ -23,8 +23,9 @@ whose documented rest rotation the Simulator preserves on other axes):
   rig_xrOrigin      tracked-floor origin at the operator's physical floor
 
 Interactive controls are MESH objects tagged with custom properties
-(ctrl_action/ctrl_label/ctrl_axis/ctrl_spring/ctrl_motion) which export as glTF
-extras and surface in three.js as object.userData.
+(ctrl_action/ctrl_label/ctrl_axis/ctrl_spring/ctrl_motion/ctrl_scale) which export
+as glTF extras and surface in three.js as object.userData. ctrl_scale is normally
+1, or -1 for the negative half of a split control such as Lower or Reverse.
 """
 import bpy
 
@@ -42,7 +43,7 @@ def empty(name, location=(0, 0, 0), parent=None):
     return obj
 
 
-def tag_control(obj, action, label, axis='vertical', spring=True, motion=None):
+def tag_control(obj, action, label, axis='vertical', spring=True, motion=None, scale=1.0):
     assert action in CONTROL_ACTIONS, f'unknown control action {action}'
     obj['ctrl_action'] = action
     obj['ctrl_label'] = label
@@ -50,6 +51,7 @@ def tag_control(obj, action, label, axis='vertical', spring=True, motion=None):
     obj['ctrl_spring'] = 1 if spring else 0
     if motion:
         obj['ctrl_motion'] = motion
+    obj['ctrl_scale'] = float(scale)
     return obj
 
 

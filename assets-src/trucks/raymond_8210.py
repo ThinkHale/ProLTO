@@ -224,10 +224,11 @@ def tiller_head(head_grp):
                   molded, body, radius=0.022)
     P.display('head_display', 0.070, 0.040, parent=body,
               loc=(0, -0.126, 0.067), screen_name='head_screen')
-    for index, (x, z) in enumerate(((-0.026, 0.027), (0.026, 0.027),
-                                    (-0.026, 0.001), (0.026, 0.001))):
-        P.rounded_box(f'head_keypad_{index}', (0.021, 0.010, 0.016),
-                      (x, -0.132, z), molded, body, radius=0.004)
+    for index, (x, z) in enumerate(((-0.022, 0.024), (0.022, 0.024),
+                                    (-0.022, 0.001), (0.022, 0.001))):
+        P.cyl(f'head_keypad_{index}', 0.008, 0.006,
+              (x, -0.132, z), molded, body, axis='Y', verts=20,
+              bevel=0.002)
 
     # Exact mirrored D-loop grip geometry. Each side uses the same coordinates
     # reflected across X so the operator can work the controls ambidextrously.
@@ -241,37 +242,38 @@ def tiller_head(head_grp):
     # Mirrored directional and speed thumb wheels sit at the inner edge of each
     # grip. Both have the same travel semantics.
     for sx in (-1, 1):
-        wheel = P.cyl(f'head_speed_wheel_{ "L" if sx < 0 else "R"}', 0.034,
-                      0.056, (sx * 0.112, -0.132, 0.020), molded, body,
+        wheel = P.cyl(f'head_speed_wheel_{ "L" if sx < 0 else "R"}', 0.027,
+                      0.044, (sx * 0.108, -0.132, 0.018), molded, body,
                       axis='X', verts=32, bevel=0.006)
         R.tag_control(wheel, 'travel',
                       f'{"Left" if sx < 0 else "Right"} direction and speed thumb wheel',
-                      'vertical', True, motion='fore-aft')
-        for rib_index in (-1, 0, 1):
-            P.box(f'head_speed_rib_{sx}_{rib_index}', (0.004, 0.009, 0.045),
-                  (sx * (0.112 + rib_index * 0.012), -0.165, 0.020),
+                      'vertical', True, motion='vertical')
+        for rib_index in (-2, -1, 0, 1, 2):
+            P.box(f'head_speed_rib_{sx}_{rib_index}', (0.003, 0.006, 0.034),
+                  (sx * (0.108 + rib_index * 0.007), -0.158, 0.018),
                   dark, body, bevel=0.001)
 
     # One centered lift/lower rocker with matched horn buttons to either side.
     lift = R.empty('rig_liftPivot', (0, -0.137, -0.028), body)
-    rocker = P.rounded_box('head_lift_rocker', (0.050, 0.018, 0.070),
-                           (0, 0, 0), molded, lift, radius=0.010)
+    rocker = P.rounded_box('head_lift_rocker', (0.040, 0.013, 0.054),
+                           (0, 0, 0), molded, lift, radius=0.011,
+                           segments=6)
     R.tag_control(rocker, 'lift', 'Centered lift and lower rocker', 'vertical',
                   True, motion='vertical')
     for sx in (-1, 1):
-        horn = P.cyl(f'head_horn_{ "L" if sx < 0 else "R"}', 0.017, 0.013,
-                     (sx * 0.066, -0.139, -0.041), M.warning_amber(), body,
+        horn = P.cyl(f'head_horn_{ "L" if sx < 0 else "R"}', 0.013, 0.010,
+                     (sx * 0.060, -0.139, -0.038), M.warning_amber(), body,
                      axis='Y', bevel=0.002)
         R.tag_control(horn, 'horn',
                       f'{"Left" if sx < 0 else "Right"} horn button',
-                      'button', True, motion='press')
+                      'button', True, motion='button')
 
     # The lower red pad is the operator-contact emergency reverse control.
-    belly = P.rounded_box('head_belly_reverse', (0.205, 0.095, 0.068),
+    belly = P.rounded_box('head_belly_reverse', (0.180, 0.078, 0.058),
                           (0, -0.032, -0.112), M.button_red(), body, radius=0.025)
     belly.rotation_euler = (0.32, 0, 0)
     R.tag_control(belly, 'belly', 'Emergency reverse belly pad', 'button',
-                  True, motion='press')
+                  True, motion='button', scale=-1)
 
 
 # ------------------------------------------------------------------------ build

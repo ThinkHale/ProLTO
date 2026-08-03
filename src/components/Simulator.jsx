@@ -4,6 +4,7 @@ import { HDRLoader } from 'three/addons/loaders/HDRLoader.js'
 import { XRControllerModelFactory } from 'three/addons/webxr/XRControllerModelFactory.js'
 import { XRHandModelFactory } from 'three/addons/webxr/XRHandModelFactory.js'
 import { Crosshair, Gamepad2, Headphones, Keyboard, MousePointer2, RotateCcw, Volume2 } from 'lucide-react'
+import { createWarehouseLoadPhysics, forkConfigurationForProfile } from '../sim/loadPhysics.js'
 import { controlMeshes, createVehicleRig } from '../sim/vehicleFactory.js'
 import { createWarehouse } from '../sim/warehouse.js'
 
@@ -16,13 +17,41 @@ const DYNAMICS = {
   counterbalance: { acceleration: 2.15, braking: 6.1, turnRate: .9, liftRate: 43, reverseScale: .86 },
 }
 
+// Body envelopes stop the power unit and operator compartment while leaving
+// the authored forks free to enter a pallet. Walk-behind equipment includes a
+// second envelope for the exposed tiller and its operator-side travel arc.
+const TRUCK_COLLIDERS = {
+  reach: [
+    { id: 'power-unit', offsetX: 0, offsetZ: .48, halfWidth: .69, halfLength: .92, minY: 0, maxY: 2.35 },
+  ],
+  'order-picker': [
+    { id: 'operator-platform', offsetX: 0, offsetZ: .43, halfWidth: .57, halfLength: .96, minY: 0, maxY: 2.65 },
+  ],
+  'pallet-rider': [
+    { id: 'power-unit', offsetX: 0, offsetZ: .38, halfWidth: .5, halfLength: .58, minY: 0, maxY: 1.48 },
+    { id: 'rider-platform', offsetX: 0, offsetZ: 1.02, halfWidth: .48, halfLength: .36, minY: 0, maxY: .45 },
+  ],
+  'pallet-walkie': [
+    { id: 'power-unit', offsetX: 0, offsetZ: .35, halfWidth: .4, halfLength: .48, minY: 0, maxY: 1.05 },
+    { id: 'tiller-sweep', offsetX: 0, offsetZ: 1.0, halfWidth: .25, halfLength: .55, minY: .18, maxY: 1.52 },
+  ],
+  counterbalance: [
+    { id: 'counterbalance-body', offsetX: 0, offsetZ: .36, halfWidth: .61, halfLength: 1.12, minY: 0, maxY: 2.25 },
+  ],
+}
+
+function truckColliders(profile, rig) {
+  if (profile.family !== 'pallet') return TRUCK_COLLIDERS[profile.family]
+  return rig.walkie ? TRUCK_COLLIDERS['pallet-walkie'] : TRUCK_COLLIDERS['pallet-rider']
+}
+
 // Resting head pose per family. Stand-up trucks look down into a near console;
 // seated and walk-behind operators sit back from theirs.
 const VIEWS = {
-  reach: { fov: 70, pitch: -.38 },
-  'order-picker': { fov: 70, pitch: -.4 },
-  pallet: { fov: 72, pitch: -.2 },
-  counterbalance: { fov: 74, pitch: -.5 },
+  reach: { fov: 70, pitch: -.65 },
+  'order-picker': { fov: 70, pitch: -.6 },
+  pallet: { fov: 72, pitch: -.35 },
+  counterbalance: { fov: 74, pitch: -.62 },
 }
 
 const FALLBACK_XR_EYE_HEIGHT = {
@@ -101,7 +130,7 @@ const Simulator = forwardRef(function Simulator({ profile, onTelemetry, onSafety
     // Light haze only at the far end of the building, enough for depth without
     // graying out rack faces the operator is judging distance against.
     scene.fog = new THREE.Fog(0x767d7f, 34, 78)
-    const view = VIEWS[profile.family]
+    const view = { ...VIEWS[profile.family], ...profile.view }
     const defaultViewPitch = view.pitch
     const camera = new THREE.PerspectiveCamera(view.fov, mount.clientWidth / mount.clientHeight, .035, 90)
     camera.rotation.order = 'YXZ'
@@ -109,7 +138,7 @@ const Simulator = forwardRef(function Simulator({ profile, onTelemetry, onSafety
     renderer.setPixelRatio(Math.min(window.devicePixelRatio, 1.7))
     renderer.setSize(mount.clientWidth, mount.clientHeight)
     renderer.shadowMap.enabled = true
-    renderer.shadowMap.type = THREE.PCFSoftShadowMap
+    renderer.shadowMap.type = THREE.PCFShadowMap
     renderer.outputColorSpace = THREE.SRGBColorSpace
     // PBR Neutral preserves saturated manufacturer paint (Raymond red washes out
     // to salmon under AgX/ACES) while still rolling off highlights.
@@ -144,7 +173,7 @@ const Simulator = forwardRef(function Simulator({ profile, onTelemetry, onSafety
     sun.shadow.normalBias = .022
     scene.add(sun, sun.target)
 
-    const { pallet, pedestrians } = createWarehouse(scene)
+    const warehouse = createWarehouse(scene)
     let disposed = false
     const disposers = []
     setActiveControl('Loading equipment model...')
@@ -178,6 +207,7 @@ const Simulator = forwardRef(function Simulator({ profile, onTelemetry, onSafety
       load: 0, horn: false, presence: !requiresPresence, presenceLatched: false, viewYaw: 0, viewPitch: defaultViewPitch, lastTelemetry: 0,
       eventLocks: {}, keys: new Set(), pointerDrag: null, lookDrag: null, xrDrags: new Map(), hovered: null,
     }
+    let loadPhysics = null
     let activeXRSession = null
     let xrSessionEnd = null
     let clearXRInteractions = () => {}
@@ -224,6 +254,7 @@ const Simulator = forwardRef(function Simulator({ profile, onTelemetry, onSafety
       rig.root.position.set(0, 0, 11.5)
       rig.root.rotation.y = 0
       camera.rotation.set(defaultViewPitch, 0, 0)
+      loadPhysics?.reset()
       updatePresence(false, runningRef.current ? 'Engage the physical presence control' : 'Cab controls armed')
       setStability(100)
     }
@@ -251,12 +282,50 @@ const Simulator = forwardRef(function Simulator({ profile, onTelemetry, onSafety
       state.eventLocks[type] = now + cooldown
       onSafetyEvent({ type, label, severity, deduction })
     }
+    const forkConfiguration = forkConfigurationForProfile(profile, rig)
+    loadPhysics = createWarehouseLoadPhysics({
+      truckRoot: rig.root,
+      ...forkConfiguration,
+      truckColliders: truckColliders(profile, rig),
+      pallets: warehouse.pallets,
+      rackSlots: warehouse.rackSlots,
+      obstacles: [...warehouse.staticColliders, ...warehouse.cones],
+      onEvent: (event) => {
+        if (event.type === 'pallet-engaged') {
+          state.load = event.pallet.weight
+          setActiveControl(`${Math.round(event.pallet.weight).toLocaleString()} lb pallet engaged`)
+        } else if (event.type === 'pallet-racked') {
+          state.load = 0
+          setActiveControl(`Pallet placed in ${event.slot.id}`)
+        } else if (event.type === 'pallet-grounded') {
+          state.load = 0
+          setActiveControl('Pallet placed on warehouse floor')
+        } else if (event.type === 'cone-contact') {
+          fireEvent('cone-contact', 'Safety cone struck', 'major', 8, 2500)
+          setActiveControl('Safety cone contact')
+        } else if (event.type === 'load-contact') {
+          fireEvent('load-contact', 'Hard contact with palletized load', 'major', 10, 2500)
+          setActiveControl('Pallet contact')
+        } else if (event.type === 'facility-contact') {
+          const label = event.obstacle.label || (event.obstacle.kind === 'rack' ? 'pallet rack' : 'warehouse fixture')
+          fireEvent('facility-contact', `Contact with ${label}`, 'critical', 18, 2500)
+          setActiveControl(`Facility contact: ${label}`)
+        }
+      },
+    })
+    engineRef.current.loadPhysics = loadPhysics
 
     const keyDown = (event) => {
       if (['INPUT', 'TEXTAREA', 'SELECT'].includes(event.target.tagName)) return
       state.keys.add(event.code)
       if (['Space', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'].includes(event.code)) event.preventDefault()
       if (event.code === 'Space' && !state.horn) soundHorn()
+      if (event.code === 'Home') {
+        state.viewYaw = 0
+        state.viewPitch = defaultViewPitch
+        camera.rotation.set(defaultViewPitch, 0, 0)
+        setActiveControl('Operator view centered')
+      }
       if ((event.code === 'ControlLeft' || event.code === 'ControlRight') && !event.repeat && runningRef.current && requiresPresence) {
         event.preventDefault()
         togglePresence()
@@ -326,11 +395,12 @@ const Simulator = forwardRef(function Simulator({ profile, onTelemetry, onSafety
           togglePresence()
           return
         }
-        state.pointerDrag = { object, x: event.clientX, y: event.clientY, start: manual[control.action] || 0 }
+        const scale = control.scale ?? 1
+        state.pointerDrag = { object, x: event.clientX, y: event.clientY, start: (manual[control.action] || 0) * scale }
         renderer.domElement.setPointerCapture(event.pointerId)
         setActiveControl(control.label)
         if (['button', 'pedal'].includes(control.axis)) {
-          manual[control.action] = 1
+          manual[control.action] = scale
           if (control.action === 'horn') { state.horn = true; soundHorn() }
           if (control.action === 'belly') fireEvent('belly-switch', 'Emergency reverse switch activated', 'minor', 0, 1000)
         }
@@ -343,11 +413,14 @@ const Simulator = forwardRef(function Simulator({ profile, onTelemetry, onSafety
       if (state.pointerDrag) {
         const { object, x, y, start } = state.pointerDrag
         const control = object.userData.control
-        const delta = control.axis === 'horizontal' ? (event.clientX - x) / 85 : (y - event.clientY) / 85
-        manual[control.action] = clampInput(start + delta)
+        const delta = ['horizontal', 'radial'].includes(control.motion)
+          ? (event.clientX - x) / 85
+          : (y - event.clientY) / 85
+        manual[control.action] = clampInput(start + delta) * (control.scale ?? 1)
       } else if (state.lookDrag) {
-        state.viewYaw = THREE.MathUtils.clamp(state.lookDrag.yaw - (event.clientX - state.lookDrag.x) * .004, -.95, .95)
-        state.viewPitch = THREE.MathUtils.clamp(state.lookDrag.pitch - (event.clientY - state.lookDrag.y) * .0035, -.72, .55)
+        const yaw = state.lookDrag.yaw - (event.clientX - state.lookDrag.x) * .004
+        state.viewYaw = Math.atan2(Math.sin(yaw), Math.cos(yaw))
+        state.viewPitch = THREE.MathUtils.clamp(state.lookDrag.pitch - (event.clientY - state.lookDrag.y) * .0035, -1.35, 1.15)
       } else setHovered(pickControl(event))
     }
     const pointerUp = (event) => {
@@ -456,13 +529,13 @@ const Simulator = forwardRef(function Simulator({ profile, onTelemetry, onSafety
           poseRoot: pose.root,
           localStart,
           startAngle: Math.atan2(localStart.z, localStart.x),
-          start: manual[object.userData.control.action] || 0,
+          start: (manual[object.userData.control.action] || 0) * (object.userData.control.scale ?? 1),
           source: event.data,
           lastDetent: 0,
         })
         setActiveControl(object.userData.control.label)
         if (['button', 'pedal'].includes(object.userData.control.axis)) {
-          manual[object.userData.control.action] = 1
+          manual[object.userData.control.action] = object.userData.control.scale ?? 1
           if (object.userData.control.action === 'horn') soundHorn()
         }
       }
@@ -515,7 +588,7 @@ const Simulator = forwardRef(function Simulator({ profile, onTelemetry, onSafety
           delta = (local.y - drag.localStart.y) * 5
         }
         const value = clampInput(drag.start + delta)
-        manual[control.action] = value
+        manual[control.action] = value * (control.scale ?? 1)
         const detent = Math.round(value * 2)
         if (detent !== drag.lastDetent) {
           drag.lastDetent = detent
@@ -541,6 +614,7 @@ const Simulator = forwardRef(function Simulator({ profile, onTelemetry, onSafety
       const steerInput = enabled ? choose('steer') : 0
       const liftInput = permitted ? choose('lift') : 0
       const reachInput = profile.family === 'reach' && permitted ? choose('reach') : 0
+      const auxiliaryInput = profile.family === 'counterbalance' && permitted ? choose('reach') : 0
       const tiltInput = ['reach', 'counterbalance'].includes(profile.family) && permitted ? choose('tilt') : 0
       const sideshiftInput = ['reach', 'counterbalance'].includes(profile.family) && permitted ? choose('sideshift') : 0
       const brakeInput = enabled ? choose('brake') : 0
@@ -561,6 +635,7 @@ const Simulator = forwardRef(function Simulator({ profile, onTelemetry, onSafety
       const damping = brakeInput > .1 || Math.abs(travelInput) < .02 ? dynamics.braking * (1 + brakeInput) : dynamics.acceleration
       state.speed = THREE.MathUtils.damp(state.speed, brakeInput > .1 ? 0 : targetSpeed, damping, dt)
       state.steer = THREE.MathUtils.damp(state.steer, steerInput, profile.family === 'counterbalance' ? 3.1 : 5.2, dt)
+      const previousPose = { x: state.x, z: state.z, heading: state.heading }
       if (Math.abs(state.speed) > .025) {
         const speedRatio = Math.abs(state.speed) / Math.max(maxMps, .1)
         state.heading -= state.steer * dynamics.turnRate * profile.steerRatio * Math.sign(state.speed) * (.3 + speedRatio * .7) * dt
@@ -573,6 +648,15 @@ const Simulator = forwardRef(function Simulator({ profile, onTelemetry, onSafety
         state.z = THREE.MathUtils.clamp(state.z, WORLD.minZ, WORLD.maxZ)
         state.speed *= -.12
       }
+      const collision = loadPhysics.resolveTruckMotion(
+        previousPose,
+        { x: state.x, z: state.z, heading: state.heading },
+        { speed: state.speed },
+      )
+      state.x = collision.pose.x
+      state.z = collision.pose.z
+      state.heading = collision.pose.heading
+      if (collision.blocked) state.speed *= -.08
       let liftRate = dynamics.liftRate
       if (profile.liftEmptyFpm) {
         liftRate = liftInput >= 0
@@ -606,8 +690,8 @@ const Simulator = forwardRef(function Simulator({ profile, onTelemetry, onSafety
       if (rig.driveWheel) rig.driveWheel.rotation.x -= state.speed * dt / .165
       if (rig.loadWheels) rig.loadWheels.forEach((loadWheel) => { loadWheel.rotation.x -= state.speed * dt / .075 })
       if (rig.levers) {
-        const values = [liftInput, tiltInput, sideshiftInput]
-        rig.levers.forEach((lever, index) => { lever.rotation.x = (lever.userData.restRX ?? -.18) + values[index] * .25 })
+        const values = [liftInput, tiltInput, sideshiftInput, auxiliaryInput]
+        rig.levers.forEach((lever, index) => { lever.rotation.x = (lever.userData.restRX ?? -.18) + (values[index] ?? 0) * .25 })
       }
       if (presenceControl) {
         const targetY = presenceControl.userData.restY - (state.presenceLatched ? .025 : 0)
@@ -615,15 +699,15 @@ const Simulator = forwardRef(function Simulator({ profile, onTelemetry, onSafety
       }
       camera.rotation.y = state.viewYaw
       camera.rotation.x = state.viewPitch
+      scene.updateMatrixWorld(true)
+      const loadState = loadPhysics.update(dt)
+      state.load = loadState.carriedWeight
 
       const speedMph = Math.abs(state.speed) / .44704
       if (speedMph > profile.safeSpeed + .15) fireEvent('speed', 'Travel speed above assessment limit', 'minor', 5)
       if (speedMph > 1.2 && state.fork > 18) fireEvent('fork-height', 'Travel with elevated forks', 'major', 10)
       if (speedMph > .4 && Math.abs(state.steer) > .74 && state.fork > 48) fireEvent('stability', 'Sharp turn with elevated carriage', 'critical', 18)
-      pedestrians.forEach((person) => { if (person.position.distanceTo(rig.root.position) < 1.9) fireEvent('pedestrian', 'Pedestrian separation breached', 'critical', 20, 10000) })
-      const palletDistance = rig.root.position.distanceTo(pallet.position)
-      if (palletDistance < 1.75 && state.fork < 8 && Math.abs(state.speed) < .45) state.load = Math.min(profile.capacity * .62, 2400)
-      if (palletDistance < 1.1 && Math.abs(state.speed) > .8) fireEvent('load-contact', 'Hard contact with pallet', 'major', 10)
+      warehouse.pedestrians.forEach((person) => { if (person.position.distanceTo(rig.root.position) < 1.9) fireEvent('pedestrian', 'Pedestrian separation breached', 'critical', 20, 10000) })
       if (Math.abs(state.z - 3.2) < 2.4 && Math.abs(state.x) < 3.2 && speedMph > .8 && !state.horn) fireEvent('intersection', 'Blind intersection without horn', 'minor', 5, 12000)
       if (manual.belly > .2) state.speed = Math.max(state.speed, .75)
 
@@ -696,7 +780,7 @@ const Simulator = forwardRef(function Simulator({ profile, onTelemetry, onSafety
         <button onClick={() => setAudioOn((value) => !value)} aria-label={audioOn ? 'Mute audio' : 'Enable audio'}>{audioOn ? <Volume2 size={17} /> : <Headphones size={17} />}</button>
         <button onClick={() => engineRef.current?.reset()} aria-label="Reset vehicle"><RotateCcw size={17} /></button>
       </div>
-      {guideOpen && <div className="control-guide"><header><Gamepad2 size={18} /><b>{profile.control}</b></header><p><MousePointer2 size={14} /> Drag a visible cab control to manipulate it. Drag empty space, or right-drag, to look around.</p><p>Keyboard fallback: Control toggles presence, W/S travel, A/D steer, E/Q lift, R/F reach, T/G tilt, Z/C sideshift, B brake, Space horn.</p><p>VR assessment: reach to the modeled control, hold trigger or pinch, and move it through its physical axis. Hold the deadman control continuously.</p><label className="xr-accessibility"><input type="checkbox" checked={assistiveXR} onChange={(event) => setAssistiveXR(event.target.checked)} /> Enable laser and thumbstick accessibility controls</label><small>{profile.guidance}</small></div>}
+      {guideOpen && <div className="control-guide"><header><Gamepad2 size={18} /><b>{profile.control}</b></header><p><MousePointer2 size={14} /> Drag a visible cab control to manipulate it. Drag empty space, or right-drag, for unrestricted 360-degree inspection. Press Home to center the view.</p><p>Keyboard fallback: Control toggles presence, W/S travel, A/D steer, E/Q lift, R/F reach, T/G tilt, Z/C sideshift, B brake, Space horn.</p><p>VR assessment: reach to the modeled control, hold trigger or pinch, and move it through its physical axis. Hold the deadman control continuously.</p><label className="xr-accessibility"><input type="checkbox" checked={assistiveXR} onChange={(event) => setAssistiveXR(event.target.checked)} /> Enable laser and thumbstick accessibility controls</label><small>{profile.guidance}</small></div>}
       {!running && <div className="start-overlay"><MousePointer2 size={24} /><div><strong>First-person practical exercise</strong><span>{controlPrompt(profile)}</span></div><button onClick={() => onRunningChange(true)}>Enter operator station</button></div>}
     </section>
   )

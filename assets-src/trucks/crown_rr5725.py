@@ -116,11 +116,14 @@ def console(root):
     P.display('display_crown', 0.18, 0.075, parent=root, loc=(-0.08, -0.435, 1.40),
               rot=(0.03, 0, 0), screen_name='screen_crown')
     for index in range(4):
-        x = -0.23 + index * 0.105
-        sw = P.rounded_box(f'dash_switch_{index}', (0.07, 0.035, 0.09),
-                           (x, -0.372, 1.235), switch_black, root, radius=0.012, segments=4,
+        # The manual plate shows four compact appliance-size rockers. Keeping
+        # them below 45 mm wide prevents the switch bank from reading as four
+        # oversized blocks or crossing the edge of the cluster recess.
+        x = -0.12 + index * 0.055
+        sw = P.rounded_box(f'dash_switch_{index}', (0.043, 0.027, 0.058),
+                           (x, -0.377, 1.238), switch_black, root, radius=0.009, segments=5,
                            rot=(0.08, 0, 0))
-        P.box(f'dash_switch_mark_{index}', (0.025, 0.006, 0.005), (0, -0.02, 0.02),
+        P.box(f'dash_switch_mark_{index}', (0.018, 0.004, 0.004), (0, -0.016, 0.013),
               M.decal_white(), sw, bevel=0.001)
     for index, z in enumerate((1.43, 1.385, 1.34)):
         P.cyl(f'cluster_status_{index}', 0.006, 0.007, (0.205, -0.407, z),
@@ -150,46 +153,56 @@ def console(root):
 
     # Right orange Multi-Task Control Handle, reconstructed as a tapered molded
     # shell with black grip insert and separate thumb controls.
-    travel = R.empty('rig_travelPivot', (0.34, -0.415, 1.02), root)
-    P.rounded_box('mt_armrest', (0.25, 0.3, 0.095), (0, 0.09, -0.005),
+    # Pull the complete handle toward the operator. The earlier pivot placed
+    # its grip center inside the console extrusion, which caused visible
+    # clipping as the handle rocked fore and aft.
+    travel = R.empty('rig_travelPivot', (0.34, -0.465, 1.02), root)
+    P.rounded_box('mt_armrest', (0.23, 0.25, 0.085), (0, -0.015, -0.005),
                   M.grip_rubber(), travel, radius=0.04, segments=6, rot=(-0.08, 0, 0))
     handle_pts = [(-0.055, 0.0), (0.04, 0.0), (0.072, 0.045), (0.06, 0.15),
                   (0.025, 0.22), (-0.035, 0.22), (-0.07, 0.15), (-0.075, 0.045)]
-    grip = P.loft_shell('mt_grip', [(-0.035, handle_pts), (0.055, handle_pts)],
+    grip = P.loft_shell('mt_grip', [(-0.12, handle_pts), (-0.025, handle_pts)],
                          ORANGE(), travel, subsurf=1, bevel=0.006)
     grip.rotation_euler = (-0.2, 0, -0.08)
-    P.rounded_box('mt_grip_insert', (0.075, 0.025, 0.135), (-0.06, -0.045, 0.105),
+    P.rounded_box('mt_grip_insert', (0.072, 0.022, 0.13), (-0.06, -0.132, 0.105),
                   M.grip_rubber(), travel, radius=0.025, segments=5, rot=(-0.2, 0, -0.08))
     R.tag_control(grip, 'travel', 'Crown Multi-Task Control Handle', 'vertical',
                   True, motion='fore-aft')
-    lift = R.empty('rig_liftPivot', (0.015, -0.052, 0.19), travel)
-    rocker = P.rounded_box('mt_lift', (0.055, 0.028, 0.045), (0, 0, 0),
-                            M.decal_white(), lift, radius=0.012, segments=4)
+    lift = R.empty('rig_liftPivot', (0.012, -0.132, 0.19), travel)
+    rocker = P.cyl('mt_lift', 0.024, 0.035, (0, 0, 0), M.decal_white(), lift,
+                   axis='X', verts=32, bevel=0.004)
+    for ridge_index, x in enumerate((-0.012, 0, 0.012)):
+        P.cyl(f'mt_lift_ridge_{ridge_index}', 0.026, 0.004, (x, 0, 0),
+              medium, lift, axis='X', verts=28, bevel=0.001)
     R.tag_control(rocker, 'lift', 'Lift / lower thumb wheel', 'vertical', True)
-    reach_p = R.empty('rig_reachPivot', (0.062, -0.05, 0.145), travel)
-    rocker2 = P.rounded_box('mt_reach', (0.04, 0.026, 0.05), (0, 0, 0),
-                             M.pbr('orange_dark', 0xB56A08, 0.42), reach_p, radius=0.009)
+    reach_p = R.empty('rig_reachPivot', (0.062, -0.132, 0.145), travel)
+    rocker2 = P.rounded_box('mt_reach', (0.048, 0.020, 0.027), (0, 0, 0),
+                             M.pbr('orange_dark', 0xB56A08, 0.42), reach_p,
+                             radius=0.008, segments=5)
     R.tag_control(rocker2, 'reach', 'Reach / retract rocker', 'horizontal', True)
-    tilt_p = R.empty('rig_tiltPivot', (-0.038, -0.052, 0.15), travel)
-    rocker3 = P.rounded_box('mt_tilt', (0.04, 0.026, 0.05), (0, 0, 0),
-                             M.plastic_dark(), tilt_p, radius=0.009)
+    tilt_p = R.empty('rig_tiltPivot', (-0.040, -0.132, 0.145), travel)
+    rocker3 = P.rounded_box('mt_tilt', (0.048, 0.020, 0.027), (0, 0, 0),
+                             M.plastic_dark(), tilt_p, radius=0.008, segments=5)
     R.tag_control(rocker3, 'tilt', 'Tilt rocker', 'horizontal', True)
-    horn = P.cyl('btn_horn', 0.018, 0.012, (-0.065, -0.055, 0.09),
+    horn = P.cyl('btn_horn', 0.017, 0.011, (-0.065, -0.135, 0.09),
                  M.warning_amber(), travel, axis='Y', verts=24)
     R.tag_control(horn, 'horn', 'Horn button', 'button', True)
 
     # Right-side power disconnect and vertically stacked indicator lamps.
-    P.rounded_box('power_disconnect', (0.045, 0.035, 0.09), (0.455, -0.35, 1.12),
-                  switch_black, root, radius=0.01, segments=4)
+    disconnect_base = P.cyl('power_disconnect_base', 0.024, 0.012,
+                            (0.445, -0.380, 1.12), M.warning_amber(), root,
+                            axis='Y', verts=32, bevel=0.003)
+    P.cyl('power_disconnect', 0.017, 0.018, (0, -0.014, 0),
+          switch_black, disconnect_base, axis='Y', verts=32, bevel=0.004)
     for index, (z, mat) in enumerate(((1.245, M.warning_amber()), (1.215, M.pbr('led_green', 0x48A04B, 0.28, emission=0x48A04B, emission_strength=1.2)),
                                       (1.185, M.button_red()))):
         P.cyl(f'console_led_{index}', 0.008, 0.008, (0.385, -0.365, z), mat, root,
               axis='Y', verts=18)
 
     # Exact dual-pedal floor arrangement from the operator manual.
-    brake = P.pedal('pedal_brake', (0.19, 0.17), parent=root, loc=(-0.22, -0.47, 0.285), angle=-0.12)
+    brake = P.pedal('pedal_brake', (0.15, 0.14), parent=root, loc=(-0.22, -0.47, 0.285), angle=-0.12)
     R.tag_control(brake, 'brake', 'Left brake pedal', 'pedal', True)
-    presence = P.pedal('pedal_presence', (0.34, 0.27), parent=root, loc=(0.18, -0.58, 0.275), angle=0)
+    presence = P.pedal('pedal_presence', (0.26, 0.22), parent=root, loc=(0.18, -0.58, 0.275), angle=0)
     R.tag_control(presence, 'presence', 'Operator presence sensor pad', 'button', False)
     P.tube('entry_bar', [(0.46, -0.81, 0.28), (0.46, -0.48, 0.31)], 0.025,
            M.plastic_dark(), root, corner_radius=0.02)
@@ -258,11 +271,11 @@ def build():
     # XR local-floor origin and desktop standing eye are separate. This avoids
     # adding an authored eye height on top of the headset's tracked eye height.
     R.empty('rig_xrOrigin', (0.03, -0.86, 0.246), root)
-    R.empty('rig_cameraMount', (0.03, -0.86, 1.84), root)
+    R.empty('rig_cameraMount', (0.03, -0.86, 1.82), root)
     root['spec'] = 'Crown RR 5725-45 36V'
     return {
         'name': 'crown_rr5725',
-        'cab_view': {'loc': (0.03, -0.86, 1.84), 'target': (0.0, -0.1, 1.12), 'focal': 22},
+        'cab_view': {'loc': (0.03, -0.86, 1.82), 'target': (0.0, -0.1, 1.12), 'focal': 22},
         'closeups': {
             'console': {'loc': (0.55, -1.3, 1.6), 'target': (0.0, -0.3, 1.05), 'focal': 32},
             'mast': {'loc': (1.6, 2.6, 1.2), 'target': (0, 0.64, 1.4), 'focal': 40},

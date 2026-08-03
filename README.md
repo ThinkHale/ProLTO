@@ -14,7 +14,8 @@ Open the local URL in a desktop browser. WebXR immersive sessions require HTTPS 
 ## Controls
 
 - Mouse or touch: drag visible controls in the operator station
-- Mouse drag on open space: look around
+- Mouse drag on open space: unrestricted 360-degree cockpit inspection
+- Home: recenter the desktop operator view
 - VR trigger or hand pinch: reach to, grab, and move the modeled physical control through its constrained axis
 - VR presence control: hold the modeled deadman pedal or presence control continuously
 - Control key: toggle operator presence in desktop accessibility mode
@@ -28,6 +29,10 @@ Open the local URL in a desktop browser. WebXR immersive sessions require HTTPS 
 - Space: horn
 
 Laser selection and thumbstick driving are disabled during the practical assessment. They can be enabled explicitly in the control guide as an accessibility fallback. The default VR interaction uses near-hand pickup, controller or hand models, local mechanism axes, neutral detent haptics, and spring return.
+
+## Warehouse exercise
+
+The practical area uses swept truck collision envelopes, solid racks and fixtures, knockable safety cones, and individually tracked 48 x 40 inch palletized loads. A pallet engages only when both forks enter its pockets with sufficient alignment and penetration, then lift clear of the floor or rack support. An engaged pallet follows the animated carriage or reach assembly as a rigid load and can be lowered onto the floor, placed into an open rack slot, or removed from an occupied slot. Reset restores the truck, every pallet and rack slot, and all cones to their initial state.
 
 ## Equipment behavior
 

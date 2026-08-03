@@ -198,7 +198,7 @@ def tiller(root):
                   (0, -0.34, 0.55), DARK(), pivot, radius=0.025, segments=5)
 
     head = R.empty('rig_headGroup', (0, -0.37, 0.58), pivot)
-    body = P.rounded_box('head_body', (0.15, 0.25, 0.075), (0, 0.01, 0),
+    body = P.rounded_box('head_body', (0.14, 0.24, 0.072), (0, 0.01, 0),
                          DARK(), head, radius=0.025, segments=6)
     R.tag_control(body, 'steer', 'Crown X10 control handle steering', 'radial',
                   False, motion='radial')
@@ -206,7 +206,7 @@ def tiller(root):
     # Two rectangular loop handholds surround two ribbed urethane twist grips.
     for sx, side in ((-1, 'left'), (1, 'right')):
         inner_x = sx * 0.075
-        outer_x = sx * 0.31
+        outer_x = sx * 0.285
         loop = P.tube(f'head_loop_{side}',
                       [(inner_x, -0.115, 0), (outer_x, -0.115, 0),
                        (outer_x, 0.13, 0), (inner_x, 0.13, 0)],
@@ -214,15 +214,15 @@ def tiller(root):
         R.tag_control(loop, 'steer', f'X10 {side} steering handhold',
                       'radial', False, motion='radial')
 
-        grip_x = sx * 0.185
-        grip = P.cyl(f'head_twist_grip_{side}', 0.030, 0.18,
+        grip_x = sx * 0.175
+        grip = P.cyl(f'head_twist_grip_{side}', 0.029, 0.17,
                      (grip_x, -0.075, 0.006), grip_tan(), head,
                      axis='X', verts=40, bevel=0.007)
         R.tag_control(grip, 'travel', f'X10 {side} travel twist grip',
                       'radial', True, motion='radial')
         for ridge_index in range(7):
-            ridge_x = grip_x + sx * (-0.065 + ridge_index * 0.022)
-            P.cyl(f'head_grip_{side}_ridge_{ridge_index}', 0.033, 0.006,
+            ridge_x = grip_x + sx * (-0.060 + ridge_index * 0.020)
+            P.cyl(f'head_grip_{side}_ridge_{ridge_index}', 0.032, 0.005,
                   (ridge_x, -0.075, 0.006), grip_tan(), head,
                   axis='X', verts=32, bevel=0.002)
 
@@ -230,19 +230,23 @@ def tiller(root):
     P.rounded_box('head_switch_pad', (0.13, 0.14, 0.025),
                   (0, -0.015, 0.050), M.plastic_molded(), head,
                   radius=0.014, segments=4)
-    lower = P.rounded_box('head_lower', (0.095, 0.042, 0.018),
+    lower = P.rounded_box('head_lower', (0.086, 0.040, 0.018),
                           (0, 0.035, 0.071), M.decal_white(), head,
-                          radius=0.007, segments=4)
+                          radius=0.009, segments=6)
+    P.box('head_lower_icon', (0.028, 0.004, 0.003),
+          (0, -0.006, 0.010), DARK(), lower, bevel=0.001)
     R.tag_control(lower, 'lift', 'Lower forks button', 'vertical', True,
-                  motion='vertical')
-    raise_btn = P.rounded_box('head_raise', (0.095, 0.042, 0.018),
+                  motion='vertical', scale=-1)
+    raise_btn = P.rounded_box('head_raise', (0.086, 0.040, 0.018),
                               (0, -0.010, 0.071), ORANGE(), head,
-                              radius=0.007, segments=4)
+                              radius=0.009, segments=6)
+    P.box('head_raise_icon', (0.028, 0.004, 0.003),
+          (0, -0.006, 0.010), M.decal_white(), raise_btn, bevel=0.001)
     R.tag_control(raise_btn, 'lift', 'Raise forks button', 'vertical', True,
                   motion='vertical')
-    horn = P.rounded_box('head_horn', (0.095, 0.034, 0.018),
+    horn = P.rounded_box('head_horn', (0.075, 0.032, 0.018),
                          (0, -0.052, 0.071), M.warning_amber(), head,
-                         radius=0.007, segments=4)
+                         radius=0.010, segments=6)
     R.tag_control(horn, 'horn', 'Horn button', 'button', True, motion='button')
 
     # The broad near-edge button reverses travel if the handle pins an operator.
@@ -252,12 +256,6 @@ def tiller(root):
                           head, radius=0.015, segments=5)
     R.tag_control(belly, 'belly', 'Reversing safety button', 'button', True,
                   motion='button')
-
-    for sx, side in ((-1, 'left'), (1, 'right')):
-        P.rounded_box(f'quickpick_{side}', (0.045, 0.055, 0.018),
-                      (sx * 0.285, 0.075, 0.025), ORANGE(), head,
-                      radius=0.008, segments=4)
-
 
 # --------------------------------------------------------------------- deck pods
 def _legacy_deck_pods(root):
@@ -292,16 +290,16 @@ def deck_pods(root):
     P.rounded_box('grab_bar_control_pod', (0.14, 0.055, 0.14),
                   (0.12, -0.575, 1.30), dark, root,
                   radius=0.022, segments=5)
-    raise_btn = P.rounded_box('grab_raise', (0.075, 0.014, 0.043),
+    raise_btn = P.rounded_box('grab_raise', (0.064, 0.014, 0.038),
                               (0.12, -0.611, 1.325), ORANGE(), root,
-                              radius=0.007, segments=4)
+                              radius=0.011, segments=6)
     R.tag_control(raise_btn, 'lift', 'Grab bar raise button', 'vertical', True,
                   motion='vertical')
-    lower = P.rounded_box('grab_lower', (0.075, 0.014, 0.043),
+    lower = P.rounded_box('grab_lower', (0.064, 0.014, 0.038),
                           (0.12, -0.611, 1.278), M.decal_white(), root,
-                          radius=0.007, segments=4)
+                          radius=0.011, segments=6)
     R.tag_control(lower, 'lift', 'Grab bar lower button', 'vertical', True,
-                  motion='vertical')
+                  motion='vertical', scale=-1)
     horn = P.cyl('grab_horn', 0.013, 0.012, (0.12, -0.612, 1.235),
                  M.warning_amber(), root, axis='Y', verts=24, bevel=0.003)
     R.tag_control(horn, 'horn', 'Grab bar horn button', 'button', True,
@@ -443,7 +441,9 @@ def build():
     running_gear(root)
     platform(root)
     # Standing eye and tracked-floor origin are distinct reference points.
-    R.empty('rig_cameraMount', (0, -1.03, 1.83), root)
+    # Desktop uses a neutral 1.57 m standing eye above the rider deck. The XR
+    # origin remains at the deck so headset tracking supplies the real height.
+    R.empty('rig_cameraMount', (0, -1.03, 1.77), root)
     R.empty('rig_xrOrigin', (0, -1.03, 0.196), root)
     root['spec'] = 'Crown PE 4500-60'
     root['walkie'] = False

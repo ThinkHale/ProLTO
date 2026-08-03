@@ -201,10 +201,12 @@ def console(platform, prefix, primary=False):
     P.rounded_box(f'{prefix}_steer_tilt', (0.068, 0.032, 0.026),
                   (-0.245, -0.172, 1.02), ORANGE(), platform,
                   radius=0.009, segments=4)
-    for index, x in enumerate((-0.325, -0.285, -0.245, -0.205, -0.165)):
-        P.rounded_box(f'{prefix}_option_switch_{index}', (0.030, 0.052, 0.022),
+    for index, x in enumerate((-0.305, -0.265, -0.225, -0.185)):
+        switch = P.rounded_box(f'{prefix}_option_switch_{index}', (0.027, 0.046, 0.019),
                       (x, 0.085, 1.025), M.plastic_dark(), platform,
-                      radius=0.005, segments=3)
+                      radius=0.006, segments=5)
+        P.box(f'{prefix}_option_switch_mark_{index}', (0.011, 0.018, 0.003),
+              (0, -0.004, 0.011), M.decal_white(), switch, bevel=0.001)
     P.cyl(f'{prefix}_auto_position', 0.021, 0.014,
           (-0.378, 0.085, 1.025), ORANGE(), platform, verts=28, bevel=0.004)
 
@@ -215,22 +217,31 @@ def console(platform, prefix, primary=False):
             (0.40, 0.005, 0.95)], 0.027, control, platform,
            corner_radius=0.07)
     travel_name = 'rig_travelPivot' if primary else f'{prefix}_travelPivot'
-    travel = R.empty(travel_name, (0.16, -0.125, 1.02), platform)
-    rocker = P.rounded_box(f'{prefix}_travel_rocker', (0.078, 0.068, 0.038),
+    # The travel rocker wraps the upper face of the hand grip. Its former
+    # center sat inside the grip tube and made the two meshes flash through
+    # one another during travel input.
+    travel = R.empty(travel_name, (0.165, -0.158, 1.056), platform)
+    rocker = P.rounded_box(f'{prefix}_travel_rocker', (0.066, 0.052, 0.030),
                            (0, 0, 0), M.pbr(f'{prefix}_rocker_gray', 0xB5B7B4,
-                                            roughness=0.52), travel,
-                           radius=0.012, segments=4)
+                                             roughness=0.52), travel,
+                           radius=0.014, segments=6)
+    P.box(f'{prefix}_travel_rocker_seam', (0.004, 0.043, 0.008),
+          (0, 0, 0.017), inset, rocker, bevel=0.001)
     R.tag_control(rocker, 'travel', 'Forward and reverse rocker', 'vertical',
                   True, motion='fore-aft')
     lift_name = 'rig_liftPivot' if primary else f'{prefix}_liftPivot'
     lift = R.empty(lift_name, (0.245, -0.148, 0.975), platform)
-    paddle = P.rounded_box(f'{prefix}_raise_lower_paddle', (0.092, 0.065, 0.026),
-                           (0, 0, 0), ORANGE(), lift, radius=0.012, segments=5)
+    paddle = P.extrude_profile(
+        f'{prefix}_raise_lower_paddle',
+        [(-0.046, -0.012), (0.046, -0.012), (0.040, 0.008),
+         (0.018, 0.016), (-0.018, 0.016), (-0.040, 0.008)],
+        0.052, ORANGE(), lift, plane='XZ', bevel=0.006,
+        loc=(0, -0.026, 0))
     R.tag_control(paddle, 'lift', 'Orange raise and lower paddle', 'vertical',
                   True, motion='fore-aft')
-    horn = P.rounded_box(f'{prefix}_horn', (0.045, 0.024, 0.026),
-                         (0.12, -0.15, 0.99), M.warning_amber(), platform,
-                         radius=0.009, segments=4)
+    horn = P.cyl(f'{prefix}_horn', 0.014, 0.014,
+                 (0.12, -0.15, 0.985), M.warning_amber(), platform,
+                 verts=28, bevel=0.003)
     R.tag_control(horn, 'horn', 'Horn switch below hand grip', 'button', True,
                   motion='button')
 
@@ -336,7 +347,9 @@ def carriage_assembly(mast_node):
     platform_assembly(carriage)
     # Eye and tracked-floor origins must remain separate. Both rise with the
     # man-up carriage, while headset tracking remains relative to the floor.
-    R.empty('rig_cameraMount', (0, -0.65, 1.92), carriage)
+    # 1.57 m above the platform is a neutral standing eye height. WebXR keeps
+    # using the floor origin and therefore follows the actual wearer.
+    R.empty('rig_cameraMount', (0, -0.65, 1.86), carriage)
     R.empty('rig_xrOrigin', (0, -0.65, 0.29), carriage)
     return carriage
 

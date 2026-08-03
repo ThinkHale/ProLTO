@@ -64,19 +64,24 @@ Two rules make the animation code correct:
   overwriting it, so a carriage or reach group may sit at a non-zero offset.
 
 Interactive controls are meshes tagged with `ctrl_action`, `ctrl_label`,
-`ctrl_axis`, `ctrl_spring`, and optional `ctrl_motion` custom properties. These
-export as glTF `extras` and are read back into `object.userData` in the browser.
+`ctrl_axis`, `ctrl_spring`, optional `ctrl_motion`, and `ctrl_scale` custom
+properties. These export as glTF `extras` and are read back into
+`object.userData` in the browser. `ctrl_motion` records the operator-relative
+travel axis, such as radial, fore and aft, horizontal, or vertical.
+`ctrl_scale` is normally `1` and is `-1` for a negative half of a split control,
+such as a dedicated Lower button.
 Desktop uses pointer picking. WebXR first tests near-hand contact, then resolves
 movement in the control's own local frame. A laser ray is available only when
 the evaluator enables accessibility input.
 
-Verify an export before committing it:
+Verify all exports before committing them:
 
 ```bash
-node -e "const fs=require('fs');const b=fs.readFileSync('public/models/crown_rr5725.glb');
-const j=JSON.parse(b.slice(20,20+b.readUInt32LE(12)).toString());
-console.log((j.nodes||[]).filter(n=>n.name?.startsWith('rig_')).map(n=>n.name).join(', '))"
+node scripts/verify-models.mjs
 ```
+
+The verifier checks required rig nodes and actions, finite signed control
+scales, valid motion axes, camera height, and the absence of QA geometry.
 
 ## Runtime loading and fallback
 

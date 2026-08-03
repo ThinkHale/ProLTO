@@ -157,7 +157,7 @@ function cartonStackGeometry(columns = 2, rows = 2, layers = 2, jitter = .012) {
   return mergeGeometries(parts, false)
 }
 
-function palletLoad(parent, position, tint = 0xb5854f, wrapped = false) {
+function palletLoad(parent, position, tint = 0xb5854f, wrapped = false, options = {}) {
   const group = new THREE.Group()
   const pallet = new THREE.Mesh(palletGeometry(), MATERIALS.palletWood)
   pallet.castShadow = true
@@ -182,6 +182,16 @@ function palletLoad(parent, position, tint = 0xb5854f, wrapped = false) {
     group.add(wrap)
   }
   group.position.set(...position)
+  group.rotation.y = options.yaw || 0
+  group.name = options.id || 'movable_pallet'
+  group.userData.physics = {
+    kind: 'pallet',
+    id: group.name,
+    weight: options.weight ?? 2400,
+    dimensions: { x: 48 * IN, y: 1.04, z: 40 * IN },
+    slotId: options.slotId || null,
+    movable: options.movable !== false,
+  }
   parent.add(group)
   return group
 }
@@ -198,32 +208,32 @@ function buildRackRun(scene, x, zStart, bays, facing) {
 
   for (let bay = 0; bay <= bays; bay += 1) {
     const z = zStart + bay * bayWidth
-    ;[-frameDepth / 2, frameDepth / 2].forEach((dz) => {
-      uprightParts.push(boxGeometry([.09, height, .076], [0, height / 2, z + dz]))
+    ;[-frameDepth / 2, frameDepth / 2].forEach((dx) => {
+      uprightParts.push(boxGeometry([.076, height, .09], [dx, height / 2, z]))
     })
-    // K-brace lattice between the two upright columns
+    // K-brace lattice spans the rack depth between the front and rear posts.
     for (let step = 0; step < 11; step += 1) {
       const y = .5 + step * (height - 1) / 11
-      const brace = boxGeometry([.038, .038, frameDepth * 1.06], [0, y, z], [step % 2 ? .82 : -.82, 0, 0])
+      const brace = boxGeometry([frameDepth * 1.06, .038, .038], [0, y, z], [0, 0, step % 2 ? .82 : -.82])
       uprightParts.push(brace)
-      uprightParts.push(boxGeometry([.05, .05, frameDepth], [0, y + (height - 1) / 22, z]))
+      uprightParts.push(boxGeometry([frameDepth, .05, .05], [0, y + (height - 1) / 22, z]))
     }
-    uprightParts.push(boxGeometry([.14, .3, frameDepth + .1], [0, .15, z]))
+    uprightParts.push(boxGeometry([frameDepth + .1, .14, .3], [0, .07, z]))
   }
   for (let bay = 0; bay < bays; bay += 1) {
     const zCenter = zStart + (bay + .5) * bayWidth
     levels.forEach((level, levelIndex) => {
       if (levelIndex === 0) return
-      ;[-frameDepth / 2 + .05, frameDepth / 2 - .05].forEach((dz) => {
-        beamParts.push(boxGeometry([.05, .11, bayWidth - .09], [.005, level, zCenter + dz]))
-        beamParts.push(boxGeometry([.09, .035, bayWidth - .09], [0, level + .04, zCenter + dz]))
+      ;[-frameDepth / 2 + .05, frameDepth / 2 - .05].forEach((dx) => {
+        beamParts.push(boxGeometry([.11, .11, bayWidth - .09], [dx, level, zCenter]))
+        beamParts.push(boxGeometry([.09, .035, bayWidth - .09], [dx, level + .04, zCenter]))
       })
       for (let wire = 0; wire < 9; wire += 1) {
         const z = zCenter - bayWidth / 2 + (wire + .5) * (bayWidth / 9)
-        deckParts.push(boxGeometry([.012, .012, frameDepth - .06], [0, level + .06, z], [0, 0, Math.PI / 2]))
+        deckParts.push(boxGeometry([frameDepth - .06, .012, .012], [0, level + .06, z]))
       }
-      ;[-.38, -.13, .13, .38].forEach((dz) => {
-        deckParts.push(boxGeometry([.014, .014, bayWidth - .1], [0, level + .07, zCenter + dz]))
+      ;[-.38, -.13, .13, .38].forEach((dx) => {
+        deckParts.push(boxGeometry([.014, .014, bayWidth - .1], [dx, level + .07, zCenter]))
       })
     })
   }
@@ -234,18 +244,50 @@ function buildRackRun(scene, x, zStart, bays, facing) {
 
   // stored pallets, thinned out so aisles read as a working facility
   const loads = []
+  const slots = []
   for (let bay = 0; bay < bays; bay += 1) {
     const zCenter = zStart + (bay + .5) * bayWidth
     levels.forEach((level, levelIndex) => {
       if (levelIndex === 0) return
       ;[-.62, .62].forEach((offset, slot) => {
-        if (Math.random() < .22) return
+        const side = facing > 0 ? 'left' : 'right'
+        const slotId = `${side}-rack-b${bay + 1}-l${levelIndex}-s${slot + 1}`
+        const rackSlot = {
+          id: slotId,
+          position: { x: x + facing * .02, y: level + .09, z: zCenter + offset },
+          yaw: Math.PI / 2,
+          halfExtents: { x: frameDepth / 2 + .16, y: .16, z: .56 },
+          occupiedBy: null,
+        }
+        slots.push(rackSlot)
+        if ((bay * 7 + levelIndex * 3 + slot * 5) % 6 === 0) return
         const tint = [0xb5854f, 0xa97a49, 0xbd8f5c, 0x9d7346][(bay + levelIndex + slot) % 4]
-        loads.push(palletLoad(scene, [x - facing * .02, level + .09, zCenter + offset], tint, (bay + levelIndex) % 3 === 0))
+        const load = palletLoad(
+          scene,
+          [rackSlot.position.x, rackSlot.position.y, rackSlot.position.z],
+          tint,
+          (bay + levelIndex) % 3 === 0,
+          { id: `pallet-${slotId}`, slotId, yaw: rackSlot.yaw, weight: 1800 + ((bay + levelIndex + slot) % 4) * 350 },
+        )
+        rackSlot.occupiedBy = load.name
+        loads.push(load)
       })
     })
   }
-  return loads
+  return {
+    loads,
+    slots,
+    collider: {
+      id: `${facing > 0 ? 'left' : 'right'}-rack-run`,
+      label: 'Pallet rack',
+      kind: 'rack',
+      blocksCarriedLoads: false,
+      minX: x - frameDepth / 2 - .12,
+      maxX: x + frameDepth / 2 + .12,
+      minZ: zStart - .14,
+      maxZ: zStart + bays * bayWidth + .14,
+    },
+  }
 }
 
 function buildStructure(scene) {
@@ -381,14 +423,19 @@ function buildFixtures(scene) {
 
   const cones = []
   ;[[-2.1, 3.2], [0, 3.2], [2.1, 3.2]].forEach(([x, z]) => {
+    const coneGroup = new THREE.Group()
+    coneGroup.name = `safety_cone_${cones.length + 1}`
     const cone = new THREE.Mesh(new THREE.ConeGeometry(.19, .62, 20), material(0xdd5f1c, { roughness: .7 }))
-    cone.position.set(x, .31, z)
+    cone.position.set(0, .31, 0)
     cone.castShadow = true
-    scene.add(cone)
+    coneGroup.add(cone)
     const base = new THREE.Mesh(new THREE.BoxGeometry(.34, .03, .34), material(0xdd5f1c, { roughness: .7 }))
-    base.position.set(x, .015, z)
-    scene.add(base)
-    cones.push(cone)
+    base.position.set(0, .015, 0)
+    coneGroup.add(base)
+    coneGroup.position.set(x, 0, z)
+    coneGroup.userData.physics = { kind: 'cone', radius: .24, tipped: false }
+    scene.add(coneGroup)
+    cones.push(coneGroup)
   })
 
   // empty pallet stack and a battery charger against the wall, working-facility cues
@@ -407,6 +454,12 @@ function buildFixtures(scene) {
   const chargerFace = new THREE.Mesh(new THREE.BoxGeometry(.3, .2, .04), new THREE.MeshStandardMaterial({ color: 0x0d1b1e, emissive: 0x1c4a3f, emissiveIntensity: .8, roughness: .3 }))
   chargerFace.position.set(9.9, .95, 12.24)
   scene.add(chargerFace)
+  return {
+    cones,
+    colliders: [
+      { id: 'battery-charger', label: 'Battery charger', kind: 'fixture', minX: 9.5, maxX: 10.3, minZ: 12.18, maxZ: 12.82 },
+    ],
+  }
 }
 
 export function createWarehouse(scene) {
@@ -417,14 +470,21 @@ export function createWarehouse(scene) {
 
   buildStructure(scene)
   buildFloorMarkings(scene)
-  buildRackRun(scene, -6.4, -16, 11, -1)
-  buildRackRun(scene, 6.4, -16, 11, 1)
-  buildFixtures(scene)
+  const leftRack = buildRackRun(scene, -6.4, -16, 11, 1)
+  const rightRack = buildRackRun(scene, 6.4, -16, 11, -1)
+  const fixtures = buildFixtures(scene)
 
-  const pallet = palletLoad(scene, [0, 0, -11.5], 0xb5854f, false)
+  const pallet = palletLoad(scene, [0, 0, 7.2], 0xb5854f, false, { id: 'training-pallet', weight: 2400 })
   const pedestrians = [
     pedestrian(scene, 2.7, -7.6, 0xd9d43f),
     pedestrian(scene, -2.9, 8.2, 0xe07c22),
   ]
-  return { pallet, pedestrians }
+  return {
+    pallet,
+    pallets: [pallet, ...leftRack.loads, ...rightRack.loads],
+    pedestrians,
+    cones: fixtures.cones,
+    rackSlots: [...leftRack.slots, ...rightRack.slots],
+    staticColliders: [leftRack.collider, rightRack.collider, ...fixtures.colliders],
+  }
 }

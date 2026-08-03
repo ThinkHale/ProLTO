@@ -202,17 +202,19 @@ def operator_station(root):
                       [(0.0, 0), (0.019, 0.004), (0.024, 0.027),
                        (0.021, 0.052), (0.0, 0.058)],
                       M.grip_rubber(), wheel, loc=(0.083, -0.078, 0.015))
-    horn = P.cyl('btn_horn', 0.041, 0.018, (0, 0, 0.061),
+    # Seat the horn pad directly on the wheel hub. The previous 22 mm air gap
+    # made it look detached from the steering wheel at oblique view angles.
+    horn = P.cyl('btn_horn', 0.041, 0.018, (0, 0, 0.039),
                  M.plastic_dark(), pivot, bevel=0.008)
     R.tag_control(horn, 'horn', 'Steering wheel horn', 'button', True,
                   motion='vertical')
 
     # Direction paddle and wheel-tilt release flank the column in the manual.
-    P.tube('direction_stalk', [(-0.015, 0.0, 0.0), (0.085, 0.0, 0.0)],
+    P.tube('direction_stalk', [(-0.015, 0.0, 0.0), (0.165, 0.0, 0.0)],
            0.010, M.steel_dark(), pivot)
-    direction = P.rounded_box('direction_control', (0.045, 0.026, 0.052),
-                              (0.105, 0, 0), M.plastic_dark(), pivot,
-                              radius=0.009, segments=5)
+    direction = P.rounded_box('direction_control', (0.040, 0.024, 0.046),
+                              (0.185, 0, 0), M.plastic_dark(), pivot,
+                              radius=0.011, segments=6)
     R.tag_control(direction, 'travel', 'Forward and reverse direction control',
                   'horizontal', False, motion='horizontal')
     P.rounded_box('steer_tilt_release', (0.032, 0.050, 0.085),
@@ -238,14 +240,16 @@ def operator_station(root):
 
     # Four chassis-mounted urethane manual hydraulic levers. Their bases are
     # separate accordion boots and their offset handles carry tactile icons.
-    P.rounded_box('manual_lever_pod', (0.31, 0.25, 0.075), (0.385, 0.12, 0.80),
+    # Keep the hydraulic pod outside the display recess. The former 310 mm pod
+    # crossed 85 mm into the display volume and was visibly clipping the bezel.
+    P.rounded_box('manual_lever_pod', (0.22, 0.22, 0.075), (0.405, 0.13, 0.80),
                   molded, root, radius=0.025, segments=5)
     lever_specs = (('lift', 'Lift and lower manual lever'),
                    ('tilt', 'Mast tilt manual lever'),
                    ('sideshift', 'Sideshift manual lever'),
                    ('reach', 'Auxiliary hydraulic manual lever'))
     for i, (action, label) in enumerate(lever_specs):
-        x = 0.285 + i * 0.072
+        x = 0.315 + i * 0.055
         piv = R.empty(f'rig_lever_{i}', (x, 0.10, 0.815), root)
         P.lathe(f'lever_boot_{i}',
                 [(0.0, 0), (0.030, 0), (0.034, 0.012), (0.027, 0.024),
@@ -255,14 +259,18 @@ def operator_station(root):
         shaft = P.cyl(f'lever_shaft_{i}', 0.009, 0.205,
                       (0, -0.024, 0.105), M.steel_dark(), piv,
                       rot=(0.23, 0, 0), verts=24)
-        handle = P.rounded_box(f'lever_handle_{i}', (0.043, 0.034, 0.085),
-                               (0, -0.052, 0.215), M.grip_rubber(), piv,
-                               radius=0.015, segments=6, rot=(0.23, 0, 0))
+        knob_outline = [(-0.018, 0.0), (0.018, 0.0), (0.024, 0.018),
+                        (0.022, 0.064), (0.012, 0.084), (-0.012, 0.084),
+                        (-0.022, 0.064), (-0.024, 0.018)]
+        handle = P.loft_shell(f'lever_handle_{i}',
+                              [(-0.018, knob_outline), (0.018, knob_outline)],
+                              M.grip_rubber(), piv, subsurf=1, bevel=0.003)
+        handle.location = (0, -0.052, 0.175)
+        handle.rotation_euler = (0.23, 0, 0)
         R.tag_control(handle, action, label, 'vertical', True,
                       motion='fore-aft')
         P.box(f'lever_icon_{i}', (0.020, 0.004, 0.013),
-              (0, -0.072, 0.225), M.decal_white(), piv, bevel=0.002,
-              rot=(0.23, 0, 0))
+              (0, -0.021, 0.052), M.decal_white(), handle, bevel=0.002)
 
 
 def guard(root):

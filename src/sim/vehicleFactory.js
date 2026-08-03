@@ -59,6 +59,7 @@ function attachControlMetadata(object) {
     axis: extras.ctrl_axis || 'vertical',
     spring: !!extras.ctrl_spring,
     motion: extras.ctrl_motion || extras.ctrl_axis || 'vertical',
+    scale: Number.isFinite(extras.ctrl_scale) ? extras.ctrl_scale : 1,
   }
   if (object.material) {
     object.material = object.material.clone()

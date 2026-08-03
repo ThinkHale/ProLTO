@@ -13,6 +13,7 @@ const REQUIRED = {
   crown_sc6200: { nodes: ['rig_root', 'rig_mast', 'rig_carriage', 'rig_wheelPivot', 'rig_lever_0', 'rig_lever_1', 'rig_lever_2', 'rig_cameraMount', 'rig_xrOrigin'], controls: ['steer', 'travel', 'brake', 'lift', 'tilt', 'sideshift', 'horn', 'presence'] },
   raymond_4460: { nodes: ['rig_root', 'rig_mast', 'rig_carriage', 'rig_wheelPivot', 'rig_lever_0', 'rig_lever_1', 'rig_lever_2', 'rig_cameraMount', 'rig_xrOrigin'], controls: ['steer', 'travel', 'brake', 'lift', 'tilt', 'sideshift', 'horn', 'presence'] },
 }
+const CONTROL_MOTIONS = new Set(['radial', 'horizontal', 'vertical', 'fore-aft', 'button', 'pedal'])
 
 function readGlb(path) {
   const buffer = readFileSync(path)
@@ -41,6 +42,15 @@ for (const [truck, contract] of Object.entries(REQUIRED)) {
   if (missingNodes.length) problems.push(`missing nodes: ${missingNodes.join(', ')}`)
   if (missingControls.length) problems.push(`missing controls: ${missingControls.join(', ')}`)
   if (names.has('qa_floor')) problems.push('QA floor leaked into export')
+  controls.forEach((node) => {
+    const extras = node.extras
+    const motion = extras.ctrl_motion || extras.ctrl_axis
+    if (!CONTROL_MOTIONS.has(motion)) problems.push(`${node.name} has invalid motion ${motion || 'undefined'}`)
+    if (!Number.isFinite(extras.ctrl_scale) || extras.ctrl_scale === 0) problems.push(`${node.name} has invalid ctrl_scale`)
+    if (/lower|reverse/i.test(extras.ctrl_label || '') && extras.ctrl_axis === 'button' && extras.ctrl_scale > 0) {
+      problems.push(`${node.name} negative button has positive ctrl_scale`)
+    }
+  })
   const camera = nodes.find((node) => node.name === 'rig_cameraMount')
   const eye = camera?.translation?.[1]
 
