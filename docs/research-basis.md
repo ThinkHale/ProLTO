@@ -25,6 +25,7 @@ The knowledge bank and safety detectors cover truck controls, differences from a
 4. Validate each assessment against the employer's facility traffic plan, aisle widths, rack geometry, dock conditions, loads, pedestrian controls, and applicable state-plan requirements.
 5. Run Quest 3 comfort testing at target frame rate. Reduce acceleration changes and camera motion where needed without masking unsafe control behavior.
 6. Establish scoring validity with a pilot cohort of known-qualified and known-novice operators before using thresholds in hiring decisions.
+7. Use a supported external pedal or tracker before treating foot-operated deadman, brake, or accelerator performance as validated. Quest 3 does not provide native foot tracking.
 
 ## Technical architecture
 

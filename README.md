@@ -54,3 +54,5 @@ links, modeling decisions, and validation limits.
 This prototype is a decision-support and controlled-practice tool. It does not issue OSHA certification. Under 29 CFR 1910.178(l), the employer remains responsible for formal instruction, practical training, and evaluation of operator performance in the workplace by a person with the necessary knowledge, training, and experience.
 
 Before using a truck profile for hiring decisions, validate the control mapping, steering configuration, performance envelope, warnings, and attachments against the exact truck's current operator manual and data plate. The current reference-built models are assessment assets, not manufacturer-approved digital twins.
+
+Meta Quest 3 does not provide native foot tracking. Pedal geometry and interlocks are represented, but a practical evaluation of real foot placement, pedal travel, and pedal force requires a supported external pedal or tracker.
