@@ -22,6 +22,7 @@ The build system, rig contract, and visual QA loops are documented in [the asset
 ## Modeling decisions
 
 - Every family has a separate first-person station, eye point, chassis, control set, interlock behavior, and hydraulic animation.
+- The Raymond 7500 compartment form is matched against the manufacturer compartment photograph carried in the [AllMachines 7000 listing](https://www.allmachines.com/forklifts/the-raymond-corporation-7000) (credited "Source: The Raymond Corporation"). The cowl is lofted through depth slices rather than extruded from a plan: a planar upward-facing surface collects the full hemisphere of the environment map, so a flat cowl renders near mid-gray however dark its albedo. Matching the molded compound curvature is what produces the near-black tone the photograph shows.
 - Control *mechanism* is modeled, not just control *placement*. A part the operator moves on two axes is one mesh with two axes, because splitting it into two adjacent meshes trains the wrong motor pattern. The Crown Multi-Task handle and its thumb ball, and the Crown reverse-acting foot brake, are the cases where this matters most.
 - Crown and Raymond variants use separate body geometry, stance, wheel arrangement, control placement, color treatment, and model labels.
 - Bodywork is lofted from cross-sections and subdivided, so power units carry the compound curvature of pressed and molded covers rather than beveled boxes. Structural members are extruded profiles: mast rails are C-channels, forks are tapered ITA sections with radiused heels.

@@ -210,86 +210,145 @@ def console(root):
     control = M.pbr('ray_control_black', 0x0E1012, roughness=0.5)
     legend = M.decal_white()
 
-    # The real 7500 has one broad, asymmetric molded hood. Its left lobe wraps
-    # around the steering disc, the center rises around the display and the
-    # right lobe forms a deep pocket for the control handle.
-    plan = [(-0.52, -0.58), (-0.48, -0.22), (-0.42, -0.08), (-0.12, -0.06),
-            (0.06, -0.10), (0.22, -0.07), (0.44, -0.10), (0.52, -0.22),
-            (0.52, -0.62), (0.39, -0.67), (0.26, -0.58), (0.12, -0.53),
-            (-0.08, -0.51), (-0.22, -0.58), (-0.39, -0.66)]
-    P.extrude_profile('console_hood', plan, 0.18, molded, root, plane='XY',
-                      bevel=0.035, loc=(0, 0, 0.96))
-    P.rounded_box('console_front_wall', (1.01, 0.12, 0.58), (0, -0.13, 0.76),
-                  molded, root, radius=0.07, segments=6)
-    # Raised center bridge and sculpted knee bulge visible in the official
-    # overhead image. These prevent the dashboard from reading as a flat slab.
-    P.rounded_box('console_center_bridge', (0.30, 0.40, 0.24), (0.05, -0.30, 1.05),
-                  molded, root, radius=0.07, segments=7, rot=(-0.05, 0, 0))
-    P.rounded_box('console_knee_bulge', (0.30, 0.16, 0.48), (0.04, -0.48, 0.79),
-                  molded, root, radius=0.09, segments=7)
+    # The cowl was previously a flat-topped extruded plan with a bevel. That is
+    # why it read as a light gray slab: a planar surface facing straight up
+    # collects the full bright hemisphere of the warehouse HDRI, so charcoal
+    # paint renders near mid-gray no matter how dark its albedo. The real cowl
+    # is a molded mound whose surfaces face many directions, which is what
+    # produces the deep shading and near-black tone in the reference photo.
+    #
+    # Lofting it through depth slices fixes silhouette and tone together. Each
+    # slice carries the same top signature: a raised LEFT lobe around the
+    # steering pod, a scalloped CENTRE dip, and a raised RIGHT lobe under the
+    # display that falls away into the handle pocket.
+    def cowl_section(y, base_z, left, centre, right, half_w):
+        return (y, [
+            (-half_w, base_z),
+            (-half_w * 0.99, left - 0.055),
+            (-half_w * 0.72, left),
+            (-half_w * 0.40, centre + 0.022),
+            (-half_w * 0.06, centre),
+            (half_w * 0.28, centre + 0.030),
+            (half_w * 0.60, right),
+            (half_w * 0.90, right - 0.030),
+            (half_w, base_z + 0.02),
+        ])
 
-    # Large flush steering disc and spinner. This is the defining Raymond
-    # control silhouette, not a conventional wheel or a Crown-style tiller.
-    P.lathe('steer_recess', [(0.0, 0), (0.145, 0), (0.155, 0.018),
-                             (0.155, 0.035), (0.0, 0.035)], inset, root,
-            loc=(-0.31, -0.38, 1.145))
-    steer = R.empty('rig_steerPivot', (-0.31, -0.38, 1.18), root)
-    disc = P.lathe('steer_disc', [(0.0, 0), (0.126, 0), (0.135, 0.012),
-                                  (0.132, 0.025), (0.0, 0.025)], control, steer)
+    P.loft_shell('console_hood', [
+        cowl_section(-0.030, 0.900, 0.990, 0.970, 0.990, 0.440),
+        cowl_section(-0.140, 0.880, 1.100, 1.060, 1.090, 0.500),
+        cowl_section(-0.280, 0.870, 1.165, 1.100, 1.150, 0.525),
+        cowl_section(-0.420, 0.860, 1.175, 1.085, 1.175, 0.530),
+        cowl_section(-0.550, 0.860, 1.150, 1.060, 1.160, 0.520),
+        cowl_section(-0.660, 0.870, 1.080, 1.000, 1.100, 0.480),
+        cowl_section(-0.725, 0.890, 0.980, 0.950, 1.000, 0.420),
+    ], molded, root, subsurf=2, bevel=0.004)
+
+    # Skirt closing the cowl down to the compartment floor, and the knee bulge
+    # the operator braces against. Both stay charcoal; the red is bodywork.
+    P.rounded_box('console_skirt', (0.99, 0.60, 0.30), (0, -0.36, 0.74),
+                  molded, root, radius=0.08, segments=6)
+    P.rounded_box('console_knee_bulge', (0.34, 0.17, 0.44), (0.02, -0.50, 0.80),
+                  molded, root, radius=0.10, segments=7)
+
+    # Steering pod. In the reference the disc is NOT a turntable standing on a
+    # pedestal: it is a large near-black disc sunk almost flush into a raised
+    # molded dome, with only a low knob breaking the surface. The dome rim
+    # stands slightly proud of the disc face, which is what reads as "inset".
+    P.lathe('steer_pod', [(0.0, 0.0), (0.200, 0.0), (0.208, 0.022),
+                          (0.200, 0.046), (0.176, 0.058), (0.168, 0.030),
+                          (0.0, 0.026)], molded, root,
+            loc=(-0.31, -0.52, 1.158))
+    steer = R.empty('rig_steerPivot', (-0.31, -0.52, 1.186), root)
+    disc = P.lathe('steer_disc', [(0.0, 0.0), (0.158, 0.0), (0.166, 0.008),
+                                  (0.162, 0.021), (0.0, 0.023)], control, steer,
+                   segments=64)
     R.tag_control(disc, 'steer', 'Raymond steering disc', 'radial', False,
                   motion='radial')
-    P.cyl('steer_hub', 0.014, 0.012, (0, 0, 0.026), M.steel_dark(), steer,
-          verts=24, bevel=0.002)
-    spinner = P.cyl('steer_spinner', 0.018, 0.072, (0.085, 0.035, 0.062),
-                    control, steer, verts=32, bevel=0.008)
-    spinner.rotation_euler = (-0.10, 0, 0)
-    P.text_mesh('steer_brand', 'RAYMOND', 0.014, 0.001, M.decal_dark(), steer,
-                loc=(0, 0, 0.031), facing='+Z')
+    # The pod must clear BOTH the cowl and battery_operator_cover, a full-width
+    # wall rising to z=1.255. The pod previously reached y=-0.158, straight
+    # through that wall, and the taller wall won the depth test and sliced the
+    # disc into a semicircle. Pulling the pod back to y=-0.52 at radius 0.200
+    # puts its leading edge at -0.32, just clear of the wall face at -0.315.
+    P.lathe('steer_hub', [(0.0, 0.0), (0.030, 0.001), (0.034, 0.006),
+                          (0.028, 0.010), (0.0, 0.011)], M.steel_dark(), steer,
+            loc=(0, 0, 0.021))
+    knob = P.lathe('steer_knob', [(0.0, 0.0), (0.019, 0.002), (0.024, 0.017),
+                                  (0.017, 0.029), (0.0, 0.031)], control, steer,
+                   loc=(0.106, 0.030, 0.020))
+    knob.rotation_euler = (0, 0, 0)
+    P.text_mesh('steer_brand', 'RAYMOND', 0.013, 0.001, M.decal_dark(), steer,
+                loc=(-0.005, -0.062, 0.022), facing='+Z')
+    # Short stalk lever on the pod shoulder, left of the disc in the reference.
+    P.lathe('pod_lever_boot', [(0.0, 0.0), (0.022, 0.0), (0.018, 0.020),
+                               (0.010, 0.030), (0.0, 0.031)], inset, root,
+            loc=(-0.45, -0.42, 1.168))
+    stalk = P.cyl('pod_lever', 0.008, 0.085, (-0.45, -0.42, 1.230), control,
+                  root, verts=20, bevel=0.003)
+    stalk.rotation_euler = (0.22, -0.16, 0)
+    P.lathe('pod_lever_knob', [(0.0, 0.0), (0.017, 0.003), (0.020, 0.020),
+                               (0.013, 0.032), (0.0, 0.034)], control, root,
+            loc=(-0.464, -0.401, 1.268))
 
-    # Integrated center display is flush to the sloped hood and ringed by a
-    # printed status band. The runtime replaces only screen_ray with telemetry.
-    P.rounded_box('display_recess', (0.265, 0.19, 0.025), (0.05, -0.29, 1.165),
-                  inset, root, radius=0.025, segments=6, rot=(0, 0, 0))
-    screen = P.rounded_box('screen_ray', (0.185, 0.115, 0.008), (0.04, -0.29, 1.184),
-                           M.screen_glass(), root, radius=0.012, segments=5)
-    P.text_mesh('display_brand', 'RAYMOND', 0.016, 0.001, legend, root,
-                loc=(0.04, -0.365, 1.191), facing='+Z')
-    # Status lamps and membrane keys copied as separate readable hard points.
-    for index, x in enumerate((-0.055, -0.02, 0.015, 0.05, 0.085, 0.12)):
-        P.cyl(f'display_lamp_{index}', 0.006, 0.004, (x, -0.21, 1.193),
-              M.pbr(f'ray_lamp_{index}', 0xB7C4B1 if index > 1 else 0xC48A22,
-                    roughness=0.32, emission=0x6B7A68, emission_strength=0.5),
-              root, verts=18)
-    for index, x in enumerate((0.155, 0.19)):
-        P.cyl(f'display_key_{index}', 0.011, 0.005, (x, -0.30, 1.19), control,
-              root, verts=24, bevel=0.002)
+    # Display cluster. The reference puts it on the RIGHT lobe, angled up toward
+    # the standing operator, not flat in the centre of the hood. It carries a
+    # horizontal segmented bar, an LCD window and a round badge alongside.
+    # Everything parents to the housing so the rake carries to the parts.
+    cluster = P.rounded_box('display_housing', (0.40, 0.25, 0.055),
+                            (0.175, -0.330, 1.196), inset, root,
+                            radius=0.016, segments=6, rot=(-0.44, 0, -0.05))
+    P.rounded_box('screen_ray', (0.205, 0.115, 0.008), (-0.038, -0.014, 0.034),
+                  M.screen_glass(), cluster, radius=0.009, segments=5)
+    # Segmented state-of-charge bar: discrete lit segments, amber at the low end
+    # grading to green, which is the row of colour visible above the LCD.
+    for index in range(10):
+        colour = 0xC4531F if index < 2 else 0xC48A22 if index < 4 else 0x7FA85C
+        P.box(f'display_segment_{index}', (0.014, 0.020, 0.005),
+              (-0.125 + index * 0.0215, 0.072, 0.032),
+              M.pbr(f'ray_seg_{index}', colour, roughness=0.3,
+                    emission=colour, emission_strength=0.7), cluster, bevel=0.001)
+    P.lathe('display_badge', [(0.0, 0.0), (0.020, 0.0), (0.022, 0.004),
+                              (0.017, 0.007), (0.0, 0.008)], M.steel_dark(),
+            cluster, loc=(0.148, 0.055, 0.030))
+    P.text_mesh('display_brand', 'RAYMOND', 0.012, 0.001, legend, cluster,
+                loc=(-0.038, -0.090, 0.032), facing='+Z')
+    for index, x in enumerate((0.112, 0.152)):
+        P.cyl(f'display_key_{index}', 0.011, 0.006, (x, -0.066, 0.031), control,
+              cluster, verts=24, bevel=0.002)
 
     # Primary control handle in a deep right-side pocket. The handle body is
     # fixed. A separate travel paddle is the single-axis travel mechanism.
-    P.rounded_box('handle_pocket', (0.22, 0.28, 0.07), (0.37, -0.43, 1.125),
-                  inset, root, radius=0.055, segments=7)
-    handle_root = R.empty('primary_handle_root', (0.37, -0.43, 1.14), root)
-    P.lathe('handle_boot', [(0.0, 0), (0.05, 0), (0.055, 0.018),
-                            (0.036, 0.055), (0.024, 0.075), (0.0, 0.075)],
+    # Deep contoured pocket the handle rises out of, not a shallow flat tray.
+    P.lathe('handle_pocket', [(0.0, 0.030), (0.075, 0.020), (0.115, 0.004),
+                              (0.140, 0.020), (0.146, 0.044), (0.0, 0.044)],
+            inset, root, segments=40, loc=(0.375, -0.435, 1.096))
+    handle_root = R.empty('primary_handle_root', (0.37, -0.43, 1.10), root)
+    P.lathe('handle_boot', [(0.0, 0), (0.052, 0), (0.056, 0.016),
+                            (0.034, 0.048), (0.022, 0.062), (0.0, 0.062)],
             M.grip_rubber(), handle_root)
+    # Bent stalk carrying the grip up and inboard toward the operator's hand.
+    stalk = P.cyl('handle_stalk', 0.021, 0.105, (0.004, 0.012, 0.055),
+                  control, handle_root, verts=28, bevel=0.006)
+    stalk.rotation_euler = (0.24, 0, -0.10)
     # One pose frame carries the grip and every thumb control. Previously the
     # grip alone was raked while its controls stayed upright, which made the
     # buttons cut through the shell whenever the handle moved.
-    handle_pose = R.empty('primary_handle_pose', (0, 0, 0), handle_root)
+    # Seated on top of the stalk, and scaled up. The previous grip was small
+    # enough to read as a switch cluster rather than something a hand wraps.
+    handle_pose = R.empty('primary_handle_pose', (0.004, 0.0, 0.100), handle_root)
     handle_pose.rotation_euler = (-0.18, 0.16, -0.04)
-    handle_outline = [(-0.031, 0.0), (0.031, 0.0), (0.045, 0.034),
-                      (0.042, 0.132), (0.024, 0.184), (-0.018, 0.192),
-                      (-0.045, 0.142), (-0.047, 0.045)]
-    handle = P.loft_shell('primary_handle', [(-0.032, handle_outline),
-                                              (0.032, handle_outline)],
+    handle_outline = [(-0.039, 0.0), (0.039, 0.0), (0.056, 0.042),
+                      (0.053, 0.165), (0.030, 0.230), (-0.023, 0.240),
+                      (-0.056, 0.178), (-0.059, 0.056)]
+    handle = P.loft_shell('primary_handle', [(-0.040, handle_outline),
+                                              (0.040, handle_outline)],
                           control, handle_pose, subsurf=1, bevel=0.005)
     P.rounded_box('handle_thumb_rest', (0.074, 0.048, 0.036),
                   (0.019, -0.043, 0.154), control, handle_pose, radius=0.018,
                   segments=6)
     travel = R.empty('rig_travelPivot', (0.032, -0.068, 0.164), handle_pose)
     travel_paddle = P.rounded_box('handle_travel_paddle', (0.026, 0.012, 0.052),
-                                  (0, 0, 0), M.pbr('ray_paddle_gray', 0x606568,
-                                                   roughness=0.5), travel,
+                                  (0, 0, 0), M.pbr('ray_hw_gray', 0x3A3E40, roughness=0.52), travel,
                                   radius=0.011, segments=6)
     # The 7000 Series brochure calls this a "single-axis control handle" with
     # "discrete, intuitively mapped controls". That is the deliberate opposite
@@ -300,20 +359,20 @@ def console(root):
                   'fore-aft', True, motion='fore-aft', detents=1)
     lift = R.empty('rig_liftPivot', (-0.004, -0.067, 0.176), handle_pose)
     lift_btn = P.rounded_box('handle_lift', (0.025, 0.012, 0.046), (0, 0, 0),
-                             M.pbr('ray_button_gray', 0x555A5D, roughness=0.5),
+                             M.pbr('ray_hw_gray', 0x3A3E40, roughness=0.52),
                              lift, radius=0.010, segments=6)
     R.tag_control(lift_btn, 'lift', 'Lift and lower thumb control', 'vertical',
                   True, motion='vertical', detents=1)
     reach_p = R.empty('rig_reachPivot', (-0.030, -0.066, 0.138), handle_pose)
     reach_btn = P.rounded_box('handle_reach', (0.027, 0.012, 0.036), (0, 0, 0),
-                              M.pbr('ray_button_black', 0x2F3335, roughness=0.5),
+                              M.pbr('ray_hw_dark', 0x2B2F31, roughness=0.52),
                               reach_p, radius=0.010, segments=6)
     # Reach and retract read as a fore-aft thumb push on the real handle.
     R.tag_control(reach_btn, 'reach', 'Reach and retract thumb control',
                   'fore-aft', True, motion='fore-aft', detents=1)
     tilt_p = R.empty('rig_tiltPivot', (0.027, -0.066, 0.119), handle_pose)
     tilt_btn = P.rounded_box('handle_tilt', (0.026, 0.012, 0.034), (0, 0, 0),
-                             M.pbr('ray_button_dark', 0x45494C, roughness=0.5),
+                             M.pbr('ray_hw_gray', 0x3A3E40, roughness=0.52),
                              tilt_p, radius=0.009, segments=6)
     R.tag_control(tilt_btn, 'tilt', 'Tilt thumb control', 'vertical', True,
                   motion='vertical', detents=1)
@@ -321,7 +380,7 @@ def console(root):
     # all, so the truck advertised an attachment the operator could not reach.
     shift_p = R.empty('rig_sideshiftPivot', (-0.004, -0.066, 0.101), handle_pose)
     shift_btn = P.rounded_box('handle_sideshift', (0.030, 0.012, 0.030), (0, 0, 0),
-                              M.pbr('ray_button_blue', 0x35505E, roughness=0.5),
+                              M.pbr('ray_hw_dark', 0x2B2F31, roughness=0.52),
                               shift_p, radius=0.009, segments=6)
     R.tag_control(shift_btn, 'sideshift', 'Sideshift thumb control', 'horizontal',
                   True, motion='horizontal', detents=1)
@@ -356,7 +415,7 @@ def console(root):
           verts=32, bevel=0.009)
     secondary_paddle = P.rounded_box('secondary_travel_paddle', (0.024, 0.011, 0.046),
                                      (0.030, -0.052, 0.020),
-                                     M.pbr('ray_paddle_gray', 0x606568, roughness=0.5),
+                                     M.pbr('ray_hw_gray', 0x3A3E40, roughness=0.52),
                                      secondary_pivot, radius=0.010, segments=6)
     R.tag_control(secondary_paddle, 'travel', 'Secondary handle travel paddle',
                   'fore-aft', True, motion='fore-aft', detents=1)
@@ -448,6 +507,11 @@ def build():
         'closeups': {
             'console': {'loc': (0.75, -1.05, 1.45), 'target': (-0.30, -0.50, 1.02),
                         'focal': 28},
+            # Matches the angle of the manufacturer compartment photograph:
+            # above and slightly right, looking down across the whole cowl. This
+            # is the view the console geometry is judged against.
+            'cowl': {'loc': (0.82, -1.30, 2.02), 'target': (-0.02, -0.36, 1.06),
+                     'focal': 40},
             'forks': {'loc': (1.9, 2.5, 1.05), 'target': (0, 0.8, 0.5), 'focal': 38},
         },
     }
