@@ -18,7 +18,7 @@ Authority: [official operator manual page 11](https://www.crown.com/content/dam/
 | Steering | Left Crown palm tiller and knob | Dedicated radial steering mesh and pivot | Pass for layout and mechanism family |
 | Travel and hydraulics | Right Multi-Task handle with push/pull travel, lift/lower and thumb functions | Articulated handle, travel pivot, lift, reach, tilt, horn, spring return and local-axis VR manipulation | Pass for control mapping, force curve pending |
 | Floor controls | Left brake, right presence pad, Entry Bar and suspended floor | Separate brake mesh, presence pad, entry bar, tread floor and continuous-hold VR interlock | Pass for layout |
-| Surface finish | Molded grain, printed legends, seams and real wear | Original PBR materials, modeled legends and hard points, no manufacturer photograph textures | Improved, scan-quality surface detail pending |
+| Surface finish | Molded grain, printed legends, seams and real wear | Original PBR materials, modeled legends and hard points, plus runtime procedural surfacing: baked roughness breakup, molded grain, tread relief and floor-height grime, triplanar-projected in object space. No manufacturer photograph textures | Improved, scan-quality surface detail pending |
 
 Current application evidence: [Crown reach cockpit capture](../qa/app/crown-reach-cab.png).
 
@@ -44,6 +44,18 @@ Current application evidence: [Raymond reach cockpit capture](../qa/app/raymond-
 - Control travel is computed in the control's local mechanical frame. Steering discs use radial motion. Travel handles and paddles use fore and aft motion. Hydraulic thumb controls use their local axes.
 - Spring controls return to neutral. Controller haptics signal pickup and detent crossings.
 - Desktop retains visible-control dragging and keyboard accessibility controls.
+
+## Vehicle behavior
+
+Steering, stability, and facility collision are documented separately in
+[the simulation model](simulation-model.md), including what each model
+approximates and where the approximation stops being defensible. In summary:
+steering uses steered-axle kinematics referenced to the fixed axle, so tail
+swing is geometric rather than scripted; stability solves a combined center of
+gravity against the truck's real support polygon under the inertial forces
+acting that frame; racks are modeled per upright and per beam so bays are open.
+Chassis masses, CG heights, and axle positions are reconstructed working values,
+not data-plate figures, and carry the same validation boundary as the geometry.
 
 ## Acceptance boundary
 

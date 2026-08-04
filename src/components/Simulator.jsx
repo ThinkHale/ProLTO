@@ -7,16 +7,26 @@ import { Crosshair, Gamepad2, Headphones, Keyboard, MousePointer2, RotateCcw, Vo
 import { createWarehouseLoadPhysics, forkConfigurationForProfile } from '../sim/loadPhysics.js'
 import { controlMeshes, createVehicleRig } from '../sim/vehicleFactory.js'
 import { createWarehouse } from '../sim/warehouse.js'
+import { advanceSteerAngle, integrateSteering, steerLimits, tailSwingRadius } from '../sim/vehicleDynamics.js'
+import { solveStability, stabilityWarning } from '../sim/stability.js'
+import { applyFleetSurfacing } from '../sim/surfacing.js'
 
 // Broad fail-safe bounds sit just inside the authored walls. Exact contact is
 // resolved by the warehouse wall, column, rack, and fixture colliders below.
 const WORLD = { minX: -10.9, maxX: 10.9, minZ: -20.9, maxZ: 18.9 }
 const ZERO = { travel: 0, steer: 0, lift: 0, reach: 0, tilt: 0, sideshift: 0, brake: 0, horn: 0, presence: 0, belly: 0 }
+// Simulator state carries operator-facing units (fork height in inches, load in
+// pounds) because that is what the panels and the capacity plates read in. The
+// physics modules are strictly SI, so conversion happens at the boundary.
+const INCH = .0254
+const POUND = .45359237
+// `turnRate` is gone: yaw now comes from the steered-axle kinematics in
+// src/sim/vehicleDynamics.js rather than a per-family fudge factor.
 const DYNAMICS = {
-  reach: { acceleration: 2.45, braking: 6.8, turnRate: 1.42, liftRate: 30.6, reverseScale: .86 },
-  'order-picker': { acceleration: 2.05, braking: 6.4, turnRate: 1.14, liftRate: 40, reverseScale: .82 },
-  pallet: { acceleration: 3.2, braking: 8.2, turnRate: 1.72, liftRate: 4.2, reverseScale: .72 },
-  counterbalance: { acceleration: 2.15, braking: 6.1, turnRate: .9, liftRate: 43, reverseScale: .86 },
+  reach: { acceleration: 2.45, braking: 6.8, liftRate: 30.6, reverseScale: .86 },
+  'order-picker': { acceleration: 2.05, braking: 6.4, liftRate: 40, reverseScale: .82 },
+  pallet: { acceleration: 3.2, braking: 8.2, liftRate: 4.2, reverseScale: .72 },
+  counterbalance: { acceleration: 2.15, braking: 6.1, liftRate: 43, reverseScale: .86 },
 }
 
 // Body envelopes stop the power unit and operator compartment while leaving
@@ -182,6 +192,10 @@ const Simulator = forwardRef(function Simulator({ profile, onTelemetry, onSafety
     createVehicleRig(profile).then((rig) => {
     if (disposed) return
     setActiveControl('Cab controls armed')
+    // The exported fleet ships with flat Principled values and no image
+    // textures at all. Surfacing injects baked roughness/relief/grime before
+    // anything renders, so uniform plastic-looking panels never reach a frame.
+    applyFleetSurfacing(rig.root)
     rig.root.position.set(0, 0, 11.5)
     const desktopCameraMount = rig.cameraMount
     desktopCameraMount.add(camera)
@@ -211,8 +225,13 @@ const Simulator = forwardRef(function Simulator({ profile, onTelemetry, onSafety
     const dynamics = DYNAMICS[profile.family]
     const requiresPresence = profile.family !== 'pallet' || !rig.walkie
     const manual = { ...ZERO }
+    const steering = steerLimits(profile)
     const state = {
       x: 0, z: 11.5, heading: 0, speed: 0, steer: 0, fork: 0, reach: 0, tilt: 0, sideshift: 0,
+      // `steer` stays the normalized control position that drives the wheel and
+      // tiller meshes. `steerAngle` is the real steered-wheel angle in radians
+      // that the kinematics integrate. They are not interchangeable.
+      steerAngle: 0, previousSpeed: 0, yawRate: 0, turnRadius: Infinity,
       load: 0, horn: false, presence: !requiresPresence, presenceLatched: false, viewYaw: 0, viewPitch: defaultViewPitch, lastTelemetry: 0,
       eventLocks: {}, keys: new Set(), pointerDrag: null, lookDrag: null, xrDrags: new Map(), hovered: null,
       modifierHeld: false, modifierObject: null,
@@ -258,7 +277,11 @@ const Simulator = forwardRef(function Simulator({ profile, onTelemetry, onSafety
     }
     const togglePresence = () => updatePresence(!state.presenceLatched)
     const reset = () => {
-      Object.assign(state, { x: 0, z: 11.5, heading: 0, speed: 0, steer: 0, fork: 0, reach: 0, tilt: 0, sideshift: 0, load: 0, viewYaw: 0, viewPitch: defaultViewPitch })
+      Object.assign(state, {
+        x: 0, z: 11.5, heading: 0, speed: 0, steer: 0, fork: 0, reach: 0, tilt: 0, sideshift: 0, load: 0,
+        steerAngle: 0, previousSpeed: 0, yawRate: 0, turnRadius: Infinity,
+        viewYaw: 0, viewPitch: defaultViewPitch,
+      })
       Object.assign(manual, ZERO)
       state.eventLocks = {}
       rig.root.position.set(0, 0, 11.5)
@@ -299,7 +322,7 @@ const Simulator = forwardRef(function Simulator({ profile, onTelemetry, onSafety
       truckColliders: truckColliders(profile, rig),
       pallets: warehouse.pallets,
       rackSlots: warehouse.rackSlots,
-      obstacles: [...warehouse.staticColliders, ...warehouse.cones],
+      obstacles: [...warehouse.staticColliders, ...warehouse.cones, ...warehouse.pedestrians],
       onEvent: (event) => {
         if (event.type === 'pallet-engaged') {
           state.load = event.pallet.weight
@@ -721,15 +744,20 @@ const Simulator = forwardRef(function Simulator({ profile, onTelemetry, onSafety
       if (profile.family === 'counterbalance' && state.fork > 72) maxMps *= .55
       const targetSpeed = travelInput * maxMps * (profile.forksFirstSpeed ? 1 : travelInput < 0 ? dynamics.reverseScale : 1)
       const damping = brakeInput > .1 || Math.abs(travelInput) < .02 ? dynamics.braking * (1 + brakeInput) : dynamics.acceleration
+      state.previousSpeed = state.speed
       state.speed = THREE.MathUtils.damp(state.speed, brakeInput > .1 ? 0 : targetSpeed, damping, dt)
-      state.steer = THREE.MathUtils.damp(state.steer, steerInput, profile.family === 'counterbalance' ? 3.1 : 5.2, dt)
+      // Real steering is rate-limited hydraulics, not an instant snap to lock.
+      state.steerAngle = advanceSteerAngle(state.steerAngle, steerInput, steering, dt)
+      state.steer = state.steerAngle / steering.maxSteer
       const previousPose = { x: state.x, z: state.z, heading: state.heading }
-      if (Math.abs(state.speed) > .025) {
-        const speedRatio = Math.abs(state.speed) / Math.max(maxMps, .1)
-        state.heading -= state.steer * dynamics.turnRate * profile.steerRatio * Math.sign(state.speed) * (.3 + speedRatio * .7) * dt
-      }
-      state.x -= Math.sin(state.heading) * state.speed * dt
-      state.z -= Math.cos(state.heading) * state.speed * dt
+      // Steered-axle kinematics: the truck pivots about its FIXED axle, so the
+      // steered end sweeps outside the turn. See src/sim/vehicleDynamics.js.
+      const motion = integrateSteering(previousPose, state.speed, state.steerAngle, steering, dt)
+      state.x = motion.x
+      state.z = motion.z
+      state.heading = motion.heading
+      state.yawRate = motion.yawRate
+      state.turnRadius = motion.radius
       if (state.x < WORLD.minX || state.x > WORLD.maxX || state.z < WORLD.minZ || state.z > WORLD.maxZ) {
         fireEvent('boundary', 'Contact with facility boundary', 'critical', 18)
         state.x = THREE.MathUtils.clamp(state.x, WORLD.minX, WORLD.maxX)
@@ -806,7 +834,14 @@ const Simulator = forwardRef(function Simulator({ profile, onTelemetry, onSafety
       const speedMph = Math.abs(state.speed) / .44704
       if (speedMph > profile.safeSpeed + .15) fireEvent('speed', 'Travel speed above assessment limit', 'minor', 5)
       if (speedMph > 1.2 && state.fork > 18) fireEvent('fork-height', 'Travel with elevated forks', 'major', 10)
-      if (speedMph > .4 && Math.abs(state.steer) > .74 && state.fork > 48) fireEvent('stability', 'Sharp turn with elevated carriage', 'critical', 18)
+      // The steered end sweeps outside the fixed axle's path. Near a rack face
+      // that is what actually takes out an upright, so warn on the geometry
+      // rather than on a steer-input threshold.
+      const tailSwing = tailSwingRadius(state.steerAngle, steering)
+      const rackClearance = 5.87 - Math.abs(state.x)
+      if (tailSwing > .4 && rackClearance < 2.2 && Math.abs(state.speed) > .3) {
+        fireEvent('tail-swing', `Tail swing ${tailSwing.toFixed(2)} m with ${rackClearance.toFixed(1)} m to the rack face`, 'major', 10, 9000)
+      }
       warehouse.pedestrians.forEach((person) => { if (person.position.distanceTo(rig.root.position) < 1.9) fireEvent('pedestrian', 'Pedestrian separation breached', 'critical', 20, 10000) })
       if (Math.abs(state.z - 3.2) < 2.4 && Math.abs(state.x) < 3.2 && speedMph > .8 && !state.horn) fireEvent('intersection', 'Blind intersection without horn', 'minor', 5, 12000)
       // Two different switches share the 'belly' action. On a pallet truck the
@@ -818,11 +853,54 @@ const Simulator = forwardRef(function Simulator({ profile, onTelemetry, onSafety
         else state.speed = THREE.MathUtils.damp(state.speed, 0, 6.5, dt)
       }
 
-      const stabilityValue = Math.max(6, 100 - speedMph * 4.5 - state.fork * .085 - Math.abs(state.steer) * speedMph * 7.5 - Math.abs(state.sideshift) * 18)
+      // Physical stability: combined center of gravity against the truck's real
+      // support polygon, displaced by the centrifugal and braking forces acting
+      // this frame. See src/sim/stability.js.
+      const forwardAccel = dt > 1e-4 ? (state.speed - state.previousSpeed) / dt : 0
+      const stabilityResult = solveStability(profile, {
+        loadMass: state.load * POUND,
+        forkHeight: state.fork * INCH,
+        reachExtension: state.reach * INCH,
+        tilt: THREE.MathUtils.degToRad(state.tilt),
+        sideshift: state.sideshift,
+        speed: state.speed,
+        yawRate: state.yawRate,
+        turnRadius: state.turnRadius,
+        forwardAccel,
+      })
+      const warning = stabilityWarning(stabilityResult, {
+        reachExtended: state.reach > 4,
+        forkHeight: state.fork * INCH,
+      })
+      if (warning) fireEvent(warning.type, warning.label, warning.severity, warning.deduction)
+      const stabilityValue = stabilityResult.percent
+
       if (time - state.lastTelemetry > 100) {
         state.lastTelemetry = time
-        setStability(Math.round(stabilityValue))
-        onTelemetry({ speed: speedMph, signedSpeed: state.speed / .44704, fork: state.fork, reach: state.reach, tilt: state.tilt, load: state.load, stability: stabilityValue, position: { x: state.x, z: state.z }, heading: state.heading, horn: state.horn, xr: renderer.xr.isPresenting })
+        setStability(stabilityValue)
+        onTelemetry({
+          speed: speedMph,
+          signedSpeed: state.speed / .44704,
+          fork: state.fork,
+          reach: state.reach,
+          tilt: state.tilt,
+          load: state.load,
+          stability: stabilityValue,
+          position: { x: state.x, z: state.z },
+          heading: state.heading,
+          horn: state.horn,
+          xr: renderer.xr.isPresenting,
+          // Physical readouts an evaluator can actually reason about.
+          steerAngle: THREE.MathUtils.radToDeg(state.steerAngle),
+          turnRadius: Number.isFinite(state.turnRadius) ? Math.abs(state.turnRadius) : null,
+          tailSwing,
+          lateralAccel: stabilityResult.lateralAccel,
+          lateralMargin: stabilityResult.lateralMargin,
+          longitudinalMargin: stabilityResult.longitudinalMargin,
+          capacityUtilization: stabilityResult.capacityUtilization,
+          ratedCapacity: stabilityResult.ratedCapacity / POUND,
+          criticalEdge: stabilityResult.criticalEdge,
+        })
       }
       renderer.render(scene, camera)
     })
@@ -880,7 +958,11 @@ const Simulator = forwardRef(function Simulator({ profile, onTelemetry, onSafety
       <div className="simulator-canvas" ref={mountRef} />
       <div className="sim-topbar"><span><Crosshair size={15} /> Operator eye view</span><span>{profile.manufacturer} {profile.model}</span><span className={xrSupported ? 'online' : 'offline'}>{xrSupported ? 'WebXR ready' : 'Desktop first-person'}</span></div>
       <div className="machine-status"><span>{profile.stance}</span><strong>{activeControl}</strong><i className={presence ? 'engaged' : ''}>{profile.family === 'pallet' && profile.stance.includes('Walk') ? 'Walkie control zone' : presence ? 'Presence engaged / Control to release' : 'Presence released / Control to engage'}</i></div>
-      <div className="stability-meter"><span>Stability</span><div><i style={{ height: `${stability}%` }} /></div><b>{stability > 55 ? 'STABLE' : 'CAUTION'}</b></div>
+      {/* Thresholds track src/sim/stability.js: below 35% the solver raises a
+          major warning, below 18% a critical one, and 0 is the resultant leaving
+          the support polygon. The old 55% cut belonged to the tuned scalar this
+          replaced and read CAUTION on a healthy truck. */}
+      <div className="stability-meter"><span>Stability</span><div><i style={{ height: `${stability}%` }} /></div><b>{stability > 35 ? 'STABLE' : stability > 18 ? 'CAUTION' : 'CRITICAL'}</b></div>
       <div className="sim-reticle" aria-hidden="true"><i /><i /></div>
       <div className="sim-hints">
         <button onClick={() => setGuideOpen((value) => !value)}><Keyboard size={17} /> Controls</button>

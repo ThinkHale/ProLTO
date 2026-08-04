@@ -5,61 +5,64 @@ export const equipmentFamilies = [
   { id: 'counterbalance', label: 'Sit-down Counterbalance', short: 'Sit-down', classLabel: 'Class I' },
 ]
 
+// Steering and stability geometry (wheelbase, axle positions, steer limits,
+// masses, support polygon) lives in src/data/chassis.js. The former steerRatio
+// fudge factor here was replaced by real steered-axle kinematics.
 export const equipmentProfiles = {
   'Crown:reach': {
     manufacturer: 'Crown', family: 'reach', model: 'RR 5725-45, 36V', capacity: 4500, maxLift: 400,
     maxSpeed: 8, forksFirstSpeed: 6.8, loadedPowerUnitSpeed: 7.2, loadedForksSpeed: 5.7,
     liftEmptyFpm: 153, liftLoadedFpm: 82, lowerFpm: 110, tiltForward: 3, tiltBack: 4,
-    safeSpeed: 4.5, stance: 'Variable side stance', steerRatio: 1.15,
+    safeSpeed: 4.5, stance: 'Variable side stance',
     driveUnit: 'rear', control: 'Multi-Task Control Handle', color: 0xd9d7cf,
     functions: ['Travel speed and direction', 'Lift / lower', 'Reach / retract', 'Tilt', 'Sideshift'],
     guidance: 'Fixed pilot configuration: standard non-S RR 5725-45 36V compartment. The Multi-Task handle is one part on two axes: push or pull it to travel, lift or press it to raise and lower. All other hydraulics are on the thumb ball: roll it up and down to tilt, away and toward to reach. Hold the switch on the back of the handle and that same roll becomes sideshift. The foot brake is reverse-acting: held down the brake is off, and it applies the moment your foot comes off. Keep the other foot on the presence pad and off the Entry Bar.',
   },
   'Raymond:reach': {
     manufacturer: 'Raymond', family: 'reach', model: '7500 Universal Stance + secondary handle', capacity: 4500, maxLift: 444,
-    maxSpeed: 7.5, safeSpeed: 4.5, stance: 'Universal stance', steerRatio: 1.2,
+    maxSpeed: 7.5, safeSpeed: 4.5, stance: 'Universal stance',
     driveUnit: 'rear', control: 'Single-axis control handle', color: 0xd94a3a,
     functions: ['Travel speed and direction', 'Lift / lower', 'Reach / retract', 'Tilt', 'Sideshift'],
     guidance: 'Fixed pilot configuration: 36V Universal Stance compartment. Unlike the Crown, the grip is fixed and every function has its own discrete actuator: a travel paddle, and separate thumb controls for lift, reach, tilt and sideshift. There is no brake pedal. One deadman pedal serves as both presence and brake, so releasing it stops the truck. The secondary handle carries its own travel paddle and horn for traveling tractor-first.',
   },
   'Crown:order-picker': {
     manufacturer: 'Crown', family: 'order-picker', model: 'SP 1500', capacity: 3000, maxLift: 402,
-    maxSpeed: 7.5, safeSpeed: 4, stance: 'Elevating operator platform', steerRatio: 1.05,
+    maxSpeed: 7.5, safeSpeed: 4, stance: 'Elevating operator platform',
     driveUnit: 'rear', control: 'Dual-position tiller + right-hand control', color: 0xd9d7cf,
     functions: ['Travel speed and direction', 'Platform lift / lower', 'Aux lift', 'Horn'],
     guidance: 'Use the operator restraint system and remain within the platform. Travel and lift permissions change with height.',
   },
   'Raymond:order-picker': {
     manufacturer: 'Raymond', family: 'order-picker', model: '5300', capacity: 3000, maxLift: 240,
-    maxSpeed: 7.5, safeSpeed: 4, stance: 'Elevating operator platform', steerRatio: 1.05,
+    maxSpeed: 7.5, safeSpeed: 4, stance: 'Elevating operator platform',
     driveUnit: 'rear', control: 'Travel / lift multifunction handle', color: 0xd94a3a,
     functions: ['Travel speed and direction', 'Platform lift / lower', 'Deadman brake', 'Horn'],
     guidance: 'The deadman brake pedal must remain engaged for operation. Maintain fall protection and overhead awareness at elevation.',
   },
   'Crown:pallet': {
     manufacturer: 'Crown', family: 'pallet', model: 'PE 4500', capacity: 8000, maxLift: 9,
-    maxSpeed: 9.5, safeSpeed: 5, stance: 'End-control rider', steerRatio: 1.45,
+    maxSpeed: 9.5, safeSpeed: 5, stance: 'End-control rider',
     driveUnit: 'front', control: 'X10 control handle', color: 0xd9d7cf,
     functions: ['Twist-grip travel', 'Lift / lower', 'Horn', 'Coast control'],
     guidance: 'Keep the platform clear, use secure footing, and allow for load swing and stopping distance with heavy loads.',
   },
   'Raymond:pallet': {
     manufacturer: 'Raymond', family: 'pallet', model: '8210 Walkie', capacity: 4500, maxLift: 8,
-    maxSpeed: 3.9, safeSpeed: 3.2, stance: 'Walk-behind', steerRatio: 1.6,
+    maxSpeed: 3.9, safeSpeed: 3.2, stance: 'Walk-behind',
     driveUnit: 'front', control: 'Tiller control handle', color: 0xd94a3a,
     functions: ['Butterfly travel control', 'Lift / lower', 'Horn', 'Emergency reverse'],
     guidance: 'The tiller brake zones and emergency reverse switch are critical. Walk to the side with a clear path, never directly ahead of the load.',
   },
   'Crown:counterbalance': {
     manufacturer: 'Crown', family: 'counterbalance', model: 'SC 6200, manual levers', capacity: 4000, maxLift: 312,
-    maxSpeed: 10.5, safeSpeed: 5, stance: 'Seated, four-wheel', steerRatio: 0.72,
+    maxSpeed: 10.5, safeSpeed: 5, stance: 'Seated, four-wheel',
     driveUnit: 'front', control: 'Steering wheel + hydraulic levers', color: 0xd9d7cf,
     functions: ['Accelerator / brake', 'Lift / lower', 'Tilt', 'Sideshift', 'Horn'],
     guidance: 'Use the operator restraint. Rear steering causes counterweight swing. Keep the load upgrade on grades.',
   },
   'Raymond:counterbalance': {
     manufacturer: 'Raymond', family: 'counterbalance', model: '4460, legacy cockpit', capacity: 4000, maxLift: 283,
-    maxSpeed: 10.2, safeSpeed: 5, stance: 'Seated, three-wheel', steerRatio: 0.82,
+    maxSpeed: 10.2, safeSpeed: 5, stance: 'Seated, three-wheel',
     driveUnit: 'front', control: 'Tilt wheel + cowl hydraulic levers', color: 0xd94a3a,
     functions: ['Accelerator / brake', 'Lift / lower', 'Tilt', 'Integral sideshift', 'Horn'],
     guidance: 'Fixed legacy cockpit configuration with monochrome display, three mechanical cowl levers, and open-view mast. Do not treat it as the 2024 enhanced 4460.',

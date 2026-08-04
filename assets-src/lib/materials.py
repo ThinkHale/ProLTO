@@ -6,6 +6,16 @@ roughness, clearcoat (KHR_materials_clearcoat), emission. Realism comes from
 geometry quality plus disciplined physical values — paint is clearcoated and
 tight, structural steel is semi-gloss, rubber is near-matte, plastics sit in
 between. Keep the palette consistent across the fleet.
+
+SURFACE DETAIL IS ADDED AT RUNTIME, AND MATERIAL NAMES ARE A CONTRACT.
+Because nothing here bakes to an image, the exported GLBs contain no textures at
+all, and flat roughness across a whole vehicle is the strongest "this is CG" tell
+there is. src/sim/surfacing.js compensates by baking procedural roughness, relief
+and grime in the browser and binding it to materials BY NAME. Renaming a material
+below therefore silently changes how it looks in the simulator. That is a build
+failure, not a warning: scripts/verify-surfacing.mjs asserts every shipped
+material is explicitly mapped or explicitly excluded. Add new materials there in
+the same change.
 """
 import bpy
 

@@ -104,11 +104,29 @@ the evaluator enables accessibility input.
 Verify all exports before committing them:
 
 ```bash
-node scripts/verify-models.mjs
+npm run verify
 ```
 
-The verifier checks required rig nodes and actions, finite signed control
-scales, valid motion axes, camera height, and the absence of QA geometry.
+That runs, in order: ESLint; `verify-models.mjs` (rig nodes, actions, signed
+control scales, motion axes, camera height, no QA geometry); `verify-rig-binding.mjs`
+(the simulator's own binding code against the real GLBs); `verify-physics.mjs`
+(collision sweep, fork engagement, rigid carry, rack placement); `verify-dynamics.mjs`
+(steered-axle kinematics, tail swing, stability triangle, capacity derating);
+`verify-facility.mjs` (rack bay openness, beam elevations, solid pedestrians);
+`verify-surfacing.mjs` (material treatment coverage and bake signal); then the
+production build.
+
+Those are all headless. Shader compilation and the wired-up simulation loop need
+a real WebGL context, so they are covered separately by a browser smoke test
+against a running server:
+
+```bash
+npm run preview
+node scripts/smoke-drive.mjs qa/app
+```
+
+It loads all eight profiles, drives and lifts each one, captures an operator-eye
+screenshot, and fails on any console or page error.
 
 ## Runtime loading and fallback
 
@@ -117,6 +135,34 @@ manufacturer and family, maps the rig nodes, and attaches control metadata. If
 the asset is missing or fails to parse, it logs a warning and falls back to the
 original procedural rig in `src/sim/proceduralFactory.js`, so a bad or absent
 asset degrades the visuals without breaking the assessment.
+
+## Surface detail
+
+The exported GLBs carry **no image textures at all** — `materials.py` notes that
+procedural node trees do not survive glTF export, and nothing was baked in their
+place. Uniform roughness across a whole vehicle is the strongest "this is CG"
+signal there is, ahead of polygon count.
+
+`src/sim/surfacing.js` closes that gap at runtime rather than in the asset. It
+bakes one packed RGBA detail map per surface family — slope in RG from a real
+height field, roughness modulation in B, a grime mask in A — and samples it with
+a **triplanar projection in object space**. Two constraints drove that choice:
+
+- Only about 15% of primitives carry `TEXCOORD_0`, so conventional mapping would
+  need a full UV unwrap and re-export of all eight parametric models first.
+- Sampling in world space would look right on the static facility but would make
+  the detail swim across the truck's own panels as it drives. Object space locks
+  the grain to the part; only the floor-soil term reads world height.
+
+Treatments bind by **material name**, so an asset rebuild keeps its surfacing as
+long as names are stable. `scripts/verify-surfacing.mjs` asserts every material
+in every shipped model is explicitly mapped or explicitly excluded, so renaming
+one in `materials.py` fails the build instead of silently degrading to a guess.
+Emissive clusters, indicator lenses, and the segment bars are excluded by name
+and by pattern — grime on a backlit display reads as broken, not real.
+
+If the fleet is ever re-exported with UV layouts and baked maps, this becomes
+redundant and should be retired rather than layered on top.
 
 ## Lighting
 

@@ -30,9 +30,27 @@ Open the local URL in a desktop browser. WebXR immersive sessions require HTTPS 
 
 Laser selection and thumbstick driving are disabled during the practical assessment. They can be enabled explicitly in the control guide as an accessibility fallback. The default VR interaction uses near-hand pickup, controller or hand models, local mechanism axes, neutral detent haptics, and spring return.
 
+## Vehicle behavior and stability
+
+Steering uses steered-axle kinematics: one axle is fixed and the other steers, so
+the truck pivots about its fixed axle and the steered end sweeps outside the
+turn. Rear counterweight swing on a sit-down truck, power-unit swing on a reach
+truck, and platform swing on an end-control pallet truck are consequences of that
+geometry rather than scripted effects.
+
+Stability solves the combined center of gravity of truck, load, and elevated
+operator against the truck's real support polygon — a triangle for counterbalance
+trucks, because the rear axle pivots on a center trunnion — displaced by the
+centrifugal and braking forces acting at that moment. Rated capacity derates with
+load center, lift height, and pantograph extension, so a load that is legal on
+the floor can become an overload at height.
+
+See [the simulation model](docs/simulation-model.md) for what each model
+approximates and where the approximation stops being defensible.
+
 ## Warehouse exercise
 
-The practical area uses swept truck collision envelopes, solid walls, columns, racks, fixtures and pallet stacks, knockable safety cones, and individually tracked 48 x 40 inch palletized loads. A pallet engages only when both forks enter its pockets with sufficient alignment and penetration, then lift clear of the floor or rack support. An engaged pallet follows the animated carriage or reach assembly as a rigid load and can be lowered onto the floor, placed into an open rack slot, or removed from an occupied slot. Reset restores the truck, every pallet and rack slot, and all cones to their initial state.
+The practical area uses swept truck collision envelopes, solid walls, columns, fixtures and pallet stacks, knockable safety cones, solid pedestrians, and individually tracked 48 x 40 inch palletized loads. Selective rack is modeled as hardware: a collider per upright frame and per beam at its own elevation, so bay openings are genuinely open and forks enter a bottom-level position while a full-height truck body does not. A pallet engages only when both forks enter its pockets with sufficient alignment and penetration, then lift clear of the floor or rack support. An engaged pallet follows the animated carriage or reach assembly as a rigid load and can be lowered onto the floor, placed into an open rack slot, or removed from an occupied slot. Reset restores the truck, every pallet and rack slot, and all cones to their initial state.
 
 ## Equipment behavior
 

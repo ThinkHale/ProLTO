@@ -1,0 +1,151 @@
+// Physical chassis geometry for the simulation models.
+//
+// This is deliberately separate from equipment.js. That file carries the
+// operator-facing specification an evaluator reads; this one carries the
+// dimensions the steering and stability solvers integrate. Splitting them keeps
+// a display-copy edit from silently changing vehicle behavior.
+//
+// FRAME CONVENTION (three.js, matching rig_root):
+//   -Z is forward, toward the forks.  +Z is aft, toward the operator station.
+//   +X is the operator's right.        +Y is up from the floor.
+// Every distance is meters, every mass kilograms, every angle degrees.
+//
+// PROVENANCE: these are reconstructed working values derived from published
+// capacity charts, footprint drawings, and turning-radius figures, then checked
+// for internal consistency (wheelbase against turning radius, service weight
+// against rated capacity and load center). They are NOT data-plate values. The
+// boundary in docs/realism-fidelity-audit.md applies here too: validate against
+// the exact truck's data plate and capacity chart before any hiring decision.
+
+const IN = .0254
+
+// A lift truck has one FIXED axle and one STEERED axle, so it pivots about a
+// point on the fixed axle line and the steered end sweeps wide. Which end is
+// which is the defining handling difference between these families:
+//   counterbalance / reach / order picker -> load axle fixed, drive axle steers
+//   pallet trucks                         -> load wheels fixed, tiller steers
+export const CHASSIS = {
+  'Crown:reach': {
+    // RR 5725-45: straddle reach truck. Load wheels ride at the outrigger tips,
+    // the steered drive wheel sits under the power unit behind the operator.
+    fixedAxleZ: -.62, steerAxleZ: .93, trackWidth: .84,
+    maxSteerDeg: 88, steerRateDegPerSec: 165,
+    serviceWeight: 4210, cgFromFixedAxleZ: .58, cgHeight: .74,
+    // Support polygon is the straddle: two outrigger load wheels forward, the
+    // drive wheel and stabilizing caster aft. Wider and far more longitudinally
+    // stable than a counterbalance truck -- until the pantograph reaches out.
+    support: 'straddle',
+    outriggerHalfWidth: .49, outriggerTipZ: -.62,
+    driveHalfWidth: .27,
+    ratedLoadCenter: 24 * IN, ratedCapacity: 2041, ratedHeight: 270 * IN,
+    // Reach trucks lose capacity fast with height and with the reach extended,
+    // because an extended pantograph puts the load outside the outriggers.
+    heightDerate: .34, reachDerate: .46, maxReachExtension: 42 * IN,
+    forkZ: -1.02, forkPivotZ: -.62,
+  },
+  'Raymond:reach': {
+    fixedAxleZ: -.6, steerAxleZ: .95, trackWidth: .86,
+    maxSteerDeg: 88, steerRateDegPerSec: 170,
+    serviceWeight: 4080, cgFromFixedAxleZ: .6, cgHeight: .73,
+    support: 'straddle',
+    outriggerHalfWidth: .5, outriggerTipZ: -.6,
+    driveHalfWidth: .28,
+    ratedLoadCenter: 24 * IN, ratedCapacity: 2041, ratedHeight: 270 * IN,
+    heightDerate: .34, reachDerate: .46, maxReachExtension: 42 * IN,
+    forkZ: -1.0, forkPivotZ: -.6,
+  },
+  'Crown:order-picker': {
+    // SP 1500: the operator platform and the load both rise, so the combined CG
+    // climbs with lift height far more than on any other family here.
+    fixedAxleZ: -.78, steerAxleZ: 1.1, trackWidth: .74,
+    maxSteerDeg: 86, steerRateDegPerSec: 150,
+    serviceWeight: 2760, cgFromFixedAxleZ: .74, cgHeight: .68,
+    support: 'straddle',
+    outriggerHalfWidth: .43, outriggerTipZ: -.78,
+    driveHalfWidth: .25,
+    ratedLoadCenter: 24 * IN, ratedCapacity: 1361, ratedHeight: 402 * IN,
+    heightDerate: .3, reachDerate: 0, maxReachExtension: 0,
+    forkZ: -.92, forkPivotZ: -.78,
+    // The operator's own mass rides the platform and counts toward the elevated CG.
+    platformMass: 95, platformZ: .32,
+  },
+  'Raymond:order-picker': {
+    fixedAxleZ: -.76, steerAxleZ: 1.06, trackWidth: .73,
+    maxSteerDeg: 86, steerRateDegPerSec: 150,
+    serviceWeight: 2640, cgFromFixedAxleZ: .72, cgHeight: .67,
+    support: 'straddle',
+    outriggerHalfWidth: .42, outriggerTipZ: -.76,
+    driveHalfWidth: .25,
+    ratedLoadCenter: 24 * IN, ratedCapacity: 1361, ratedHeight: 240 * IN,
+    heightDerate: .3, reachDerate: 0, maxReachExtension: 0,
+    forkZ: -.9, forkPivotZ: -.76,
+    platformMass: 95, platformZ: .3,
+  },
+  'Crown:pallet': {
+    // PE 4500 end-control rider: the steered drive wheel is under the operator
+    // at the aft end, so the POWER UNIT is what swings, not a counterweight.
+    fixedAxleZ: -.94, steerAxleZ: .5, trackWidth: .52,
+    maxSteerDeg: 90, steerRateDegPerSec: 210,
+    serviceWeight: 726, cgFromFixedAxleZ: 1.02, cgHeight: .42,
+    support: 'tricycle',
+    fixedHalfWidth: .3, driveHalfWidth: .17,
+    ratedLoadCenter: 24 * IN, ratedCapacity: 3629, ratedHeight: 9 * IN,
+    heightDerate: 0, reachDerate: 0, maxReachExtension: 0,
+    // On a pallet truck the load wheels are at the FORK TIPS, so the load sits
+    // BETWEEN the axles rather than cantilevered ahead of them the way it is on
+    // a counterbalance truck. forkPivotZ is therefore the fork heel at the power
+    // unit -- 48 in of fork ahead of it -- not the tip. Measuring the load
+    // center from the tip puts the load outside the support polygon and reports
+    // a truck that is about to tip over while it is sitting still.
+    forkZ: -.72, forkPivotZ: .279, forkLength: 48 * IN,
+  },
+  'Raymond:pallet': {
+    // 8210 walkie: same topology, shorter and lighter, tiller-steered.
+    fixedAxleZ: -.86, steerAxleZ: .42, trackWidth: .48,
+    maxSteerDeg: 90, steerRateDegPerSec: 230,
+    serviceWeight: 458, cgFromFixedAxleZ: .92, cgHeight: .38,
+    support: 'tricycle',
+    fixedHalfWidth: .28, driveHalfWidth: .15,
+    ratedLoadCenter: 24 * IN, ratedCapacity: 2041, ratedHeight: 8 * IN,
+    heightDerate: 0, reachDerate: 0, maxReachExtension: 0,
+    // Same straddled-load topology as the PE 4500: heel at the power unit.
+    forkZ: -.66, forkPivotZ: .283, forkLength: 45 * IN,
+  },
+  'Crown:counterbalance': {
+    // SC 6200: four-wheel sit-down. Fixed drive axle forward under the mast,
+    // steered rear axle under the counterweight -- the classic tail swing.
+    fixedAxleZ: -.16, steerAxleZ: 1.19, trackWidth: .93,
+    maxSteerDeg: 78, steerRateDegPerSec: 120,
+    serviceWeight: 3420, cgFromFixedAxleZ: .69, cgHeight: .58,
+    // Four-wheel counterbalance trucks are still a TRIANGLE: the rear axle
+    // pivots on a center trunnion, so the third support point is the pivot,
+    // not the rear tires. This is the whole reason a forklift tips sideways.
+    support: 'triangle',
+    fixedHalfWidth: .465, pivotZ: 1.19,
+    ratedLoadCenter: 24 * IN, ratedCapacity: 1814, ratedHeight: 187 * IN,
+    heightDerate: .22, reachDerate: 0, maxReachExtension: 0,
+    forkZ: -.52, forkPivotZ: -.16,
+  },
+  'Raymond:counterbalance': {
+    // 4460 three-wheel: a real triangle in hardware. Tighter turning, and
+    // markedly less lateral margin than the four-wheel truck.
+    fixedAxleZ: -.18, steerAxleZ: 1.24, trackWidth: .9,
+    maxSteerDeg: 88, steerRateDegPerSec: 130,
+    serviceWeight: 3260, cgFromFixedAxleZ: .72, cgHeight: .56,
+    support: 'triangle',
+    fixedHalfWidth: .45, pivotZ: 1.24,
+    ratedLoadCenter: 24 * IN, ratedCapacity: 1814, ratedHeight: 187 * IN,
+    heightDerate: .22, reachDerate: 0, maxReachExtension: 0,
+    forkZ: -.54, forkPivotZ: -.18,
+  },
+}
+
+const FALLBACK = CHASSIS['Crown:counterbalance']
+
+export function getChassis(profile) {
+  return CHASSIS[`${profile.manufacturer}:${profile.family}`] || FALLBACK
+}
+
+export function wheelbase(chassis) {
+  return Math.abs(chassis.steerAxleZ - chassis.fixedAxleZ)
+}

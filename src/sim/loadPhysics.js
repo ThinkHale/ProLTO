@@ -195,6 +195,31 @@ function objectBounds(object) {
   }
 }
 
+// Bounding circle in the XZ plane, cached on the obstacle so the broad phase
+// below costs one distance compare instead of a full separating-axis test. The
+// facility now registers a few hundred obstacles (every rack upright and beam
+// is its own collider), so an O(colliders x obstacles) narrow phase per sweep
+// step is no longer free.
+export function refreshObstacleBounds(obstacle) {
+  obstacle.__normalized = true
+  if (obstacle.shape === 'circle') {
+    obstacle.boundX = obstacle.x
+    obstacle.boundZ = obstacle.z
+    obstacle.boundRadius = obstacle.radius
+  } else if (obstacle.shape === 'obb') {
+    obstacle.boundX = obstacle.x
+    obstacle.boundZ = obstacle.z
+    obstacle.boundRadius = Math.hypot(obstacle.halfWidth, obstacle.halfLength)
+  } else {
+    const halfX = (obstacle.maxX - obstacle.minX) * .5
+    const halfZ = (obstacle.maxZ - obstacle.minZ) * .5
+    obstacle.boundX = obstacle.minX + halfX
+    obstacle.boundZ = obstacle.minZ + halfZ
+    obstacle.boundRadius = Math.hypot(halfX, halfZ)
+  }
+  return obstacle
+}
+
 function normalizeObstacle(input, index = 0) {
   const object = input.object || (input.isObject3D ? input : null)
   const metadata = object?.userData?.physics || {}
@@ -205,7 +230,7 @@ function normalizeObstacle(input, index = 0) {
   if (source.shape === 'circle' || Number.isFinite(source.radius)) {
     const position = source.position || obstacle.position || {}
     const knockable = obstacle.knockable ?? obstacle.kind === 'cone'
-    return {
+    return refreshObstacleBounds({
       ...source,
       ...obstacle,
       id,
@@ -216,10 +241,10 @@ function normalizeObstacle(input, index = 0) {
       radius: source.radius ?? .2,
       x: source.x ?? position.x ?? object?.position.x ?? 0,
       z: source.z ?? position.z ?? object?.position.z ?? 0,
-    }
+    })
   }
   if (source.shape === 'obb' || Number.isFinite(source.halfWidth)) {
-    return {
+    return refreshObstacleBounds({
       ...source,
       ...obstacle,
       id,
@@ -227,25 +252,37 @@ function normalizeObstacle(input, index = 0) {
       kind: obstacle.kind || 'facility',
       solid: obstacle.solid ?? true,
       heading: source.heading || 0,
-    }
+    })
   }
-  return {
+  return refreshObstacleBounds({
     ...source,
     ...obstacle,
     id,
     shape: 'aabb',
     kind: obstacle.kind || 'facility',
     solid: obstacle.solid ?? true,
-  }
+  })
 }
 
 function collisionQuery(pose, colliders, obstacles) {
   const contacts = []
   const worldColliders = colliders.map((collider) => colliderAtPose(pose, collider))
   for (const collider of worldColliders) {
+    const carried = collider.id.startsWith('carried:')
+    const colliderRadius = Math.hypot(collider.halfWidth, collider.halfLength)
     for (const obstacle of obstacles) {
-      if (collider.id.startsWith('carried:') && obstacle.blocksCarriedLoads === false) continue
-      if (colliderIntersectsObstacle(collider, obstacle)) contacts.push({ collider, obstacle })
+      if (obstacle.disabled) continue
+      const reach = colliderRadius + (obstacle.boundRadius ?? 0)
+      const dx = collider.x - (obstacle.boundX ?? 0)
+      const dz = collider.z - (obstacle.boundZ ?? 0)
+      if (dx * dx + dz * dz > reach * reach) continue
+      if (!colliderIntersectsObstacle(collider, obstacle)) continue
+      // A carried load passing through something it is meant to be set onto --
+      // a rack beam -- must not hard-stop the truck, but it is still a contact
+      // the evaluator should see. Recording it as non-blocking keeps the event
+      // without wedging the placement.
+      const passthrough = carried && obstacle.blocksCarriedLoads === false
+      contacts.push({ collider, obstacle, blocking: !passthrough && obstacle.solid !== false })
     }
   }
   return contacts
@@ -262,7 +299,12 @@ function interpolatePose(from, to, fraction) {
 
 export function sweepPose(from, to, colliders, obstacles, options = {}) {
   const normalizedColliders = colliders.map(normalizeCollider)
-  const normalizedObstacles = obstacles.map(normalizeObstacle)
+  // Obstacles arriving from WarehouseLoadPhysics are already normalized. Passing
+  // them through normalizeObstacle again would rebuild several hundred objects
+  // every frame purely to produce identical values.
+  const normalizedObstacles = obstacles.map((obstacle, index) => (
+    obstacle.__normalized ? obstacle : normalizeObstacle(obstacle, index)
+  ))
   const distance = Math.hypot(to.x - from.x, to.z - from.z)
   const radius = Math.max(...normalizedColliders.map((collider) => Math.hypot(collider.halfWidth, collider.halfLength)))
   const angularDistance = Math.abs(normalizeAngle((to.heading || 0) - (from.heading || 0))) * radius
@@ -278,7 +320,7 @@ export function sweepPose(from, to, colliders, obstacles, options = {}) {
     const pose = interpolatePose(from, to, fraction)
     const contacts = collisionQuery(pose, normalizedColliders, normalizedObstacles)
     contacts.forEach((contact) => contactsById.set(contact.obstacle.id, contact))
-    blockingContacts = contacts.filter((contact) => contact.obstacle.solid !== false)
+    blockingContacts = contacts.filter((contact) => contact.blocking)
     if (blockingContacts.length) break
     safePose = pose
     safeFraction = fraction
@@ -294,7 +336,7 @@ export function sweepPose(from, to, colliders, obstacles, options = {}) {
     const middle = (low + high) * .5
     const pose = interpolatePose(from, to, middle)
     const contacts = collisionQuery(pose, normalizedColliders, normalizedObstacles)
-    if (contacts.some((contact) => contact.obstacle.solid !== false)) high = middle
+    if (contacts.some((contact) => contact.blocking)) high = middle
     else low = middle
   }
   safePose = interpolatePose(from, to, Math.max(0, low - .0005))
@@ -358,6 +400,7 @@ function normalizePallet(spec, index = 0) {
     lastBaseY: initialPose.y,
     originSupportY: source.supportY ?? initialPose.y,
     wasClear: false,
+    obstacleCache: null,
     carryPosition: new THREE.Vector3(),
     carryQuaternion: new THREE.Quaternion(),
     truckLocal: null,
@@ -464,13 +507,19 @@ function readForkPose(frame, specification) {
   }
 }
 
+// A racked or grounded pallet does not move, so its obstacle is built once and
+// reused until the pallet's state actually changes. Rebuilding all of them every
+// frame cost three Vector3/Quaternion allocations each across ~150 stored loads,
+// which is real GC pressure on a standalone headset.
 function palletObstacle(body) {
+  if (body.obstacleCache) return body.obstacleCache
   const pose = worldPose(body.object)
   body.pose = pose
-  return {
+  body.obstacleCache = refreshObstacleBounds({
     id: `load:${body.id}`,
     shape: 'obb',
     kind: 'pallet',
+    label: 'Stored load',
     solid: true,
     palletId: body.id,
     x: pose.x,
@@ -480,8 +529,22 @@ function palletObstacle(body) {
     halfLength: body.depth * .5,
     minY: pose.y,
     maxY: pose.y + body.height,
-  }
+  })
+  return body.obstacleCache
 }
+
+// What a contact with each class of facility hardware means to an evaluator.
+// A rack upright strike is the incident that closes an aisle and can bring a
+// run down, so it is scored harder than brushing a beam or a stored load.
+const CONTACT_RULES = {
+  cone: { type: 'cone-contact', severity: 'minor' },
+  pallet: { type: 'load-contact', severity: 'major' },
+  'pallet-stack': { type: 'load-contact', severity: 'major' },
+  'rack-beam': { type: 'rack-contact', severity: 'major' },
+  'rack-upright': { type: 'rack-contact', severity: 'critical' },
+  pedestrian: { type: 'pedestrian-contact', severity: 'critical' },
+}
+const DEFAULT_CONTACT_RULE = { type: 'facility-contact', severity: 'critical' }
 
 export class WarehouseLoadPhysics {
   constructor(options = {}) {
@@ -577,11 +640,14 @@ export class WarehouseLoadPhysics {
       const registeredObstacle = this.obstacles.find((candidate) => candidate.id === contact.obstacle.id)
       const obstacle = registeredObstacle || contact.obstacle
       if (!this.contactIds.has(contact.obstacle.id)) {
+        const rule = CONTACT_RULES[obstacle.kind] || DEFAULT_CONTACT_RULE
         this.onEvent({
-          type: obstacle.kind === 'cone' ? 'cone-contact' : obstacle.kind === 'pallet' ? 'load-contact' : 'facility-contact',
+          ...rule,
           obstacle,
           collider: contact.collider,
-          severity: obstacle.kind === 'cone' ? 'minor' : obstacle.kind === 'pallet' ? 'major' : 'critical',
+          label: obstacle.label || obstacle.kind || 'facility',
+          carriedLoad: contact.collider.id.startsWith('carried:'),
+          blocking: contact.blocking,
         })
       }
       if (obstacle.knockable) this.knockObstacle(obstacle, previousPose, proposedPose, options.speed || 0)
@@ -621,6 +687,7 @@ export class WarehouseLoadPhysics {
         if (!obstacle.knockable || !obstacle.knocked) continue
         obstacle.x += obstacle.velocityX * this.fixedStep
         obstacle.z += obstacle.velocityZ * this.fixedStep
+        refreshObstacleBounds(obstacle)
         const damping = Math.exp(-5.2 * this.fixedStep)
         obstacle.velocityX *= damping
         obstacle.velocityZ *= damping
@@ -657,6 +724,7 @@ export class WarehouseLoadPhysics {
     body.slotId = null
     body.status = 'carried'
     body.candidateForkY = null
+    body.obstacleCache = null
     this.carried = body
     this.syncCarriedPallet()
     this.onEvent({ type: 'pallet-engaged', pallet: body, fork: forkPose, severity: 'info' })
@@ -702,6 +770,7 @@ export class WarehouseLoadPhysics {
     body.supportY = target.y
     body.candidateForkY = null
     body.truckLocal = null
+    body.obstacleCache = null
     if (slot) slot.occupiedBy = body.id
     this.carried = null
     this.onEvent({ type: slot ? 'pallet-racked' : 'pallet-grounded', pallet: body, slot, severity: 'info' })
@@ -786,6 +855,7 @@ export class WarehouseLoadPhysics {
       obstacle.tilt = 0
       obstacle.knocked = false
       obstacle.disabled = false
+      refreshObstacleBounds(obstacle)
       if (obstacle.object && obstacle.initialPosition && obstacle.initialQuaternion) {
         obstacle.object.position.copy(obstacle.initialPosition)
         obstacle.object.quaternion.copy(obstacle.initialQuaternion)
@@ -804,6 +874,7 @@ export class WarehouseLoadPhysics {
       body.candidateForkY = null
       body.truckLocal = null
       body.wasClear = false
+      body.obstacleCache = null
     }
   }
 }

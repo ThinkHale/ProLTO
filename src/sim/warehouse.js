@@ -1,5 +1,6 @@
 import * as THREE from 'three'
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js'
+import { surfaceMaterial } from './surfacing.js'
 
 // Facility built to real warehouse dimensions: 12 ft aisle, 42 in deep selective
 // rack on 8 ft beam elevations, 48x40 GMA pallets, 28 ft clear height.
@@ -9,16 +10,17 @@ import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js'
 const IN = .0254
 const FT = .3048
 
-function material(color, options = {}) {
-  return new THREE.MeshStandardMaterial({ color, roughness: .78, metalness: .12, ...options })
+function material(color, options = {}, treatment = null) {
+  const created = new THREE.MeshStandardMaterial({ color, roughness: .78, metalness: .12, ...options })
+  return treatment ? surfaceMaterial(created, treatment) : created
 }
 
 const MATERIALS = {
-  upright: material(0x2f4f60, { roughness: .52, metalness: .55 }),
-  beam: material(0xd2701c, { roughness: .48, metalness: .35 }),
-  wireDeck: material(0x8d959a, { roughness: .55, metalness: .7 }),
-  palletWood: material(0xa87a4b, { roughness: .92, metalness: 0 }),
-  palletWorn: material(0x8d6238, { roughness: .95, metalness: 0 }),
+  upright: material(0x2f4f60, { roughness: .52, metalness: .55 }, 'structuralSteel'),
+  beam: material(0xd2701c, { roughness: .48, metalness: .35 }, 'structuralSteel'),
+  wireDeck: material(0x8d959a, { roughness: .55, metalness: .7 }, 'structuralSteel'),
+  palletWood: material(0xa87a4b, { roughness: .92, metalness: 0 }, 'wood'),
+  palletWorn: material(0x8d6238, { roughness: .95, metalness: 0 }, 'wood'),
 }
 
 function boxGeometry(size, position, rotation) {
@@ -77,12 +79,13 @@ function concreteMaterial() {
   texture.repeat.set(7, 12)
   texture.colorSpace = THREE.SRGBColorSpace
   texture.anisotropy = 8
-  const bump = texture.clone()
-  bump.colorSpace = THREE.NoColorSpace
-  bump.needsUpdate = true
-  return new THREE.MeshStandardMaterial({
-    color: 0x9ba0a1, map: texture, bumpMap: bump, bumpScale: .35, roughness: .74, metalness: .02,
-  })
+  // The canvas map carries large-scale color: joints, burnish, blotching. Relief
+  // now comes from the surfacing pass at true world scale instead of a bumpMap
+  // reusing this same coarse image, which read as noise rather than aggregate.
+  return surfaceMaterial(
+    new THREE.MeshStandardMaterial({ color: 0x9ba0a1, map: texture, roughness: .74, metalness: .02 }),
+    'concrete',
+  )
 }
 
 function cartonTexture() {
@@ -165,7 +168,10 @@ function palletLoad(parent, position, tint = 0xb5854f, wrapped = false, options 
   group.add(pallet)
   const cartons = new THREE.Mesh(
     cartonStackGeometry(),
-    new THREE.MeshStandardMaterial({ color: tint, map: cartonTexture(), roughness: .93, metalness: 0 }),
+    surfaceMaterial(
+      new THREE.MeshStandardMaterial({ color: tint, map: cartonTexture(), roughness: .93, metalness: 0 }),
+      'cardboard',
+    ),
   )
   cartons.castShadow = true
   cartons.receiveShadow = true
@@ -205,11 +211,42 @@ function buildRackRun(scene, x, zStart, bays, facing) {
   const deckParts = []
   const levels = [0, 6 * FT, 12 * FT, 18 * FT]
   const height = 24 * FT
+  const side = facing > 0 ? 'left' : 'right'
+  // The rack used to be ONE box collider spanning the whole run, floor to
+  // infinity. That made the entire rack face a solid wall: a trainee could not
+  // enter a bay, could not put forks into a bottom-level pallet, and never had
+  // to judge an approach. Modeling the actual hardware -- posts, footplates,
+  // and beams at their real elevations -- leaves the bays open, which is the
+  // whole skill being assessed, and makes an upright strike a distinct event.
+  const colliders = []
 
   for (let bay = 0; bay <= bays; bay += 1) {
     const z = zStart + bay * bayWidth
     ;[-frameDepth / 2, frameDepth / 2].forEach((dx) => {
       uprightParts.push(boxGeometry([.076, height, .09], [dx, height / 2, z]))
+    })
+    // Posts run floor to roof, so this collider is deliberately unbounded in Y.
+    colliders.push({
+      id: `${side}-rack-upright-${bay}`,
+      label: 'Rack upright',
+      kind: 'rack-upright',
+      minX: x - frameDepth / 2 - .06,
+      maxX: x + frameDepth / 2 + .06,
+      minZ: z - .08,
+      maxZ: z + .08,
+    })
+    // The frame footplate is wider than the post and is what a load wheel or an
+    // outrigger tip actually catches.
+    colliders.push({
+      id: `${side}-rack-foot-${bay}`,
+      label: 'Rack frame footplate',
+      kind: 'rack-upright',
+      minX: x - frameDepth / 2 - .09,
+      maxX: x + frameDepth / 2 + .09,
+      minZ: z - .17,
+      maxZ: z + .17,
+      minY: 0,
+      maxY: .17,
     })
     // K-brace lattice spans the rack depth between the front and rear posts.
     for (let step = 0; step < 11; step += 1) {
@@ -224,9 +261,25 @@ function buildRackRun(scene, x, zStart, bays, facing) {
     const zCenter = zStart + (bay + .5) * bayWidth
     levels.forEach((level, levelIndex) => {
       if (levelIndex === 0) return
-      ;[-frameDepth / 2 + .05, frameDepth / 2 - .05].forEach((dx) => {
+      ;[-frameDepth / 2 + .05, frameDepth / 2 - .05].forEach((dx, beamIndex) => {
         beamParts.push(boxGeometry([.11, .11, bayWidth - .09], [dx, level, zCenter]))
         beamParts.push(boxGeometry([.09, .035, bayWidth - .09], [dx, level + .04, zCenter]))
+        colliders.push({
+          id: `${side}-rack-beam-b${bay + 1}-l${levelIndex}-${beamIndex}`,
+          label: 'Rack beam',
+          kind: 'rack-beam',
+          // A load has to be able to come down ONTO the beams, so a carried
+          // pallet passes through and still registers the contact. The truck
+          // itself is stopped, which is what makes driving the mast into a beam
+          // a real consequence.
+          blocksCarriedLoads: false,
+          minX: x + dx - .075,
+          maxX: x + dx + .075,
+          minZ: zCenter - bayWidth / 2 + .045,
+          maxZ: zCenter + bayWidth / 2 - .045,
+          minY: level - .08,
+          maxY: level + .1,
+        })
       })
       for (let wire = 0; wire < 9; wire += 1) {
         const z = zCenter - bayWidth / 2 + (wire + .5) * (bayWidth / 9)
@@ -250,7 +303,6 @@ function buildRackRun(scene, x, zStart, bays, facing) {
     levels.forEach((level, levelIndex) => {
       if (levelIndex === 0) return
       ;[-.62, .62].forEach((offset, slot) => {
-        const side = facing > 0 ? 'left' : 'right'
         const slotId = `${side}-rack-b${bay + 1}-l${levelIndex}-s${slot + 1}`
         const rackSlot = {
           id: slotId,
@@ -274,20 +326,7 @@ function buildRackRun(scene, x, zStart, bays, facing) {
       })
     })
   }
-  return {
-    loads,
-    slots,
-    collider: {
-      id: `${facing > 0 ? 'left' : 'right'}-rack-run`,
-      label: 'Pallet rack',
-      kind: 'rack',
-      blocksCarriedLoads: false,
-      minX: x - frameDepth / 2 - .12,
-      maxX: x + frameDepth / 2 + .12,
-      minZ: zStart - .14,
-      maxZ: zStart + bays * bayWidth + .14,
-    },
-  }
+  return { loads, slots, colliders }
 }
 
 function buildStructure(scene) {
@@ -298,14 +337,14 @@ function buildStructure(scene) {
     { id: 'north-wall', label: 'north wall', kind: 'wall', minX: -11.35, maxX: 11.35, minZ: -21.35, maxZ: -21.05 },
     { id: 'south-wall', label: 'south wall', kind: 'wall', minX: -11.35, maxX: 11.35, minZ: 19.05, maxZ: 19.35 },
   ]
-  const wallMaterial = material(0x9aa1a3, { roughness: .93, metalness: .02 })
+  const wallMaterial = material(0x9aa1a3, { roughness: .93, metalness: .02 }, 'concrete')
   const wallParts = []
   ;[-11.2, 11.2].forEach((x) => wallParts.push(boxGeometry([.3, clearHeight, 44], [x, clearHeight / 2, -1])))
   wallParts.push(boxGeometry([22.7, clearHeight, .3], [0, clearHeight / 2, -21.2]))
   wallParts.push(boxGeometry([22.7, clearHeight, .3], [0, clearHeight / 2, 19.2]))
   merged(wallParts, wallMaterial, scene, false)
 
-  const deckMaterial = material(0x6e7679, { roughness: .88, metalness: .3 })
+  const deckMaterial = material(0x6e7679, { roughness: .88, metalness: .3 }, 'structuralSteel')
   const roofParts = [boxGeometry([22.7, .22, 44], [0, clearHeight, -1])]
   // open-web joists + girders on 8 ft centers, the ceiling operators actually see
   for (let z = -20; z <= 18; z += 8 * FT) {
@@ -334,13 +373,13 @@ function buildStructure(scene) {
       })
     }
   })
-  merged(columnParts, material(0x39474d, { roughness: .6, metalness: .5 }), scene)
+  merged(columnParts, material(0x39474d, { roughness: .6, metalness: .5 }, 'structuralSteel'), scene)
 
   // high-bay LED fixtures on the aisle centerlines
   const fixtureMaterial = new THREE.MeshStandardMaterial({
     color: 0xf2f5f0, emissive: 0xfff6e2, emissiveIntensity: 2.6, roughness: .3, metalness: .1,
   })
-  const housing = material(0x2a3134, { roughness: .5, metalness: .6 })
+  const housing = material(0x2a3134, { roughness: .5, metalness: .6 }, 'structuralSteel')
   const housingParts = []
   const lensParts = []
   for (let z = -18; z <= 16; z += 5.6) {
@@ -423,6 +462,12 @@ function pedestrian(scene, x, z, vestColor) {
   })
   group.traverse((object) => { object.castShadow = true })
   group.position.set(x, 0, z)
+  // Pedestrians previously had no collider at all -- the truck drove straight
+  // through them and only a 1.9 m proximity warning fired. In a tool whose whole
+  // purpose is separation discipline, a person has to be something you can hit.
+  group.userData.physics = {
+    kind: 'pedestrian', label: 'Pedestrian', radius: .42, solid: true, minY: 0, maxY: 1.78,
+  }
   scene.add(group)
   return group
 }
@@ -435,13 +480,13 @@ function buildFixtures(scene) {
     parts.push(boxGeometry([.06, .22, 1.5], [x + (x < 0 ? .55 : -.55), .72, 3.2]))
     parts.push(boxGeometry([.06, .22, 1.5], [x + (x < 0 ? .55 : -.55), .38, 3.2]))
   })
-  merged(parts, new THREE.MeshStandardMaterial({ color: 0xe0b02a, roughness: .6, metalness: .18 }), scene)
+  merged(parts, material(0xe0b02a, { roughness: .6, metalness: .18 }, 'paint'), scene)
 
   const cones = []
   ;[[-2.1, 3.2], [0, 3.2], [2.1, 3.2]].forEach(([x, z]) => {
     const coneGroup = new THREE.Group()
     coneGroup.name = `safety_cone_${cones.length + 1}`
-    const cone = new THREE.Mesh(new THREE.ConeGeometry(.19, .62, 20), material(0xdd5f1c, { roughness: .7 }))
+    const cone = new THREE.Mesh(new THREE.ConeGeometry(.19, .62, 20), material(0xdd5f1c, { roughness: .7 }, 'paint'))
     cone.position.set(0, .31, 0)
     cone.castShadow = true
     coneGroup.add(cone)
@@ -463,7 +508,7 @@ function buildFixtures(scene) {
     stack.receiveShadow = true
     scene.add(stack)
   }
-  const charger = new THREE.Mesh(new THREE.BoxGeometry(.7, 1.15, .5), material(0x38424a, { roughness: .55, metalness: .35 }))
+  const charger = new THREE.Mesh(new THREE.BoxGeometry(.7, 1.15, .5), material(0x38424a, { roughness: .55, metalness: .35 }, 'structuralSteel'))
   charger.position.set(9.9, .58, 12.5)
   charger.castShadow = true
   scene.add(charger)
@@ -502,6 +547,6 @@ export function createWarehouse(scene) {
     pedestrians,
     cones: fixtures.cones,
     rackSlots: [...leftRack.slots, ...rightRack.slots],
-    staticColliders: [...structureColliders, leftRack.collider, rightRack.collider, ...fixtures.colliders],
+    staticColliders: [...structureColliders, ...leftRack.colliders, ...rightRack.colliders, ...fixtures.colliders],
   }
 }
