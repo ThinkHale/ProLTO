@@ -52,15 +52,30 @@ function telemetryTexture(manufacturer) {
 
 function attachControlMetadata(object) {
   const extras = object.userData
-  if (!extras || !extras.ctrl_action) return
-  object.userData.control = {
-    action: extras.ctrl_action,
-    label: extras.ctrl_label || extras.ctrl_action,
-    axis: extras.ctrl_axis || 'vertical',
-    spring: !!extras.ctrl_spring,
-    motion: extras.ctrl_motion || extras.ctrl_axis || 'vertical',
-    scale: Number.isFinite(extras.ctrl_scale) ? extras.ctrl_scale : 1,
-  }
+  if (!extras) return
+  // A held modifier switch commands nothing itself. The Crown Multi-Task back
+  // switch re-maps the thumb ball's reach axis to sideshift while held.
+  if (extras.ctrl_modifier) {
+    object.userData.modifier = { label: extras.ctrl_label || 'Modifier switch' }
+  } else if (extras.ctrl_action) {
+    object.userData.control = {
+      action: extras.ctrl_action,
+      label: extras.ctrl_label || extras.ctrl_action,
+      axis: extras.ctrl_axis || 'vertical',
+      spring: !!extras.ctrl_spring,
+      motion: extras.ctrl_motion || extras.ctrl_axis || 'vertical',
+      scale: Number.isFinite(extras.ctrl_scale) ? extras.ctrl_scale : 1,
+      // Second orthogonal axis on the SAME physical part. The Crown handle
+      // travels fore-aft and lifts vertically; its thumb ball tilts vertically
+      // and reaches fore-aft. See assets-src/lib/rig.py.
+      action2: extras.ctrl_action2 || null,
+      motion2: extras.ctrl_motion2 || null,
+      shift2: extras.ctrl_shift2 || null,
+      detents: Number.isFinite(extras.ctrl_detents) ? extras.ctrl_detents : 2,
+      // Reverse-acting pedal: pressed = released, lifted = applied.
+      inverted: !!extras.ctrl_inverted,
+    }
+  } else return
   if (object.material) {
     object.material = object.material.clone()
     object.userData.baseEmissive = object.material.emissive?.getHex?.() || 0
@@ -128,6 +143,8 @@ function mapRig(gltfScene, profile) {
     liftPivot: get('rig_liftPivot'),
     reachPivot: get('rig_reachPivot'),
     tiltPivot: get('rig_tiltPivot'),
+    sideshiftPivot: get('rig_sideshiftPivot'),
+    secondaryTravelPivot: get('rig_secondaryTravelPivot'),
     tillerPivot: get('rig_tillerPivot'),
     headGroup: get('rig_headGroup'),
     wheelPivot: get('rig_wheelPivot'),
@@ -160,8 +177,14 @@ export async function createVehicleRig(profile) {
   }
 }
 
+// Exposed so scripts/verify-rig-binding.mjs can assert the real mapping against
+// the real exports without standing up a browser and a WebGL context.
+export const __mapRigForTest = mapRig
+
 export function controlMeshes(rig) {
   const result = []
-  rig.root.traverse((object) => { if (object.userData.control) result.push(object) })
+  rig.root.traverse((object) => {
+    if (object.userData.control || object.userData.modifier) result.push(object)
+  })
   return result
 }

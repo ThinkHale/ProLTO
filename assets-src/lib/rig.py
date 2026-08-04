@@ -43,7 +43,21 @@ def empty(name, location=(0, 0, 0), parent=None):
     return obj
 
 
-def tag_control(obj, action, label, axis='vertical', spring=True, motion=None, scale=1.0):
+def tag_control(obj, action, label, axis='vertical', spring=True, motion=None, scale=1.0,
+                action2=None, motion2=None, shift2=None, detents=None, inverted=False):
+    """Tag a mesh as an interactive control.
+
+    A real multi-axis control such as the Crown Multi-Task handle or its thumb
+    ball is ONE physical part the operator moves on TWO orthogonal axes. Rather
+    than fake that with two adjacent meshes, a control may declare a secondary
+    action bound to a second drag axis:
+
+      action  / motion    primary axis  (e.g. travel on fore-aft)
+      action2 / motion2   secondary axis (e.g. lift on vertical)
+      shift2              what action2 becomes while a modifier is held
+                          (Crown: thumb ball reach -> sideshift)
+      detents             number of felt detents per half travel; 0 = smooth
+    """
     assert action in CONTROL_ACTIONS, f'unknown control action {action}'
     obj['ctrl_action'] = action
     obj['ctrl_label'] = label
@@ -52,6 +66,36 @@ def tag_control(obj, action, label, axis='vertical', spring=True, motion=None, s
     if motion:
         obj['ctrl_motion'] = motion
     obj['ctrl_scale'] = float(scale)
+    if action2:
+        assert action2 in CONTROL_ACTIONS, f'unknown secondary action {action2}'
+        assert motion2, 'a secondary action needs its own motion axis'
+        assert motion2 != (motion or axis), 'secondary axis must be orthogonal'
+        obj['ctrl_action2'] = action2
+        obj['ctrl_motion2'] = motion2
+    if shift2:
+        assert action2, 'shift2 re-maps action2, so action2 must exist'
+        assert shift2 in CONTROL_ACTIONS, f'unknown shifted action {shift2}'
+        obj['ctrl_shift2'] = shift2
+    if detents is not None:
+        obj['ctrl_detents'] = int(detents)
+    if inverted:
+        # Reverse-acting pedal. Crown RR 5700 foot brake (manual page 22):
+        # pressed all the way down the brake is OFF; lifting the heel or coming
+        # off the pedal APPLIES it. Treating this like a normal brake pedal
+        # inverts the single most safety-relevant habit on the truck.
+        obj['ctrl_inverted'] = 1
+    return obj
+
+
+def tag_modifier(obj, label):
+    """Tag a mesh as a held modifier switch.
+
+    The Crown Multi-Task handle carries a switch on its back face. Holding it
+    re-maps the thumb ball's reach axis to sideshift, and gates Rack Height
+    Select and Tilt Position Assist. It commands no hydraulic function itself.
+    """
+    obj['ctrl_modifier'] = 1
+    obj['ctrl_label'] = label
     return obj
 
 

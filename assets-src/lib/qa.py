@@ -7,11 +7,15 @@ from mathutils import Vector
 
 from . import scene as scene_lib
 
-HDRI_DIR = os.environ.get(
-    'PROLTO_HDRI_DIR',
-    r'C:\Users\think\AppData\Local\Temp\claude\c--Users-think-OneDrive-Desktop-ProLTO'
-    r'\8f8d9f97-f27e-43de-8d1c-3ca86a8d2231\scratchpad\hdri')
-QA_HDRI = os.path.join(HDRI_DIR, 'studio_small_08_2k.hdr')
+_REPO = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+# The shipped warehouse HDRI is the reliable default: it lives in the repo, so
+# QA renders reproduce on any machine. PROLTO_HDRI_DIR can still point at a
+# studio HDRI for beauty shots. A missing file renders the world magenta and
+# every QA render silently becomes worthless, so resolve it explicitly.
+HDRI_DIR = os.environ.get('PROLTO_HDRI_DIR')
+QA_HDRI = os.path.join(HDRI_DIR, 'studio_small_08_2k.hdr') if HDRI_DIR else ''
+if not os.path.exists(QA_HDRI):
+    QA_HDRI = os.path.join(_REPO, 'public', 'env', 'warehouse_1k.hdr')
 
 
 def _world(hdri, strength=1.0, rotation=0.0):

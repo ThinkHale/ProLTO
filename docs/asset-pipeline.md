@@ -70,6 +70,33 @@ properties. These export as glTF `extras` and are read back into
 travel axis, such as radial, fore and aft, horizontal, or vertical.
 `ctrl_scale` is normally `1` and is `-1` for a negative half of a split control,
 such as a dedicated Lower button.
+
+### Multi-axis controls
+
+Some real controls are one physical part the operator moves on two orthogonal
+axes. Modeling those as two adjacent meshes teaches the wrong motor pattern, so
+a control may declare a second axis:
+
+| Property | Meaning |
+| --- | --- |
+| `ctrl_action2` / `ctrl_motion2` | second action bound to a second, orthogonal drag axis |
+| `ctrl_shift2` | what `ctrl_action2` becomes while a modifier switch is held |
+| `ctrl_detents` | felt detents per half travel; neutral always pulses harder |
+| `ctrl_inverted` | reverse-acting pedal: pressed is released, lifted applies |
+| `ctrl_modifier` | this mesh is a held modifier switch and commands nothing itself |
+
+The Crown RR 5725 is the reference case. Its Multi-Task handle travels fore and
+aft while lifting on the vertical axis, so `rig_liftPivot` nests inside
+`rig_travelPivot` and carries the grip. Its thumb ball tilts on the vertical
+axis and reaches on the fore and aft axis, so `rig_reachPivot` nests inside
+`rig_tiltPivot` and carries one ball. Holding `mt_back_switch` re-maps that
+reach axis to sideshift. The Raymond 7500 deliberately does the opposite: a
+fixed grip with a discrete actuator per function, which is the contrast the
+two-brand assessment depends on.
+
+`scripts/verify-models.mjs` treats an action as reachable if any control
+commands it on either axis, and rejects a secondary axis that duplicates the
+primary one or a `ctrl_shift2` with no modifier switch on the truck.
 Desktop uses pointer picking. WebXR first tests near-hand contact, then resolves
 movement in the control's own local frame. A laser ray is available only when
 the evaluator enables accessibility input.

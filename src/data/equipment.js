@@ -13,14 +13,14 @@ export const equipmentProfiles = {
     safeSpeed: 4.5, stance: 'Variable side stance', steerRatio: 1.15,
     driveUnit: 'rear', control: 'Multi-Task Control Handle', color: 0xd9d7cf,
     functions: ['Travel speed and direction', 'Lift / lower', 'Reach / retract', 'Tilt', 'Sideshift'],
-    guidance: 'Fixed pilot configuration: standard non-S RR 5725-45 36V compartment with Multi-Task handle, brake pedal, presence pad, and Entry Bar.',
+    guidance: 'Fixed pilot configuration: standard non-S RR 5725-45 36V compartment. The Multi-Task handle is one part on two axes: push or pull it to travel, lift or press it to raise and lower. All other hydraulics are on the thumb ball: roll it up and down to tilt, away and toward to reach. Hold the switch on the back of the handle and that same roll becomes sideshift. The foot brake is reverse-acting: held down the brake is off, and it applies the moment your foot comes off. Keep the other foot on the presence pad and off the Entry Bar.',
   },
   'Raymond:reach': {
     manufacturer: 'Raymond', family: 'reach', model: '7500 Universal Stance + secondary handle', capacity: 4500, maxLift: 444,
     maxSpeed: 7.5, safeSpeed: 4.5, stance: 'Universal stance', steerRatio: 1.2,
     driveUnit: 'rear', control: 'Single-axis control handle', color: 0xd94a3a,
     functions: ['Travel speed and direction', 'Lift / lower', 'Reach / retract', 'Tilt', 'Sideshift'],
-    guidance: 'Fixed pilot configuration: 36V Universal Stance compartment with integrated display, primary control handle, secondary handle, and deadman pedal.',
+    guidance: 'Fixed pilot configuration: 36V Universal Stance compartment. Unlike the Crown, the grip is fixed and every function has its own discrete actuator: a travel paddle, and separate thumb controls for lift, reach, tilt and sideshift. There is no brake pedal. One deadman pedal serves as both presence and brake, so releasing it stops the truck. The secondary handle carries its own travel paddle and horn for traveling tractor-first.',
   },
   'Crown:order-picker': {
     manufacturer: 'Crown', family: 'order-picker', model: 'SP 1500', capacity: 3000, maxLift: 402,

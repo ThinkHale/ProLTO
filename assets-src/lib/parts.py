@@ -512,6 +512,44 @@ def lever(name, length=0.26, knob_color=None, mat=None, parent=None, loc=(0, 0, 
     return shaft
 
 
+def thumb_ball(name, radius=0.019, mat=None, parent=None, loc=(0, 0, 0), socket_mat=None,
+               socket=True, seat_depth=0.68):
+    """Crown Multi-Task thumb ball: a rubber-capped sphere in a molded socket.
+
+    The operator rolls one ball on two axes. Up/down tilts the fork tips, away
+    and toward reaches and retracts. It is a ball, not a rocker: the ball must
+    sit proud of its socket by roughly 58% of its diameter or it reads as a
+    button and loses the rolling affordance operators recognize.
+    """
+    if socket:
+        # Shallow dish the ball nests into, with a raised lip the thumb feels.
+        collar = lathe(f'{name}_socket',
+                       [(0.0, -0.010), (radius * 1.72, -0.010), (radius * 1.66, 0.004),
+                        (radius * 1.30, 0.011), (radius * 1.04, 0.001), (0.0, -0.002)],
+                       socket_mat or M.plastic_dark(), parent, segments=36, loc=loc)
+    else:
+        collar = parent
+    bm = bmesh.new()
+    bmesh.ops.create_uvsphere(bm, u_segments=28, v_segments=20, radius=radius)
+    ball = mesh_from_bm(name, bm, mat or M.grip_rubber(), collar if socket else parent)
+    # The socket occludes the buried part, so the sphere stays whole. Trimming
+    # it with a bisect is fragile: clearing the wrong side leaves an empty cup.
+    # Sitting the centre this proud exposes ~58% of the diameter, which is what
+    # makes it read as a ball the thumb rolls rather than a button it presses.
+    ball.location = loc if not socket else (0, 0, radius * (seat_depth - 0.5) * 2)
+    smooth_shade(ball, 60)
+    return ball
+
+
+def thumb_switch(name, size=(0.026, 0.012, 0.016), mat=None, parent=None, loc=(0, 0, 0),
+                 rot=(0, 0, 0)):
+    """Recessed momentary switch, e.g. the switch on the back of the Crown handle."""
+    housing = rounded_box(f'{name}_housing', (size[0] * 1.35, size[1] * 1.5, size[2] * 1.4),
+                          loc, M.plastic_dark(), parent, radius=0.004, segments=4, rot=rot)
+    return rounded_box(name, size, (0, -size[1] * 0.45, 0), mat or M.plastic_molded(),
+                       housing, radius=0.003, segments=4)
+
+
 def display(name, width=0.17, height=0.115, mat_screen=None, parent=None, loc=(0, 0, 0),
             rot=(0, 0, 0), screen_name=None):
     bezel = rounded_box(name, (width, 0.03, height), loc, M.plastic_dark(), parent,

@@ -156,36 +156,57 @@ def console(root):
     # Pull the complete handle toward the operator. The earlier pivot placed
     # its grip center inside the console extrusion, which caused visible
     # clipping as the handle rocked fore and aft.
+    # Operator manual PF18340-F pages 24, 30 and 32 define the mechanism, and
+    # the earlier model got it wrong. The Multi-Task handle is ONE part the
+    # operator moves on TWO axes, and its hydraulic functions live on a thumb
+    # BALL, not on separate rockers:
+    #
+    #   handle pushed away / pulled back  -> travel forks-first / power-unit-first
+    #   handle lifted up  / pushed down   -> raise / lower              (page 30)
+    #   thumb ball rolled up / down       -> tilt fork tips up / down   (page 32)
+    #   thumb ball rolled away / toward   -> reach / retract            (page 33)
+    #   back switch held + ball away/toward -> sideshift left / right   (page 33)
+    #
+    # So rig_liftPivot nests inside rig_travelPivot and carries the whole grip,
+    # and rig_reachPivot nests inside rig_tiltPivot and carries the one ball.
     travel = R.empty('rig_travelPivot', (0.34, -0.465, 1.02), root)
     P.rounded_box('mt_armrest', (0.23, 0.25, 0.085), (0, -0.015, -0.005),
                   M.grip_rubber(), travel, radius=0.04, segments=6, rot=(-0.08, 0, 0))
+    # Lift rides on the handle body itself, so it pivots about the same base.
+    lift = R.empty('rig_liftPivot', (0, 0, 0), travel)
     handle_pts = [(-0.055, 0.0), (0.04, 0.0), (0.072, 0.045), (0.06, 0.15),
                   (0.025, 0.22), (-0.035, 0.22), (-0.07, 0.15), (-0.075, 0.045)]
     grip = P.loft_shell('mt_grip', [(-0.12, handle_pts), (-0.025, handle_pts)],
-                         ORANGE(), travel, subsurf=1, bevel=0.006)
+                         ORANGE(), lift, subsurf=1, bevel=0.006)
     grip.rotation_euler = (-0.2, 0, -0.08)
     P.rounded_box('mt_grip_insert', (0.072, 0.022, 0.13), (-0.06, -0.132, 0.105),
-                  M.grip_rubber(), travel, radius=0.025, segments=5, rot=(-0.2, 0, -0.08))
-    R.tag_control(grip, 'travel', 'Crown Multi-Task Control Handle', 'vertical',
-                  True, motion='fore-aft')
-    lift = R.empty('rig_liftPivot', (0.012, -0.132, 0.19), travel)
-    rocker = P.cyl('mt_lift', 0.024, 0.035, (0, 0, 0), M.decal_white(), lift,
-                   axis='X', verts=32, bevel=0.004)
-    for ridge_index, x in enumerate((-0.012, 0, 0.012)):
-        P.cyl(f'mt_lift_ridge_{ridge_index}', 0.026, 0.004, (x, 0, 0),
-              medium, lift, axis='X', verts=28, bevel=0.001)
-    R.tag_control(rocker, 'lift', 'Lift / lower thumb wheel', 'vertical', True)
-    reach_p = R.empty('rig_reachPivot', (0.062, -0.132, 0.145), travel)
-    rocker2 = P.rounded_box('mt_reach', (0.048, 0.020, 0.027), (0, 0, 0),
-                             M.pbr('orange_dark', 0xB56A08, 0.42), reach_p,
-                             radius=0.008, segments=5)
-    R.tag_control(rocker2, 'reach', 'Reach / retract rocker', 'horizontal', True)
-    tilt_p = R.empty('rig_tiltPivot', (-0.040, -0.132, 0.145), travel)
-    rocker3 = P.rounded_box('mt_tilt', (0.048, 0.020, 0.027), (0, 0, 0),
-                             M.plastic_dark(), tilt_p, radius=0.008, segments=5)
-    R.tag_control(rocker3, 'tilt', 'Tilt rocker', 'horizontal', True)
+                  M.grip_rubber(), lift, radius=0.025, segments=5, rot=(-0.2, 0, -0.08))
+    # One mesh, two axes: fore-aft drives travel, vertical drives raise/lower.
+    R.tag_control(grip, 'travel', 'Crown Multi-Task Control Handle',
+                  'fore-aft', True, motion='fore-aft',
+                  action2='lift', motion2='vertical', detents=1)
+
+    # Thumb ball. Tilt on the vertical roll, reach on the fore-aft roll, and
+    # sideshift on that same fore-aft roll while the back switch is held.
+    # Seated on the crown of the grip where the thumb naturally falls, not on
+    # the outboard face. The grip is raked -0.2 rad, so the ball tips with it.
+    tilt_p = R.empty('rig_tiltPivot', (0.006, -0.128, 0.213), lift)
+    tilt_p.rotation_euler = (0, 0, 0)
+    reach_p = R.empty('rig_reachPivot', (0, 0, 0), tilt_p)
+    ball = P.thumb_ball('mt_thumb_ball', 0.021, M.grip_rubber(), reach_p,
+                        loc=(0, 0, 0), socket_mat=M.plastic_dark())
+    R.tag_control(ball, 'tilt', 'Multi-Task thumb ball',
+                  'vertical', True, motion='vertical',
+                  action2='reach', motion2='fore-aft', shift2='sideshift', detents=1)
+
+    # Switch on the BACK face of the handle. Held, it re-maps the ball's reach
+    # axis to sideshift and gates Rack Height Select / Tilt Position Assist.
+    back = P.thumb_switch('mt_back_switch', (0.030, 0.013, 0.018), M.plastic_dark(),
+                          lift, loc=(0.018, -0.083, 0.150), rot=(-0.2, 0, -0.08))
+    R.tag_modifier(back, 'Multi-Task back switch (hold for sideshift)')
+
     horn = P.cyl('btn_horn', 0.017, 0.011, (-0.065, -0.135, 0.09),
-                 M.warning_amber(), travel, axis='Y', verts=24)
+                 M.warning_amber(), lift, axis='Y', verts=24)
     R.tag_control(horn, 'horn', 'Horn button', 'button', True)
 
     # Right-side power disconnect and vertically stacked indicator lamps.
@@ -200,12 +221,22 @@ def console(root):
               axis='Y', verts=18)
 
     # Exact dual-pedal floor arrangement from the operator manual.
+    # Manual page 20: LEFT foot on the brake pedal, RIGHT foot on the sensor pad.
+    # Page 22: the brake is reverse-acting. Held down = brake off. Foot lifted
+    # = brake applied. Modeled with a longer travel than a normal pedal so the
+    # released position is visibly proud of the floorboard.
     brake = P.pedal('pedal_brake', (0.15, 0.14), parent=root, loc=(-0.22, -0.47, 0.285), angle=-0.12)
-    R.tag_control(brake, 'brake', 'Left brake pedal', 'pedal', True)
+    R.tag_control(brake, 'brake', 'Left foot brake (hold down to release)',
+                  'pedal', True, inverted=True)
     presence = P.pedal('pedal_presence', (0.26, 0.22), parent=root, loc=(0.18, -0.58, 0.275), angle=0)
     R.tag_control(presence, 'presence', 'Operator presence sensor pad', 'button', False)
-    P.tube('entry_bar', [(0.46, -0.81, 0.28), (0.46, -0.48, 0.31)], 0.025,
-           M.plastic_dark(), root, corner_radius=0.02)
+    # Entry Bar safety switch. Page 20: a foot on this bar while traveling
+    # sounds the alarm and brings the truck to a stop. It is a hazard surface,
+    # not a commanded control, so it is tagged 'belly' - the sim's existing
+    # action for a stop-the-truck contact switch.
+    entry = P.tube('entry_bar', [(0.46, -0.81, 0.28), (0.46, -0.48, 0.31)], 0.025,
+                   M.warning_amber(), root, corner_radius=0.02)
+    R.tag_control(entry, 'belly', 'Entry Bar safety switch', 'button', True)
 
 
 def straddle_legs(root):
@@ -278,6 +309,14 @@ def build():
         'cab_view': {'loc': (0.03, -0.86, 1.82), 'target': (0.0, -0.1, 1.12), 'focal': 22},
         'closeups': {
             'console': {'loc': (0.55, -1.3, 1.6), 'target': (0.0, -0.3, 1.05), 'focal': 32},
+            # The Multi-Task handle sits behind the operator cushion from the
+            # console camera, so it needs its own view. This is the one part an
+            # operator recognizes the truck by, and the axes it carries (travel
+            # fore-aft, lift vertical, thumb ball tilt/reach, back switch) are
+            # what the practical assessment scores.
+            # Shot from the operator's own eye point looking down at their right
+            # hand, because that is the only angle the towers do not block.
+            'handle': {'loc': (0.10, -0.97, 1.63), 'target': (0.34, -0.45, 1.14), 'focal': 50},
             'mast': {'loc': (1.6, 2.6, 1.2), 'target': (0, 0.64, 1.4), 'focal': 40},
         },
     }

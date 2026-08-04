@@ -197,8 +197,15 @@ const Simulator = forwardRef(function Simulator({ profile, onTelemetry, onSafety
       desktopCameraMount.parent.add(xrOrigin)
     }
     const interactables = controlMeshes(rig)
-    const presenceControl = interactables.find((object) => object.userData.control.action === 'presence')
+    // interactables now also carries modifier switches, which have no .control.
+    const presenceControl = interactables.find((object) => object.userData.control?.action === 'presence')
     if (presenceControl) presenceControl.userData.restY = presenceControl.position.y
+    const brakeControl = interactables.find((object) => object.userData.control?.action === 'brake')
+    // Crown RR 5700: the foot brake is reverse-acting. An operator correctly in
+    // position is holding it down, so the brake is OFF while presence is held
+    // and re-applies the instant presence is lost. See operator manual page 22.
+    const reverseActingBrake = !!brakeControl?.userData.control?.inverted
+    if (brakeControl) brakeControl.userData.restY = brakeControl.position.y
     const raycaster = new THREE.Raycaster()
     const pointer = new THREE.Vector2()
     const dynamics = DYNAMICS[profile.family]
@@ -208,6 +215,7 @@ const Simulator = forwardRef(function Simulator({ profile, onTelemetry, onSafety
       x: 0, z: 11.5, heading: 0, speed: 0, steer: 0, fork: 0, reach: 0, tilt: 0, sideshift: 0,
       load: 0, horn: false, presence: !requiresPresence, presenceLatched: false, viewYaw: 0, viewPitch: defaultViewPitch, lastTelemetry: 0,
       eventLocks: {}, keys: new Set(), pointerDrag: null, lookDrag: null, xrDrags: new Map(), hovered: null,
+      modifierHeld: false, modifierObject: null,
     }
     let loadPhysics = null
     let activeXRSession = null
@@ -357,12 +365,25 @@ const Simulator = forwardRef(function Simulator({ profile, onTelemetry, onSafety
     const releaseControl = (object) => {
       if (!object) return
       const control = object.userData.control
-      if (control.spring || ['horn', 'belly', 'brake'].includes(control.action)) manual[control.action] = 0
+      if (!control) return
+      const springs = control.spring || ['horn', 'belly', 'brake'].includes(control.action)
+      if (springs) {
+        manual[control.action] = 0
+        // A spring-centred part returns on BOTH of its axes at once.
+        if (control.action2) manual[control.action2] = 0
+        if (control.shift2) manual[control.shift2] = 0
+      }
       if (control.action === 'horn') state.horn = false
     }
     const endXRInteraction = (controller, label) => {
       const drag = state.xrDrags.get(controller)
       if (!drag) return
+      if (drag.modifierOnly) {
+        state.xrDrags.delete(controller)
+        state.modifierHeld = [...state.xrDrags.values()].some((candidate) => candidate.modifierOnly)
+        if (label) setActiveControl(label)
+        return
+      }
       if (!drag.presenceOnly) releaseControl(drag.object)
       state.xrDrags.delete(controller)
       if (drag.presenceOnly) {
@@ -374,11 +395,13 @@ const Simulator = forwardRef(function Simulator({ profile, onTelemetry, onSafety
       } else if (label) setActiveControl(label)
     }
     clearXRInteractions = (label, updateUI = true) => {
-      state.xrDrags.forEach((drag) => { if (!drag.presenceOnly) releaseControl(drag.object) })
+      state.xrDrags.forEach((drag) => { if (!drag.presenceOnly && !drag.modifierOnly) releaseControl(drag.object) })
       state.xrDrags.clear()
       if (state.pointerDrag?.object) releaseControl(state.pointerDrag.object)
       state.pointerDrag = null
       state.lookDrag = null
+      state.modifierHeld = false
+      state.modifierObject = null
       state.keys.clear()
       Object.assign(manual, ZERO)
       state.horn = false
@@ -388,9 +411,29 @@ const Simulator = forwardRef(function Simulator({ profile, onTelemetry, onSafety
         state.presence = !requiresPresence
       }
     }
+    // A drag axis maps to screen motion: horizontal/radial read X, everything
+    // else reads Y. Two orthogonal axes on one part therefore read X and Y of
+    // the same drag, which is how a real thumb ball or multi-axis handle works.
+    const axisDelta = (motion, event, origin) => (
+      ['horizontal', 'radial'].includes(motion)
+        ? (event.clientX - origin.x) / 85
+        : (origin.y - event.clientY) / 85
+    )
+    // While a modifier switch is held, a control's secondary action re-maps.
+    const secondaryAction = (control) => (
+      control.shift2 && state.modifierHeld ? control.shift2 : control.action2
+    )
     const pointerDown = (event) => {
       const object = event.button === 2 ? null : pickControl(event)
       if (object) {
+        const modifier = object.userData.modifier
+        if (modifier) {
+          state.modifierHeld = true
+          state.modifierObject = object
+          setActiveControl(modifier.label)
+          renderer.domElement.setPointerCapture(event.pointerId)
+          return
+        }
         const control = object.userData.control
         if (control.action === 'presence') {
           setActiveControl(control.label)
@@ -398,13 +441,19 @@ const Simulator = forwardRef(function Simulator({ profile, onTelemetry, onSafety
           return
         }
         const scale = control.scale ?? 1
-        state.pointerDrag = { object, x: event.clientX, y: event.clientY, start: (manual[control.action] || 0) * scale }
+        const second = secondaryAction(control)
+        state.pointerDrag = {
+          object, x: event.clientX, y: event.clientY,
+          start: (manual[control.action] || 0) * scale,
+          start2: second ? (manual[second] || 0) * scale : 0,
+          action2: second,
+        }
         renderer.domElement.setPointerCapture(event.pointerId)
         setActiveControl(control.label)
         if (['button', 'pedal'].includes(control.axis)) {
           manual[control.action] = scale
           if (control.action === 'horn') { state.horn = true; soundHorn() }
-          if (control.action === 'belly') fireEvent('belly-switch', 'Emergency reverse switch activated', 'minor', 0, 1000)
+          if (control.action === 'belly') fireEvent('belly-switch', 'Entry Bar safety switch contacted', 'major', 8, 1500)
         }
       } else {
         state.lookDrag = { x: event.clientX, y: event.clientY, yaw: state.viewYaw, pitch: state.viewPitch }
@@ -413,12 +462,20 @@ const Simulator = forwardRef(function Simulator({ profile, onTelemetry, onSafety
     }
     const pointerMove = (event) => {
       if (state.pointerDrag) {
-        const { object, x, y, start } = state.pointerDrag
+        const { object, start, start2, action2 } = state.pointerDrag
         const control = object.userData.control
-        const delta = ['horizontal', 'radial'].includes(control.motion)
-          ? (event.clientX - x) / 85
-          : (y - event.clientY) / 85
-        manual[control.action] = clampInput(start + delta) * (control.scale ?? 1)
+        const scale = control.scale ?? 1
+        const origin = state.pointerDrag
+        manual[control.action] = clampInput(start + axisDelta(control.motion, event, origin)) * scale
+        // The secondary axis is live in the same drag, so an operator can blend
+        // travel with lift, or tilt with reach, exactly as the real part allows.
+        const live = secondaryAction(control)
+        if (live && control.motion2) {
+          // Only one function owns the shifted axis at a time: engaging the
+          // back switch mid-drag must not leave reach commanded behind it.
+          if (live !== action2 && action2) manual[action2] = 0
+          manual[live] = clampInput(start2 + axisDelta(control.motion2, event, origin)) * scale
+        }
       } else if (state.lookDrag) {
         const yaw = state.lookDrag.yaw - (event.clientX - state.lookDrag.x) * .004
         state.viewYaw = Math.atan2(Math.sin(yaw), Math.cos(yaw))
@@ -427,6 +484,10 @@ const Simulator = forwardRef(function Simulator({ profile, onTelemetry, onSafety
     }
     const pointerUp = (event) => {
       if (state.pointerDrag) releaseControl(state.pointerDrag.object)
+      if (state.modifierObject) {
+        state.modifierHeld = false
+        state.modifierObject = null
+      }
       state.pointerDrag = null
       state.lookDrag = null
       if (renderer.domElement.hasPointerCapture(event.pointerId)) renderer.domElement.releasePointerCapture(event.pointerId)
@@ -516,6 +577,16 @@ const Simulator = forwardRef(function Simulator({ profile, onTelemetry, onSafety
         }
         if (!object) return
         pulseSource(event.data, .28, 18)
+        // Grabbing the back switch of a multi-axis handle holds the modifier,
+        // which is what re-maps the Crown thumb ball's reach axis to sideshift.
+        if (object.userData.modifier) {
+          state.modifierHeld = true
+          setActiveControl(object.userData.modifier.label)
+          state.xrDrags.set(controller, {
+            object, pose: pose.node, poseRoot: pose.root, modifierOnly: true, source: event.data,
+          })
+          return
+        }
         if (object.userData.control.action === 'presence') {
           setActiveControl(object.userData.control.label)
           updatePresence(true, `${object.userData.control.label} engaged`)
@@ -532,6 +603,7 @@ const Simulator = forwardRef(function Simulator({ profile, onTelemetry, onSafety
           localStart,
           startAngle: Math.atan2(localStart.z, localStart.x),
           start: (manual[object.userData.control.action] || 0) * (object.userData.control.scale ?? 1),
+          start2: (manual[secondaryAction(object.userData.control)] || 0) * (object.userData.control.scale ?? 1),
           source: event.data,
           lastDetent: 0,
         })
@@ -578,20 +650,29 @@ const Simulator = forwardRef(function Simulator({ profile, onTelemetry, onSafety
         const control = drag.object.userData.control
         if (['button', 'pedal'].includes(control.axis)) return
         const local = drag.frame.worldToLocal(position.clone())
-        let delta
-        if (control.motion === 'radial') {
-          const angle = Math.atan2(local.z, local.x)
-          delta = Math.atan2(Math.sin(angle - drag.startAngle), Math.cos(angle - drag.startAngle)) * 1.6
-        } else if (control.motion === 'fore-aft') {
-          delta = (drag.localStart.z - local.z) * 4.5
-        } else if (control.motion === 'horizontal') {
-          delta = (local.x - drag.localStart.x) * 5
-        } else {
-          delta = (local.y - drag.localStart.y) * 5
+        // Resolve a drag along one mechanical axis of the control's own frame.
+        const localDelta = (motion) => {
+          if (motion === 'radial') {
+            const angle = Math.atan2(local.z, local.x)
+            return Math.atan2(Math.sin(angle - drag.startAngle), Math.cos(angle - drag.startAngle)) * 1.6
+          }
+          if (motion === 'fore-aft') return (drag.localStart.z - local.z) * 4.5
+          if (motion === 'horizontal') return (local.x - drag.localStart.x) * 5
+          return (local.y - drag.localStart.y) * 5
         }
-        const value = clampInput(drag.start + delta)
-        manual[control.action] = value * (control.scale ?? 1)
-        const detent = Math.round(value * 2)
+        const scale = control.scale ?? 1
+        const value = clampInput(drag.start + localDelta(control.motion))
+        manual[control.action] = value * scale
+        const second = secondaryAction(control)
+        if (second && control.motion2) {
+          if (second !== control.action2 && control.action2) manual[control.action2] = 0
+          if (second === control.action2 && control.shift2) manual[control.shift2] = 0
+          manual[second] = clampInput(drag.start2 + localDelta(control.motion2)) * scale
+        }
+        // Neutral is a firmer detent than the intermediate ones, so the hand
+        // can find centre without looking. Detent count comes from the asset.
+        const steps = Math.max(1, control.detents ?? 2)
+        const detent = Math.round(value * steps)
         if (detent !== drag.lastDetent) {
           drag.lastDetent = detent
           pulseSource(drag.source, detent === 0 ? .5 : .22, detent === 0 ? 30 : 16)
@@ -619,7 +700,12 @@ const Simulator = forwardRef(function Simulator({ profile, onTelemetry, onSafety
       const auxiliaryInput = profile.family === 'counterbalance' && permitted ? choose('reach') : 0
       const tiltInput = ['reach', 'counterbalance'].includes(profile.family) && permitted ? choose('tilt') : 0
       const sideshiftInput = ['reach', 'counterbalance'].includes(profile.family) && permitted ? choose('sideshift') : 0
-      const brakeInput = enabled ? choose('brake') : 0
+      // On a reverse-acting brake the commanded value APPLIES the brake, and
+      // losing operator presence applies it automatically, which is what
+      // actually happens when the operator's foot comes off the pedal.
+      const brakeInput = reverseActingBrake
+        ? (enabled && state.presence ? choose('brake') : 1)
+        : (enabled ? choose('brake') : 0)
       state.horn = enabled && choose('horn') > .2
 
       const loadRatio = THREE.MathUtils.clamp(state.load / profile.capacity, 0, 1)
@@ -685,9 +771,15 @@ const Simulator = forwardRef(function Simulator({ profile, onTelemetry, onSafety
       if (rig.tillerPivot) rig.tillerPivot.rotation.y = -state.steer * .72
       if (rig.steerPivot) rig.steerPivot.rotation.y = -state.steer * .62
       if (rig.travelPivot) rig.travelPivot.rotation.x = travelInput * .16
+      // The Crown handle lifts about the same base it travels on, so lift is a
+      // separate rotation on a nested pivot rather than a detached thumb wheel.
       if (rig.liftPivot) rig.liftPivot.rotation.x = liftInput * .24
-      if (rig.reachPivot) rig.reachPivot.rotation.z = -reachInput * .22
-      if (rig.tiltPivot) rig.tiltPivot.rotation.z = -tiltInput * .22
+      // Thumb ball: tilt rolls it about X, reach rolls it about Z. Both pivots
+      // are nested, so the one ball visibly rolls on two axes at once.
+      if (rig.tiltPivot) rig.tiltPivot.rotation.x = tiltInput * .38
+      if (rig.reachPivot) rig.reachPivot.rotation.z = -reachInput * .38
+      if (rig.sideshiftPivot) rig.sideshiftPivot.rotation.z = -sideshiftInput * .22
+      if (rig.secondaryTravelPivot) rig.secondaryTravelPivot.rotation.x = travelInput * .14
       if (rig.wheelPivot) rig.wheelPivot.rotation.z = -state.steer * 1.5
       if (rig.driveWheel) rig.driveWheel.rotation.x -= state.speed * dt / .165
       if (rig.loadWheels) rig.loadWheels.forEach((loadWheel) => { loadWheel.rotation.x -= state.speed * dt / .075 })
@@ -698,6 +790,12 @@ const Simulator = forwardRef(function Simulator({ profile, onTelemetry, onSafety
       if (presenceControl) {
         const targetY = presenceControl.userData.restY - (state.presenceLatched ? .025 : 0)
         presenceControl.position.y = THREE.MathUtils.damp(presenceControl.position.y, targetY, 12, dt)
+      }
+      // A reverse-acting brake pedal sits DOWN while the operator is in
+      // position and springs proud of the floorboard the moment they step off.
+      if (brakeControl && reverseActingBrake) {
+        const targetY = brakeControl.userData.restY - (state.presence ? .022 : 0)
+        brakeControl.position.y = THREE.MathUtils.damp(brakeControl.position.y, targetY, 14, dt)
       }
       camera.rotation.y = state.viewYaw
       camera.rotation.x = state.viewPitch
@@ -711,7 +809,14 @@ const Simulator = forwardRef(function Simulator({ profile, onTelemetry, onSafety
       if (speedMph > .4 && Math.abs(state.steer) > .74 && state.fork > 48) fireEvent('stability', 'Sharp turn with elevated carriage', 'critical', 18)
       warehouse.pedestrians.forEach((person) => { if (person.position.distanceTo(rig.root.position) < 1.9) fireEvent('pedestrian', 'Pedestrian separation breached', 'critical', 20, 10000) })
       if (Math.abs(state.z - 3.2) < 2.4 && Math.abs(state.x) < 3.2 && speedMph > .8 && !state.horn) fireEvent('intersection', 'Blind intersection without horn', 'minor', 5, 12000)
-      if (manual.belly > .2) state.speed = Math.max(state.speed, .75)
+      // Two different switches share the 'belly' action. On a pallet truck the
+      // belly switch drives the truck AWAY from the operator. On a Crown reach
+      // truck the Entry Bar does the opposite: a foot on it sounds the alarm
+      // and brings the truck to a stop (operator manual page 20).
+      if (manual.belly > .2) {
+        if (profile.family === 'pallet') state.speed = Math.max(state.speed, .75)
+        else state.speed = THREE.MathUtils.damp(state.speed, 0, 6.5, dt)
+      }
 
       const stabilityValue = Math.max(6, 100 - speedMph * 4.5 - state.fork * .085 - Math.abs(state.steer) * speedMph * 7.5 - Math.abs(state.sideshift) * 18)
       if (time - state.lastTelemetry > 100) {
@@ -782,7 +887,7 @@ const Simulator = forwardRef(function Simulator({ profile, onTelemetry, onSafety
         <button onClick={() => setAudioOn((value) => !value)} aria-label={audioOn ? 'Mute audio' : 'Enable audio'}>{audioOn ? <Volume2 size={17} /> : <Headphones size={17} />}</button>
         <button onClick={() => engineRef.current?.reset()} aria-label="Reset vehicle"><RotateCcw size={17} /></button>
       </div>
-      {guideOpen && <div className="control-guide"><header><Gamepad2 size={18} /><b>{profile.control}</b></header><p><MousePointer2 size={14} /> Drag a visible cab control to manipulate it. Drag empty space, or right-drag, for unrestricted 360-degree inspection. Press Home to center the view.</p><p>Keyboard fallback: Control toggles presence, W/S travel, A/D steer, E/Q lift, R/F reach, T/G tilt, Z/C sideshift, B brake, Space horn.</p><p>VR assessment: reach to the modeled control, hold trigger or pinch, and move it through its physical axis. Hold the deadman control continuously.</p><label className="xr-accessibility"><input type="checkbox" checked={assistiveXR} onChange={(event) => setAssistiveXR(event.target.checked)} /> Enable laser and thumbstick accessibility controls</label><small>{profile.guidance}</small></div>}
+      {guideOpen && <div className="control-guide"><header><Gamepad2 size={18} /><b>{profile.control}</b></header><p><MousePointer2 size={14} /> Drag a visible cab control to manipulate it. A control that moves on two axes responds to both at once, so one drag can blend its functions the way the real part does. Drag empty space, or right-drag, for unrestricted 360-degree inspection. Press Home to center the view.</p><p>Keyboard fallback: Control toggles presence, W/S travel, A/D steer, E/Q lift, R/F reach, T/G tilt, Z/C sideshift, B brake, Space horn.</p><p>VR assessment: reach to the modeled control, hold trigger or pinch, and move it through its physical axis. Hold the deadman control continuously. Where a control has a modifier switch, grab and hold that switch to shift the control to its second function.</p><label className="xr-accessibility"><input type="checkbox" checked={assistiveXR} onChange={(event) => setAssistiveXR(event.target.checked)} /> Enable laser and thumbstick accessibility controls</label><small>{profile.guidance}</small></div>}
       {!running && <div className="start-overlay"><MousePointer2 size={24} /><div><strong>First-person practical exercise</strong><span>{controlPrompt(profile)}</span></div><button onClick={() => onRunningChange(true)}>Enter operator station</button></div>}
     </section>
   )

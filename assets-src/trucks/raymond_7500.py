@@ -291,26 +291,40 @@ def console(root):
                                   (0, 0, 0), M.pbr('ray_paddle_gray', 0x606568,
                                                    roughness=0.5), travel,
                                   radius=0.011, segments=6)
+    # The 7000 Series brochure calls this a "single-axis control handle" with
+    # "discrete, intuitively mapped controls". That is the deliberate opposite
+    # of Crown: every function gets its own dedicated actuator on a FIXED grip,
+    # instead of being multiplexed onto one thumb ball behind a shift switch.
+    # Keeping that contrast intact is the whole point of training on both.
     R.tag_control(travel_paddle, 'travel', 'Travel direction and speed paddle',
-                  'vertical', True, motion='fore-aft')
+                  'fore-aft', True, motion='fore-aft', detents=1)
     lift = R.empty('rig_liftPivot', (-0.004, -0.067, 0.176), handle_pose)
     lift_btn = P.rounded_box('handle_lift', (0.025, 0.012, 0.046), (0, 0, 0),
                              M.pbr('ray_button_gray', 0x555A5D, roughness=0.5),
                              lift, radius=0.010, segments=6)
     R.tag_control(lift_btn, 'lift', 'Lift and lower thumb control', 'vertical',
-                  True, motion='vertical')
+                  True, motion='vertical', detents=1)
     reach_p = R.empty('rig_reachPivot', (-0.030, -0.066, 0.138), handle_pose)
     reach_btn = P.rounded_box('handle_reach', (0.027, 0.012, 0.036), (0, 0, 0),
                               M.pbr('ray_button_black', 0x2F3335, roughness=0.5),
                               reach_p, radius=0.010, segments=6)
+    # Reach and retract read as a fore-aft thumb push on the real handle.
     R.tag_control(reach_btn, 'reach', 'Reach and retract thumb control',
-                  'horizontal', True, motion='horizontal')
+                  'fore-aft', True, motion='fore-aft', detents=1)
     tilt_p = R.empty('rig_tiltPivot', (0.027, -0.066, 0.119), handle_pose)
     tilt_btn = P.rounded_box('handle_tilt', (0.026, 0.012, 0.034), (0, 0, 0),
                              M.pbr('ray_button_dark', 0x45494C, roughness=0.5),
                              tilt_p, radius=0.009, segments=6)
-    R.tag_control(tilt_btn, 'tilt', 'Tilt thumb control', 'horizontal', True,
-                  motion='horizontal')
+    R.tag_control(tilt_btn, 'tilt', 'Tilt thumb control', 'vertical', True,
+                  motion='vertical', detents=1)
+    # Discrete sideshift rocker. The previous model had no sideshift control at
+    # all, so the truck advertised an attachment the operator could not reach.
+    shift_p = R.empty('rig_sideshiftPivot', (-0.004, -0.066, 0.101), handle_pose)
+    shift_btn = P.rounded_box('handle_sideshift', (0.030, 0.012, 0.030), (0, 0, 0),
+                              M.pbr('ray_button_blue', 0x35505E, roughness=0.5),
+                              shift_p, radius=0.009, segments=6)
+    R.tag_control(shift_btn, 'sideshift', 'Sideshift thumb control', 'horizontal',
+                  True, motion='horizontal', detents=1)
     horn = P.cyl('btn_horn', 0.012, 0.010, (0.027, -0.067, 0.078),
                  M.button_red(), handle_pose, axis='Y', verts=28, bevel=0.003)
     R.tag_control(horn, 'horn', 'Horn button', 'button', True, motion='button')
@@ -330,16 +344,34 @@ def console(root):
     # reference configuration. It sits in a molded right rear pocket.
     P.rounded_box('secondary_pocket', (0.15, 0.30, 0.07), (0.405, -0.90, 0.82),
                   inset, root, radius=0.055, segments=7, rot=(0, 0, -0.04))
-    secondary = P.cyl('secondary_handle', 0.032, 0.20, (0.405, -0.90, 0.86),
-                      control, root, axis='Y', verts=40, bevel=0.012,
+    # This handle exists so the operator can travel tractor-first while facing
+    # the direction of travel, which is the entire premise of Universal Stance.
+    # It was previously dead geometry, so the truck's headline feature had no
+    # control behind it. Its paddle is a real travel control on its own pivot.
+    secondary_pivot = R.empty('rig_secondaryTravelPivot', (0.405, -0.90, 0.86), root)
+    secondary = P.cyl('secondary_handle', 0.032, 0.20, (0, 0, 0),
+                      control, secondary_pivot, axis='Y', verts=40, bevel=0.012,
                       rot=(math.pi / 2, 0, -0.16))
     P.cyl('secondary_end', 0.039, 0.05, (0, 0, 0.09), control, secondary,
           verts=32, bevel=0.009)
+    secondary_paddle = P.rounded_box('secondary_travel_paddle', (0.024, 0.011, 0.046),
+                                     (0.030, -0.052, 0.020),
+                                     M.pbr('ray_paddle_gray', 0x606568, roughness=0.5),
+                                     secondary_pivot, radius=0.010, segments=6)
+    R.tag_control(secondary_paddle, 'travel', 'Secondary handle travel paddle',
+                  'fore-aft', True, motion='fore-aft', detents=1)
+    secondary_horn = P.cyl('secondary_horn', 0.011, 0.009, (0.030, -0.052, -0.028),
+                           M.button_red(), secondary_pivot, axis='Y', verts=24,
+                           bevel=0.002)
+    R.tag_control(secondary_horn, 'horn', 'Secondary handle horn', 'button', True,
+                  motion='button')
 
-    # Universal Stance uses one deadman brake/presence pedal in the open floor.
+    # Universal Stance uses ONE low-profile deadman pedal with a padded rubber
+    # mat (7000 Series brochure). Unlike the Crown, there is no separate brake
+    # pedal: releasing this pedal both drops operator presence and brakes.
     deadman = P.pedal('pedal_presence', (0.14, 0.22), parent=root,
                       loc=(-0.17, -0.72, 0.263), angle=-0.10)
-    R.tag_control(deadman, 'presence', 'Deadman brake pedal', 'pedal', False)
+    R.tag_control(deadman, 'presence', 'Single deadman pedal', 'pedal', False)
 
 
 # --------------------------------------------------------------- mast and reach

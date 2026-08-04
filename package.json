@@ -8,7 +8,7 @@
     "build": "vite build",
     "preview": "vite preview --host 0.0.0.0",
     "check": "eslint src",
-    "verify": "npm run check && node scripts/verify-models.mjs && node scripts/verify-physics.mjs && npm run build"
+    "verify": "npm run check && node scripts/verify-models.mjs && node scripts/verify-rig-binding.mjs && node scripts/verify-physics.mjs && npm run build"
   },
   "dependencies": {
     "@vitejs/plugin-react": "latest",
