@@ -117,22 +117,35 @@ function cartonTexture() {
   return texture
 }
 
+// 48 x 40 in GMA stringer pallet, 5.5 in tall.
+//
+// ORIENTATION MATTERS AND IT WAS WRONG. The three stringers run the 48 in
+// length, and a fork can only enter the openings BETWEEN them, so the truck
+// approaches the 40 in face and travels along the 48 in axis. The geometry used
+// to run its stringers along X while testForkPalletEngagement assumed entry
+// along local -Z -- ninety degrees apart. The pallet therefore had to be
+// approached from the side, and in a 12 ft aisle the side is where the rack is.
+// Local axes are now: X = 40 in lateral, Z = 48 in fork travel, entry face -Z.
+export const PALLET_LATERAL = 40 * IN
+export const PALLET_TRAVEL = 48 * IN
+
 function palletGeometry() {
-  // 48 x 40 in GMA stringer pallet, 5.5 in tall
-  const width = 48 * IN
-  const depth = 40 * IN
+  const lateral = PALLET_LATERAL
+  const travel = PALLET_TRAVEL
   const parts = []
   const stringerH = 3.5 * IN
-  ;[-depth / 2 + .06, 0, depth / 2 - .06].forEach((z) => {
-    parts.push(boxGeometry([width, stringerH, 1.4 * IN], [0, stringerH / 2 + .9 * IN, z]))
+  // Stringers run the 48 in travel axis, spaced across the 40 in face.
+  ;[-lateral / 2 + .06, 0, lateral / 2 - .06].forEach((x) => {
+    parts.push(boxGeometry([1.4 * IN, stringerH, travel], [x, stringerH / 2 + .9 * IN, 0]))
   })
+  // Deck boards lie across the stringers.
   const topBoards = 7
   for (let index = 0; index < topBoards; index += 1) {
-    const x = -width / 2 + (index + .5) * (width / topBoards)
-    parts.push(boxGeometry([width / topBoards - .012, .7 * IN, depth], [x, stringerH + 1.25 * IN, 0]))
+    const z = -travel / 2 + (index + .5) * (travel / topBoards)
+    parts.push(boxGeometry([lateral, .7 * IN, travel / topBoards - .012], [0, stringerH + 1.25 * IN, z]))
   }
-  ;[-width / 2 + .09, 0, width / 2 - .09].forEach((x) => {
-    parts.push(boxGeometry([.16, .7 * IN, depth], [x, .35 * IN, 0]))
+  ;[-travel / 2 + .09, 0, travel / 2 - .09].forEach((z) => {
+    parts.push(boxGeometry([lateral, .7 * IN, .16], [0, .35 * IN, z]))
   })
   return mergeGeometries(parts, false)
 }
@@ -140,9 +153,12 @@ function palletGeometry() {
 function cartonStackGeometry(columns = 2, rows = 2, layers = 2, jitter = .012) {
   // Case-goods pallet: 24x20x18 in cartons, two per side per layer. Fewer and
   // larger than a brick pile. That is what a real palletized load looks like.
+  // Footprint follows the pallet's 40 in lateral by 48 in travel axes.
   const parts = []
-  const width = 1.18 / columns
-  const depth = .98 / rows
+  const spanX = PALLET_LATERAL - .04
+  const spanZ = PALLET_TRAVEL - .04
+  const width = spanX / columns
+  const depth = spanZ / rows
   const height = .44
   for (let layer = 0; layer < layers; layer += 1) {
     for (let row = 0; row < rows; row += 1) {
@@ -151,7 +167,7 @@ function cartonStackGeometry(columns = 2, rows = 2, layers = 2, jitter = .012) {
         const offsetZ = (Math.random() - .5) * jitter
         parts.push(boxGeometry(
           [width - .03, height - .02, depth - .03],
-          [-.59 + (column + .5) * width + offsetX, .148 + height * (layer + .5), -.49 + (row + .5) * depth + offsetZ],
+          [-spanX / 2 + (column + .5) * width + offsetX, .148 + height * (layer + .5), -spanZ / 2 + (row + .5) * depth + offsetZ],
           [0, (Math.random() - .5) * .05, 0],
         ))
       }
@@ -178,7 +194,7 @@ function palletLoad(parent, position, tint = 0xb5854f, wrapped = false, options 
   group.add(cartons)
   if (wrapped) {
     const wrap = new THREE.Mesh(
-      new THREE.BoxGeometry(1.2, 1.02, 1.0),
+      new THREE.BoxGeometry(PALLET_LATERAL - .02, 1.02, PALLET_TRAVEL - .02),
       new THREE.MeshPhysicalMaterial({
         color: 0xd6e0e0, transparent: true, opacity: .17, roughness: .32,
         transmission: .55, thickness: .04, depthWrite: false,
@@ -194,7 +210,8 @@ function palletLoad(parent, position, tint = 0xb5854f, wrapped = false, options 
     kind: 'pallet',
     id: group.name,
     weight: options.weight ?? 2400,
-    dimensions: { x: 48 * IN, y: 1.04, z: 40 * IN },
+    // x is the 40 in lateral face, z the 48 in fork-travel axis.
+    dimensions: { x: PALLET_LATERAL, y: 1.04, z: PALLET_TRAVEL },
     slotId: options.slotId || null,
     movable: options.movable !== false,
   }
@@ -308,7 +325,10 @@ function buildRackRun(scene, x, zStart, bays, facing) {
           id: slotId,
           position: { x: x + facing * .02, y: level + .09, z: zCenter + offset },
           yaw: Math.PI / 2,
-          halfExtents: { x: frameDepth / 2 + .16, y: .16, z: .56 },
+          // Slot-local X is lateral along the rack run, Z is into the rack. A
+          // 48 in pallet on a 42 in frame overhangs the beams slightly, which is
+          // normal, so the depth allowance is the frame plus that overhang.
+          halfExtents: { x: .56, y: .16, z: frameDepth / 2 + .16 },
           occupiedBy: null,
         }
         slots.push(rackSlot)

@@ -57,21 +57,39 @@ export function turnRadius(steerAngle, limits) {
   return limits.wheelbase / tangent
 }
 
-export function yawRate(speed, steerAngle, limits) {
-  return -(speed / limits.wheelbase) * Math.tan(steerAngle)
+// Yaw rate from DRIVE WHEEL speed. Using sin rather than tan is what bounds it:
+// at full lock this is wheelSpeed / L, where tan would have gone to infinity.
+export function yawRate(wheelSpeed, steerAngle, limits) {
+  return -(wheelSpeed / limits.wheelbase) * Math.sin(steerAngle)
 }
 
 // Integrate one step. Returns the new root pose plus the diagnostics the
 // stability solver and the event rules need.
+//
+// `speed` is DRIVE WHEEL speed, not the truck's forward speed. That distinction
+// is what keeps a hard-steered truck from spinning absurdly fast: the motor
+// controls how fast the wheel turns, and the geometry decides how much of that
+// becomes forward travel versus rotation.
+//
+//     forward = wheelSpeed * cos(delta)      -> falls to zero at full lock
+//     psi_dot = wheelSpeed * sin(delta) / L  -> bounded by the wheel's own speed
+//
+// Their ratio is still tan(delta)/L, so the turn radius is unchanged, but
+// forward speed now drops as the wheel is turned. Real trucks behave exactly
+// this way, and driving `psi_dot = v * tan(delta) / L` off the FORWARD speed
+// instead made tan blow up near full lock and spun the truck on the spot.
 export function integrateSteering(pose, speed, steerAngle, limits, dt) {
   const heading = pose.heading || 0
   if (Math.abs(speed) < MIN_ROLLING_SPEED) {
     // Power steering still moves the wheel with the truck stopped, but a
     // stationary truck does not rotate. Returning early keeps a parked truck
     // from creeping when the operator saws at the wheel.
-    return { x: pose.x, z: pose.z, heading, yawRate: 0, radius: turnRadius(steerAngle, limits) }
+    return {
+      x: pose.x, z: pose.z, heading, yawRate: 0, forwardSpeed: 0, radius: turnRadius(steerAngle, limits),
+    }
   }
 
+  const forwardSpeed = speed * Math.cos(steerAngle)
   const cosine = Math.cos(heading)
   const sine = Math.sin(heading)
   // Fixed axle midpoint in world space (same local->world basis as loadPhysics).
@@ -79,8 +97,8 @@ export function integrateSteering(pose, speed, steerAngle, limits, dt) {
   const fixedZ = pose.z + cosine * limits.fixedAxleZ
 
   // A body-aligned axle cannot slip sideways, so its velocity is pure forward.
-  const advancedX = fixedX - sine * speed * dt
-  const advancedZ = fixedZ - cosine * speed * dt
+  const advancedX = fixedX - sine * forwardSpeed * dt
+  const advancedZ = fixedZ - cosine * forwardSpeed * dt
 
   const rate = yawRate(speed, steerAngle, limits)
   const newHeading = Math.atan2(Math.sin(heading + rate * dt), Math.cos(heading + rate * dt))
@@ -95,6 +113,7 @@ export function integrateSteering(pose, speed, steerAngle, limits, dt) {
     z: advancedZ - newCosine * limits.fixedAxleZ,
     heading: newHeading,
     yawRate: rate,
+    forwardSpeed,
     radius: turnRadius(steerAngle, limits),
   }
 }

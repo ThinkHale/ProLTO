@@ -22,6 +22,12 @@ const INCH = .0254
 const POUND = .45359237
 // `turnRate` is gone: yaw now comes from the steered-axle kinematics in
 // src/sim/vehicleDynamics.js rather than a per-family fudge factor.
+// Lock-to-lock revolutions of the operator's steering device. A sit-down truck's
+// wheel makes roughly three and a half full turns between locks, and a reach
+// truck's palm disc a bit over one. Sweeping only a fraction of a turn -- the
+// old fixed 1.5 rad, about 86 degrees -- reads as the wheel rocking side to side
+// rather than being steered. Half travel in radians is turns * PI.
+const STEER_LOCK_TO_LOCK = { counterbalance: 3.5, reach: 1.25, 'order-picker': 1.25, pallet: 1 }
 const DYNAMICS = {
   reach: { acceleration: 2.45, braking: 6.8, liftRate: 30.6, reverseScale: .86 },
   'order-picker': { acceleration: 2.05, braking: 6.4, liftRate: 40, reverseScale: .82 },
@@ -226,12 +232,59 @@ const Simulator = forwardRef(function Simulator({ profile, onTelemetry, onSafety
     const requiresPresence = profile.family !== 'pallet' || !rig.walkie
     const manual = { ...ZERO }
     const steering = steerLimits(profile)
+    // How far the blades sit above the floor at their authored rest. Fork travel
+    // is rescaled by this so state.fork is height ABOVE THE FLOOR: zero means
+    // blades on the ground, which is where a truck parks and the only place it
+    // can enter a pallet lying on the deck.
+    const forkClearance = rig.forkMetrics?.clearance ?? 0
+
+    // Live fork camera feeding the guard-header monitor. Rendered at a quarter
+    // rate and low resolution: it is a working aid glanced at while placing a
+    // load, not a second full-quality viewport, and on a standalone headset a
+    // full-rate second scene pass is not affordable.
+    let forkCamera = null
+    let forkCamTarget = null
+    let forkCamTick = 0
+    if (rig.forkCam && rig.forkCamDisplay) {
+      forkCamTarget = new THREE.WebGLRenderTarget(320, 200, {
+        minFilter: THREE.LinearFilter, magFilter: THREE.LinearFilter, depthBuffer: true,
+      })
+      forkCamera = new THREE.PerspectiveCamera(68, 320 / 200, .04, 26)
+      // Angled down the blades so the fork tips and the pallet face are both in
+      // frame, which is what the operator is actually judging.
+      forkCamera.rotation.x = -.22
+      rig.forkCam.add(forkCamera)
+      rig.forkCamDisplay.material = new THREE.MeshBasicMaterial({
+        map: forkCamTarget.texture, toneMapped: false,
+      })
+      disposers.push(() => {
+        forkCamTarget.dispose()
+        rig.forkCamDisplay.material.dispose()
+      })
+    }
+    const renderForkCam = () => {
+      if (!forkCamera) return
+      forkCamTick += 1
+      if (forkCamTick % 4) return
+      // The monitor must not appear in its own feed, and an XR frame has to be
+      // suspended before rendering a non-XR camera to an offscreen target.
+      const xrWasEnabled = renderer.xr.enabled
+      rig.forkCamDisplay.visible = false
+      renderer.xr.enabled = false
+      renderer.setRenderTarget(forkCamTarget)
+      renderer.render(scene, forkCamera)
+      renderer.setRenderTarget(null)
+      renderer.xr.enabled = xrWasEnabled
+      rig.forkCamDisplay.visible = true
+    }
+    const steerSweep = Math.PI * (STEER_LOCK_TO_LOCK[profile.family] ?? 1)
     const state = {
       x: 0, z: 11.5, heading: 0, speed: 0, steer: 0, fork: 0, reach: 0, tilt: 0, sideshift: 0,
       // `steer` stays the normalized control position that drives the wheel and
       // tiller meshes. `steerAngle` is the real steered-wheel angle in radians
       // that the kinematics integrate. They are not interchangeable.
       steerAngle: 0, previousSpeed: 0, yawRate: 0, turnRadius: Infinity,
+      forwardSpeed: 0, smoothedAccel: 0, stabilityLowSince: 0,
       load: 0, horn: false, presence: !requiresPresence, presenceLatched: false, viewYaw: 0, viewPitch: defaultViewPitch, lastTelemetry: 0,
       eventLocks: {}, keys: new Set(), pointerDrag: null, lookDrag: null, xrDrags: new Map(), hovered: null,
       modifierHeld: false, modifierObject: null,
@@ -280,6 +333,7 @@ const Simulator = forwardRef(function Simulator({ profile, onTelemetry, onSafety
       Object.assign(state, {
         x: 0, z: 11.5, heading: 0, speed: 0, steer: 0, fork: 0, reach: 0, tilt: 0, sideshift: 0, load: 0,
         steerAngle: 0, previousSpeed: 0, yawRate: 0, turnRadius: Infinity,
+      forwardSpeed: 0, smoothedAccel: 0, stabilityLowSince: 0,
         viewYaw: 0, viewPitch: defaultViewPitch,
       })
       Object.assign(manual, ZERO)
@@ -758,6 +812,9 @@ const Simulator = forwardRef(function Simulator({ profile, onTelemetry, onSafety
       state.heading = motion.heading
       state.yawRate = motion.yawRate
       state.turnRadius = motion.radius
+      // Forward travel falls away as the wheel is turned toward full lock, so
+      // this is not the same number as state.speed (drive wheel speed).
+      state.forwardSpeed = motion.forwardSpeed
       if (state.x < WORLD.minX || state.x > WORLD.maxX || state.z < WORLD.minZ || state.z > WORLD.maxZ) {
         fireEvent('boundary', 'Contact with facility boundary', 'critical', 18)
         state.x = THREE.MathUtils.clamp(state.x, WORLD.minX, WORLD.maxX)
@@ -790,14 +847,16 @@ const Simulator = forwardRef(function Simulator({ profile, onTelemetry, onSafety
       sun.target.updateMatrixWorld()
       if (rig.carriage) {
         const rest = rig.carriage.userData.rest
-        rig.carriage.position.y = (rest?.y || 0) + state.fork * .0254
+        rig.carriage.position.y = (rest?.y || 0) + state.fork * INCH - forkClearance
         rig.carriage.position.x = (rest?.x || 0) + state.sideshift
       }
       if (rig.reachGroup) rig.reachGroup.position.z = (rig.reachGroup.userData.rest?.z || 0) - state.reach * .0254
       if (rig.tiltGroup) rig.tiltGroup.rotation.x = THREE.MathUtils.degToRad(state.tilt)
       else if (rig.mast) rig.mast.rotation.x = THREE.MathUtils.degToRad(state.tilt)
       if (rig.tillerPivot) rig.tillerPivot.rotation.y = -state.steer * .72
-      if (rig.steerPivot) rig.steerPivot.rotation.y = -state.steer * .62
+      // Palm discs and steering wheels spin about their column through several
+      // full turns; the tiller ARM above is a physical linkage and does not.
+      if (rig.steerPivot) rig.steerPivot.rotation.y = -state.steer * steerSweep
       if (rig.travelPivot) rig.travelPivot.rotation.x = travelInput * .16
       // The Crown handle lifts about the same base it travels on, so lift is a
       // separate rotation on a nested pivot rather than a detached thumb wheel.
@@ -808,7 +867,7 @@ const Simulator = forwardRef(function Simulator({ profile, onTelemetry, onSafety
       if (rig.reachPivot) rig.reachPivot.rotation.z = -reachInput * .38
       if (rig.sideshiftPivot) rig.sideshiftPivot.rotation.z = -sideshiftInput * .22
       if (rig.secondaryTravelPivot) rig.secondaryTravelPivot.rotation.x = travelInput * .14
-      if (rig.wheelPivot) rig.wheelPivot.rotation.z = -state.steer * 1.5
+      if (rig.wheelPivot) rig.wheelPivot.rotation.z = -state.steer * steerSweep
       if (rig.driveWheel) rig.driveWheel.rotation.x -= state.speed * dt / .165
       if (rig.loadWheels) rig.loadWheels.forEach((loadWheel) => { loadWheel.rotation.x -= state.speed * dt / .075 })
       if (rig.levers) {
@@ -831,7 +890,9 @@ const Simulator = forwardRef(function Simulator({ profile, onTelemetry, onSafety
       const loadState = loadPhysics.update(dt)
       state.load = loadState.carriedWeight
 
-      const speedMph = Math.abs(state.speed) / .44704
+      // Travel speed means ground speed, which is what an evaluator is judging.
+      // At heavy steer angles that is well below drive wheel speed.
+      const speedMph = Math.abs(state.forwardSpeed) / .44704
       if (speedMph > profile.safeSpeed + .15) fireEvent('speed', 'Travel speed above assessment limit', 'minor', 5)
       if (speedMph > 1.2 && state.fork > 18) fireEvent('fork-height', 'Travel with elevated forks', 'major', 10)
       // The steered end sweeps outside the fixed axle's path. Near a rack face
@@ -856,23 +917,39 @@ const Simulator = forwardRef(function Simulator({ profile, onTelemetry, onSafety
       // Physical stability: combined center of gravity against the truck's real
       // support polygon, displaced by the centrifugal and braking forces acting
       // this frame. See src/sim/stability.js.
-      const forwardAccel = dt > 1e-4 ? (state.speed - state.previousSpeed) / dt : 0
+      // Frame-to-frame speed deltas are noisy enough that raw acceleration alone
+      // made the margin jitter and trip warnings on a truck that was simply
+      // driving. Filter it to the timescale a load actually responds on.
+      const rawAccel = dt > 1e-4 ? (state.speed - state.previousSpeed) / dt : 0
+      state.smoothedAccel = THREE.MathUtils.damp(state.smoothedAccel, rawAccel, 5, dt)
       const stabilityResult = solveStability(profile, {
         loadMass: state.load * POUND,
         forkHeight: state.fork * INCH,
         reachExtension: state.reach * INCH,
         tilt: THREE.MathUtils.degToRad(state.tilt),
         sideshift: state.sideshift,
-        speed: state.speed,
+        // Cornering force comes from how fast the truck is actually travelling
+        // through the arc, not from how fast the drive wheel is spinning.
+        speed: state.forwardSpeed,
         yawRate: state.yawRate,
         turnRadius: state.turnRadius,
-        forwardAccel,
+        forwardAccel: state.smoothedAccel,
       })
       const warning = stabilityWarning(stabilityResult, {
         reachExtended: state.reach > 4,
         forkHeight: state.fork * INCH,
       })
-      if (warning) fireEvent(warning.type, warning.label, warning.severity, warning.deduction)
+      // A momentary dip is not a finding. The condition has to persist before it
+      // is worth an evaluator's attention, or the stream fills with noise and
+      // the real events stop standing out.
+      if (warning) {
+        if (!state.stabilityLowSince) state.stabilityLowSince = time
+        if (time - state.stabilityLowSince > 700) {
+          fireEvent(warning.type, warning.label, warning.severity, warning.deduction, 12000)
+        }
+      } else {
+        state.stabilityLowSince = 0
+      }
       const stabilityValue = stabilityResult.percent
 
       if (time - state.lastTelemetry > 100) {
@@ -880,7 +957,7 @@ const Simulator = forwardRef(function Simulator({ profile, onTelemetry, onSafety
         setStability(stabilityValue)
         onTelemetry({
           speed: speedMph,
-          signedSpeed: state.speed / .44704,
+          signedSpeed: state.forwardSpeed / .44704,
           fork: state.fork,
           reach: state.reach,
           tilt: state.tilt,
@@ -902,6 +979,7 @@ const Simulator = forwardRef(function Simulator({ profile, onTelemetry, onSafety
           criticalEdge: stabilityResult.criticalEdge,
         })
       }
+      renderForkCam()
       renderer.render(scene, camera)
     })
 

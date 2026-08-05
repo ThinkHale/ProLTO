@@ -51,6 +51,19 @@ for (const [family, manufacturer] of [
 
   await page.keyboard.down('ControlLeft')   // operator presence
   await page.waitForTimeout(150)
+  // Drive straight at the training pallet sitting square in the aisle ahead.
+  // Fork travel now bottoms out with the blades on the floor and the pallet is
+  // oriented for a head-on approach, so this should engage without maneuvering.
+  await page.keyboard.down('KeyW')
+  await page.waitForTimeout(2600)
+  await page.keyboard.up('KeyW')
+  await page.waitForTimeout(300)
+  await page.keyboard.down('KeyE')
+  await page.waitForTimeout(900)
+  await page.keyboard.up('KeyE')
+  await page.waitForTimeout(400)
+  const picked = await readTelemetry(page)
+
   await page.keyboard.down('KeyW')          // travel
   await page.waitForTimeout(900)
   const rolling = await readTelemetry(page)
@@ -70,15 +83,15 @@ for (const [family, manufacturer] of [
   await page.locator('.simulator-shell').screenshot({ path: `${outDir}/${manufacturer.toLowerCase()}-${family}.png` })
 
   const drove = rolling.speed > .4
-  const stabilityFell = lifted.stability < idle.stability
+  const engaged = picked.load > 0
   const stabilitySane = [idle, rolling, turning, lifted].every((t) => t.stability >= 0 && t.stability <= 100)
-  const ok = drove && stabilitySane && errors.length === 0
+  const ok = drove && engaged && stabilitySane && errors.length === 0
   if (!ok) failures += 1
   console.log(
     `${ok ? 'PASS ' : 'FAIL '} ${manufacturer.padEnd(8)} ${family.padEnd(15)} ` +
-    `speed=${rolling.speed}mph fork=${lifted.fork}in ` +
+    `speed=${rolling.speed}mph load=${picked.load}lb fork=${lifted.fork}in ` +
     `stability idle=${idle.stability}% turning=${turning.stability}% lifted=${lifted.stability}%` +
-    `${stabilityFell ? ' (falls with height)' : ''}` +
+    `${engaged ? '' : '  <-- NO PICKUP'}` +
     (errors.length ? `\n      ERRORS: ${errors.slice(0, 3).join(' | ')}` : ''),
   )
   await page.close()

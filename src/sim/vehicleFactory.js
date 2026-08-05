@@ -91,6 +91,39 @@ function collectIndexed(index, prefix) {
   return found
 }
 
+const FORK_BLADE = /^forks?_[LR]$/
+// Must match the screen mesh name built by parts.cage_display.
+export const FORKCAM_DISPLAY = 'forkcam_display'
+
+// Measure the fork blades from the art instead of trusting a parallel table of
+// hand-tuned constants. Those constants had drifted: the Raymond 7500 and Crown
+// SC 6200 blades rest 0.12 and 0.14 m off the floor, but a GMA pallet's fork
+// pocket only spans 0.025 to 0.13 m, so on those two trucks the forks could not
+// physically enter a pallet on the ground and no amount of approach would pick
+// one up. Deriving the geometry means the physics tracks whatever the modeler
+// actually built, and `clearance` lets the simulator scale fork travel so that
+// zero means blades on the floor rather than blades at their authored rest.
+function measureForks(gltfScene) {
+  gltfScene.updateMatrixWorld(true)
+  const blades = []
+  gltfScene.traverse((object) => { if (object.isMesh && FORK_BLADE.test(object.name)) blades.push(object) })
+  if (blades.length < 2) return null
+  const box = new THREE.Box3()
+  const perBlade = blades.map((blade) => {
+    const bounds = new THREE.Box3().setFromObject(blade)
+    box.union(bounds)
+    return bounds
+  })
+  const centers = perBlade.map((bounds) => (bounds.min.x + bounds.max.x) / 2).sort((a, b) => a - b)
+  return {
+    clearance: box.min.y,
+    bladeBottom: box.min.y,
+    length: box.max.z - box.min.z,
+    spread: Math.abs(centers[centers.length - 1] - centers[0]),
+    tineWidth: perBlade[0].max.x - perBlade[0].min.x,
+  }
+}
+
 function recordRests(rig) {
   if (rig.carriage) rig.carriage.userData.rest = rig.carriage.position.clone()
   if (rig.reachGroup) rig.reachGroup.userData.rest = rig.reachGroup.position.clone()
@@ -118,8 +151,10 @@ function mapRig(gltfScene, profile) {
       object.castShadow = castsUsefulShadow(object)
       object.receiveShadow = true
       // Any mesh a truck module names as a display face gets the live cluster
-      // texture, unlit so it reads as an emissive panel at any exposure.
-      if (/screen/i.test(object.name)) {
+      // texture, unlit so it reads as an emissive panel at any exposure. The
+      // fork camera monitor is excluded: the Simulator binds a render target to
+      // it instead of a painted canvas.
+      if (object.name !== FORKCAM_DISPLAY && /screen/i.test(object.name)) {
         object.material = new THREE.MeshBasicMaterial({ map: telemetryTexture(profile.manufacturer), toneMapped: false })
       }
     }
@@ -137,6 +172,12 @@ function mapRig(gltfScene, profile) {
     platform: get('rig_platform'),
     cameraMount: get('rig_cameraMount') || gltfScene,
     xrOrigin: get('rig_xrOrigin'),
+    // Reach trucks carry a fork-mounted camera and a monitor on the guard
+    // header. Both ride the reach group so the view tracks lift and reach, which
+    // is the whole point when placing a load into a top slot. See
+    // assets-src/lib/parts.py cage_display.
+    forkCam: get('rig_forkCam'),
+    forkCamDisplay: get(FORKCAM_DISPLAY),
     controls: gltfScene,
     steerPivot: get('rig_steerPivot'),
     travelPivot: get('rig_travelPivot'),
@@ -162,6 +203,7 @@ function mapRig(gltfScene, profile) {
   }
   if (!rig.loadWheels.length) rig.loadWheels = null
   if (!rig.levers.length) rig.levers = null
+  rig.forkMetrics = measureForks(gltfScene)
   return recordRests(rig)
 }
 

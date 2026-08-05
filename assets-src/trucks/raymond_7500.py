@@ -255,11 +255,18 @@ def console(root):
     # pedestal: it is a large near-black disc sunk almost flush into a raised
     # molded dome, with only a low knob breaking the surface. The dome rim
     # stands slightly proud of the disc face, which is what reads as "inset".
+    # Lateral placement is constrained by tower_left, the CLOSED left wall of the
+    # compartment, which occupies x -0.560 to -0.460 from z 0.235 to 1.365. At
+    # the old x=-0.31 the pod reached -0.518 and the disc -0.476, so both were
+    # buried in that wall -- 58 mm and 16 mm respectively. The pod's outer rim
+    # radius is 0.208, so x=-0.245 puts its edge at -0.453, clear of the wall
+    # face at -0.460, and still reads as a left-hand disc on a 1.219 wide truck.
+    STEER_X = -0.245
     P.lathe('steer_pod', [(0.0, 0.0), (0.200, 0.0), (0.208, 0.022),
                           (0.200, 0.046), (0.176, 0.058), (0.168, 0.030),
                           (0.0, 0.026)], molded, root,
-            loc=(-0.31, -0.52, 1.158))
-    steer = R.empty('rig_steerPivot', (-0.31, -0.52, 1.186), root)
+            loc=(STEER_X, -0.52, 1.158))
+    steer = R.empty('rig_steerPivot', (STEER_X, -0.52, 1.186), root)
     disc = P.lathe('steer_disc', [(0.0, 0.0), (0.158, 0.0), (0.166, 0.008),
                                   (0.162, 0.021), (0.0, 0.023)], control, steer,
                    segments=64)
@@ -280,15 +287,18 @@ def console(root):
     P.text_mesh('steer_brand', 'RAYMOND', 0.013, 0.001, M.decal_dark(), steer,
                 loc=(-0.005, -0.062, 0.022), facing='+Z')
     # Short stalk lever on the pod shoulder, left of the disc in the reference.
+    # It has to sit OUTSIDE the disc's 0.166 radius at this fore-aft offset or it
+    # pokes through the disc face, while staying inboard of the tower wall.
+    LEVER_X = STEER_X - 0.180
     P.lathe('pod_lever_boot', [(0.0, 0.0), (0.022, 0.0), (0.018, 0.020),
                                (0.010, 0.030), (0.0, 0.031)], inset, root,
-            loc=(-0.45, -0.42, 1.168))
-    stalk = P.cyl('pod_lever', 0.008, 0.085, (-0.45, -0.42, 1.230), control,
+            loc=(LEVER_X, -0.42, 1.168))
+    stalk = P.cyl('pod_lever', 0.008, 0.085, (LEVER_X, -0.42, 1.230), control,
                   root, verts=20, bevel=0.003)
     stalk.rotation_euler = (0.22, -0.16, 0)
     P.lathe('pod_lever_knob', [(0.0, 0.0), (0.017, 0.003), (0.020, 0.020),
                                (0.013, 0.032), (0.0, 0.034)], control, root,
-            loc=(-0.464, -0.401, 1.268))
+            loc=(LEVER_X - 0.014, -0.401, 1.268))
 
     # Display cluster. The reference puts it on the RIGHT lobe, angled up toward
     # the standing operator, not flat in the centre of the hood. It carries a
@@ -448,6 +458,14 @@ def mast_and_reach(root):
             (0.435, 0.0, 1.5), rot=(0, 0, math.pi / 2))
     carriage = R.empty('rig_carriage', (0, -0.06, 0.06), mast)
     reach_grp = R.empty('rig_reachGroup', (0, 0, 0), carriage)
+    # Fork camera looking along the blades toward the tips. It sits AHEAD of
+    # the carriage bars and ABOVE the blades: mounted level with them the red
+    # forks filled the whole feed, and behind them the low carriage bar filled
+    # of the feed with red steel. Rides the reach
+    # group so it tracks the carriage through lift and reach, which is what makes
+    # the guard monitor useful when placing into a top slot.
+    R.empty('rig_forkCam', (0, 0.50, 0.68), reach_grp)
+
     # pantograph scissor
     for sx in (-1, 1):
         arm1 = P.box(f'panto_a_{sx}', (0.045, 0.5, 0.06), (sx * 0.33, 0.1, 0.42),
@@ -479,6 +497,12 @@ def mast_and_reach(root):
 def guard_and_drive(root):
     P.overhead_guard(root, width=0.98, depth=1.04, height=2.41, y_center=-0.55,
                      rake=0.05, slat_count=7)
+    # Fork camera monitor on the guard header. The operator eye sits at
+    # y=-0.98, z=1.785, so a screen at y=-0.13, z=2.19 is about 26 degrees up --
+    # a glance, not a craning look. The tilt turns the face down to meet it.
+    monitor = R.empty('forkcam_mount', (0, -0.13, 2.19), root)
+    monitor.rotation_euler = (0.45, 0, 0)
+    P.cage_display(monitor)
     drive = P.wheel_poly('rig_driveWheel', 0.1715, 0.15, M.rubber_tire(), root,
                          loc=(0.16, -0.16, 0.1715))
     P.wheel_poly('caster', 0.075, 0.08, parent=root, loc=(-0.30, -0.70, 0.075),

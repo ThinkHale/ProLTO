@@ -33,8 +33,12 @@ export const DEFAULT_FORK_SPEC = Object.freeze({
 })
 
 export const DEFAULT_PALLET_SPEC = Object.freeze({
-  width: 1.2192,
-  depth: 1.016,
+  // A GMA pallet is entered from its 40 in face and the fork travels the 48 in
+  // stringer axis, so `width` is the LATERAL 40 in span the tines must fit
+  // inside and `depth` is the 48 in the tines penetrate. These were swapped,
+  // which put the engagement test ninety degrees out from the pallet geometry.
+  width: 1.016,
+  depth: 1.2192,
   height: 1.05,
   weight: 1200,
   pocketMin: .025,
@@ -59,10 +63,27 @@ export function forkConfigurationForProfile(profile, rig) {
   const key = `${profile.manufacturer}:${profile.family}`
   const preset = FORK_RIG_PRESETS[key] || DEFAULT_FORK_SPEC
   const frame = preset.frame ? rig[preset.frame] : rig.reachGroup || rig.carriage
-  return {
-    forkFrame: frame || rig.carriage || rig.root,
-    forkSpecification: { ...DEFAULT_FORK_SPEC, ...preset },
+  const forkFrame = frame || rig.carriage || rig.root
+  const specification = { ...DEFAULT_FORK_SPEC, ...preset }
+
+  // Prefer geometry measured off the actual blade meshes (see
+  // vehicleFactory.measureForks) over the authored constants above. The presets
+  // are kept only as a fallback for rigs that do not expose forks_L/forks_R,
+  // because a hand-maintained copy of the model's dimensions WILL drift from the
+  // model -- and it had, badly enough that two trucks could not pick up a pallet.
+  const metrics = rig.forkMetrics
+  if (metrics && forkFrame?.getWorldPosition) {
+    const frameWorldY = forkFrame.getWorldPosition(new THREE.Vector3()).y
+    specification.localBase = [
+      specification.localBase[0],
+      metrics.bladeBottom + specification.thickness * .5 - frameWorldY,
+      specification.localBase[2],
+    ]
+    specification.length = metrics.length
+    specification.spread = metrics.spread
+    specification.tineWidth = metrics.tineWidth
   }
+  return { forkFrame, forkSpecification: specification }
 }
 
 export function normalizeAngle(angle) {

@@ -454,6 +454,35 @@ def overhead_guard(parent, width=1.02, depth=1.3, height=2.28, base_z=0.0, y_cen
              radius * 0.55, mat, parent)
 
 
+def cage_display(parent, width=0.20, height=0.125, name='forkcam'):
+    """Camera monitor on the front header of the operator guard.
+
+    A reach truck working tall slots carries a camera looking along the forks and
+    a monitor high on the front of the overhead guard, so the operator can place
+    a load into an 8 m slot without craning back to watch the fork tips. Without
+    it the top-slot exercise is guesswork the real machine does not ask for.
+
+    Built in the parent's frame facing -Y (toward the operator), so the caller
+    supplies the tilt by rotating the parent empty. The screen mesh is named
+    <name>_display and the Simulator binds a live render target to it; keep that
+    name in step with FORKCAM_DISPLAY in src/sim/vehicleFactory.js.
+    """
+    shell = M.plastic_dark()
+    # Yoke bracket up to the guard header.
+    for sx in (-1, 1):
+        tube(f'{name}_yoke_{sx}', [Vector((sx * width * 0.42, 0.012, height * 0.5)),
+                                   Vector((sx * width * 0.42, 0.055, height * 0.5 + 0.085))],
+             0.008, M.frame_black(), parent, corner_radius=0)
+    rounded_box(f'{name}_bezel', (width, 0.026, height), (0, 0, 0), shell, parent,
+                radius=0.010, segments=5)
+    rounded_box(f'{name}_hood', (width + 0.016, 0.030, 0.014),
+                (0, -0.006, height * 0.5 + 0.006), shell, parent, radius=0.005, segments=4)
+    # The display face itself. Left unlit and slightly proud of the bezel.
+    screen = box(f'{name}_display', (width - 0.022, 0.004, height - 0.020),
+                 (0, -0.014, 0), M.screen_glass(), parent, bevel=0.001)
+    return screen
+
+
 def wheel_poly(name, radius, width, mat=None, parent=None, loc=(0, 0, 0), hub=True):
     """Polyurethane wheel: tire band with rounded shoulders + steel hub w/ bolts."""
     obj = cyl(name, radius, width, loc, mat or M.poly_wheel(), parent, axis='X',

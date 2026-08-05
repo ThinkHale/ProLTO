@@ -14,6 +14,7 @@ import {
   steerLimits,
   tailSwingRadius,
   turnRadius,
+  yawRate as yawRateAt,
 } from '../src/sim/vehicleDynamics.js'
 import { ratedCapacityAt, solveStability } from '../src/sim/stability.js'
 
@@ -100,6 +101,34 @@ const limits = steerLimits(counterbalance)
   let angle = 0
   for (let step = 0; step < 600; step += 1) angle = advanceSteerAngle(angle, 1, limits, 1 / 60)
   near(angle, limits.maxSteer, 1e-9, 'held input must eventually reach full lock')
+}
+
+// REGRESSION: yaw rate must stay bounded at full lock. Driving it from FORWARD
+// speed as v*tan(delta)/L sent tan to infinity near 90 degrees and spun the
+// truck on the spot at a crawl. Driving it from DRIVE WHEEL speed as
+// v*sin(delta)/L bounds it, and forward travel correctly falls away instead.
+{
+  const wheelSpeed = 2
+  let worst = 0
+  for (let degrees = 0; degrees <= limits.maxSteer / DEG; degrees += 1) {
+    const rate = Math.abs(yawRateAt(wheelSpeed, degrees * DEG, limits))
+    worst = Math.max(worst, rate)
+  }
+  const ceiling = wheelSpeed / limits.wheelbase
+  assert.ok(worst <= ceiling + 1e-9, `yaw rate ${worst.toFixed(2)} rad/s exceeded the wheel-speed ceiling ${ceiling.toFixed(2)}`)
+  assert.ok(worst * 180 / Math.PI < 100, `full lock at 2 m/s yaws ${(worst * 180 / Math.PI).toFixed(0)} deg/s, which is a spin not a turn`)
+
+  // Forward travel falls off as the cosine of the steer angle, so at full lock
+  // most of the wheel's motion is going into rotation rather than travel.
+  const straight = integrateSteering({ x: 0, z: 0, heading: 0 }, 2, 0, limits, 1 / 60)
+  const locked = integrateSteering({ x: 0, z: 0, heading: 0 }, 2, limits.maxSteer, limits, 1 / 60)
+  near(straight.forwardSpeed, 2, 1e-9, 'straight ahead, forward speed is wheel speed')
+  near(locked.forwardSpeed, 2 * Math.cos(limits.maxSteer), 1e-9, 'at full lock, forward speed is wheelSpeed * cos(delta)')
+  assert.ok(Math.abs(locked.forwardSpeed) < Math.abs(straight.forwardSpeed) * .3, 'forward speed must collapse at full lock')
+
+  // A crawl must stay a crawl no matter how hard the wheel is turned.
+  const crawl = integrateSteering({ x: 0, z: 0, heading: 0 }, .25, limits.maxSteer, limits, 1 / 60)
+  assert.ok(Math.abs(crawl.yawRate) * 180 / Math.PI < 15, `creeping at full lock yaws ${(Math.abs(crawl.yawRate) * 180 / Math.PI).toFixed(1)} deg/s`)
 }
 
 // Pallet trucks steer at the power unit, not the load end, so their fixed axle

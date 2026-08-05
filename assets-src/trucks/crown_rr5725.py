@@ -266,6 +266,14 @@ def mast_and_reach(root):
     P.mast_assembly(mast, height=3.4, stages=2, outer_width=0.98, cylinder_center=True)
     carriage = R.empty('rig_carriage', (0, -0.08, 0.05), mast)
     reach_grp = R.empty('rig_reachGroup', (0, 0, 0), carriage)
+    # Fork camera looking along the blades toward the tips. It sits AHEAD of
+    # the carriage bars and ABOVE the blades: mounted level with them the red
+    # forks filled the whole feed, and behind them the low carriage bar filled
+    # of the feed with red steel. Rides the reach
+    # group so it tracks the carriage through lift and reach, which is what makes
+    # the guard monitor useful when placing into a top slot.
+    R.empty('rig_forkCam', (0, 0.50, 0.68), reach_grp)
+
     # pantograph scissor
     for sx in (-1, 1):
         arm1 = P.box(f'panto_a_{sx}', (0.045, 0.5, 0.06), (sx * 0.36, 0.1, 0.42),
@@ -285,6 +293,11 @@ def mast_and_reach(root):
 def guard_and_drive(root):
     P.overhead_guard(root, width=1.0, depth=1.0, height=2.41, y_center=-0.5,
                      rake=0.06, slat_count=5)
+    # Fork camera monitor on the guard header, matching the Raymond. Operator eye
+    # is at y=-0.86, z=1.82, so this sits about 27 degrees up in the sightline.
+    monitor = R.empty('forkcam_mount', (0, -0.10, 2.20), root)
+    monitor.rotation_euler = (0.46, 0, 0)
+    P.cage_display(monitor)
     drive = P.wheel_poly('rig_driveWheel', 0.1715, 0.14, M.rubber_tire(), root,
                          loc=(0.16, -0.6, 0.1715))
     P.wheel_poly('caster', 0.0635, 0.08, parent=root, loc=(-0.34, -0.62, 0.0635), hub=False)
