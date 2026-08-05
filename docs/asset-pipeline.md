@@ -136,6 +136,55 @@ the asset is missing or fails to parse, it logs a warning and falls back to the
 original procedural rig in `src/sim/proceduralFactory.js`, so a bad or absent
 asset degrades the visuals without breaking the assessment.
 
+## Facility shell
+
+The building envelope is a third-party warehouse interior converted by
+`assets-src/facility.py`:
+
+```bash
+"$BLENDER" -b -P assets-src/facility.py
+```
+
+Source art lives in `Warehouse Model/` and is **gitignored** — 606 MB of FBX,
+OBJ and 2K/4K textures. Only the processed `public/models/facility.glb` is
+committed.
+
+| | source | shipped |
+| --- | --- | --- |
+| Triangles | 4,100,052 | 291,980 (7%) |
+| Draw calls | 299 | 22 |
+| Textures | 84 PNG @ 2K/4K, 94 MB | 32 @ 1K, 25 MB total GLB |
+| Footprint | — | 41.2 x 53.2 m, 14.6 m clear |
+
+The source contains **no racking, shelving or pallets** — it is purely a
+building envelope. That is what makes it safe to adopt: racking, rack slots,
+loads and every collider stay procedural in `src/sim/warehouse.js`, so nothing
+the assessment scores depends on the imported art. `FACILITY` in that file is
+the single source of truth for the interior bounds, and `WORLD` in the simulator
+is derived from it so the two cannot drift apart.
+
+The decimation ratios look brutal because 86% of the source is decorative:
+hanging lamps and their covers alone were 42% (~46,000 triangles per fixture,
+14 m overhead) and the wall cladding spent another 30% modelling corrugations
+that a normal map represents for free. The structure an operator actually
+judges is tiny — the walls are 1,090 quads, the columns 6,666 — so the
+decorative families are crushed and the structural ones are left at full
+density.
+
+Materials are converted rather than translated: the source is
+specular-glossiness and three.js is metallic-roughness, so the gloss/spec maps
+are dropped, base colour and normal are kept, and roughness becomes a constant
+that the surfacing pass modulates — the same treatment the fleet gets.
+
+If the GLB is missing or fails to load, `createWarehouse` keeps the procedural
+shell it would otherwise remove, so the exercise still runs.
+
+**Cost.** The shell adds ~292k triangles. Desktop frame time stays vsync-locked
+at 16.7 ms median, but p95 moved from 17.7 to 22.6 ms, so there is now real
+frame-time pressure and a Quest build will need more: the remaining levers are
+the lamps (51k), trusses (50k) and roof deck (62k), plus meshopt/Draco for load
+time and KTX2 for texture memory.
+
 ## Surface detail
 
 The exported GLBs carry **no image textures at all** — `materials.py` notes that

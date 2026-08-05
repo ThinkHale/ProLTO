@@ -121,6 +121,10 @@ export function colliderAtPose(pose, localCollider = DEFAULT_TRUCK_COLLIDER) {
     heading: normalizeAngle((pose.heading || 0) + (localCollider.heading || 0)),
     minY: localCollider.minY ?? 0,
     maxY: localCollider.maxY ?? 2.35,
+    // Carried forward so the narrow phase can tell a load-end collider from a
+    // body envelope; without it the carriage face is treated as chassis and
+    // cannot enter a rack bay.
+    loadEnd: localCollider.loadEnd === true,
   }
 }
 
@@ -289,7 +293,11 @@ function collisionQuery(pose, colliders, obstacles) {
   const contacts = []
   const worldColliders = colliders.map((collider) => colliderAtPose(pose, collider))
   for (const collider of worldColliders) {
-    const carried = collider.id.startsWith('carried:')
+    // Load-end colliders are the carried pallet and the carriage face. Both
+    // travel into a rack bay by design, so both may pass an obstacle that opts
+    // out of blocking them (a beam), while still being stopped by everything
+    // else (uprights, stored loads, walls).
+    const carried = collider.id.startsWith('carried:') || collider.loadEnd === true
     const colliderRadius = Math.hypot(collider.halfWidth, collider.halfLength)
     for (const obstacle of obstacles) {
       if (obstacle.disabled) continue

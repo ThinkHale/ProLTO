@@ -1,5 +1,6 @@
 import * as THREE from 'three'
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js'
+import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js'
 import { surfaceMaterial } from './surfacing.js'
 
 // Facility built to real warehouse dimensions: 12 ft aisle, 42 in deep selective
@@ -349,20 +350,33 @@ function buildRackRun(scene, x, zStart, bays, facing) {
   return { loads, slots, colliders }
 }
 
+// Interior play area. The imported facility shell measures 41.2 x 53.2 m with a
+// 14.6 m clear height, so the walls sit well outside the racking rather than
+// hard against it the way the old 22 x 40 m procedural box did.
+export const FACILITY = Object.freeze({
+  minX: -18.4, maxX: 18.4, minZ: -20.6, maxZ: 26.4, clearHeight: 14.06,
+})
+
 function buildStructure(scene) {
+  // Visuals go into a removable group: when public/models/facility.glb loads it
+  // replaces this box, and if it fails to load this stays as the fallback.
+  const shell = new THREE.Group()
+  shell.name = 'procedural_shell'
+  scene.add(shell)
   const clearHeight = 28 * FT
+  const wall = .3
   const colliders = [
-    { id: 'west-wall', label: 'west wall', kind: 'wall', minX: -11.35, maxX: -11.05, minZ: -21.35, maxZ: 19.35 },
-    { id: 'east-wall', label: 'east wall', kind: 'wall', minX: 11.05, maxX: 11.35, minZ: -21.35, maxZ: 19.35 },
-    { id: 'north-wall', label: 'north wall', kind: 'wall', minX: -11.35, maxX: 11.35, minZ: -21.35, maxZ: -21.05 },
-    { id: 'south-wall', label: 'south wall', kind: 'wall', minX: -11.35, maxX: 11.35, minZ: 19.05, maxZ: 19.35 },
+    { id: 'west-wall', label: 'west wall', kind: 'wall', minX: FACILITY.minX - wall, maxX: FACILITY.minX, minZ: FACILITY.minZ - wall, maxZ: FACILITY.maxZ + wall },
+    { id: 'east-wall', label: 'east wall', kind: 'wall', minX: FACILITY.maxX, maxX: FACILITY.maxX + wall, minZ: FACILITY.minZ - wall, maxZ: FACILITY.maxZ + wall },
+    { id: 'north-wall', label: 'north wall', kind: 'wall', minX: FACILITY.minX - wall, maxX: FACILITY.maxX + wall, minZ: FACILITY.minZ - wall, maxZ: FACILITY.minZ },
+    { id: 'south-wall', label: 'south wall', kind: 'wall', minX: FACILITY.minX - wall, maxX: FACILITY.maxX + wall, minZ: FACILITY.maxZ, maxZ: FACILITY.maxZ + wall },
   ]
   const wallMaterial = material(0x9aa1a3, { roughness: .93, metalness: .02 }, 'concrete')
   const wallParts = []
   ;[-11.2, 11.2].forEach((x) => wallParts.push(boxGeometry([.3, clearHeight, 44], [x, clearHeight / 2, -1])))
   wallParts.push(boxGeometry([22.7, clearHeight, .3], [0, clearHeight / 2, -21.2]))
   wallParts.push(boxGeometry([22.7, clearHeight, .3], [0, clearHeight / 2, 19.2]))
-  merged(wallParts, wallMaterial, scene, false)
+  merged(wallParts, wallMaterial, shell, false)
 
   const deckMaterial = material(0x6e7679, { roughness: .88, metalness: .3 }, 'structuralSteel')
   const roofParts = [boxGeometry([22.7, .22, 44], [0, clearHeight, -1])]
@@ -375,7 +389,7 @@ function buildStructure(scene) {
     }
   }
   ;[-7.5, 0, 7.5].forEach((x) => roofParts.push(boxGeometry([.34, .5, 42], [x, clearHeight - .95, -1])))
-  merged(roofParts, deckMaterial, scene, false)
+  merged(roofParts, deckMaterial, shell, false)
 
   const columnParts = []
   ;[-7.5, 7.5].forEach((x) => {
@@ -393,7 +407,7 @@ function buildStructure(scene) {
       })
     }
   })
-  merged(columnParts, material(0x39474d, { roughness: .6, metalness: .5 }, 'structuralSteel'), scene)
+  merged(columnParts, material(0x39474d, { roughness: .6, metalness: .5 }, 'structuralSteel'), shell)
 
   // high-bay LED fixtures on the aisle centerlines
   const fixtureMaterial = new THREE.MeshStandardMaterial({
@@ -409,8 +423,8 @@ function buildStructure(scene) {
       lensParts.push(boxGeometry([.64, .03, .28], [x, clearHeight - 1.58, z]))
     })
   }
-  merged(housingParts, housing, scene, false)
-  merged(lensParts, fixtureMaterial, scene, false)
+  merged(housingParts, housing, shell, false)
+  merged(lensParts, fixtureMaterial, shell, false)
 
   // a few real spot lights only near the working aisle; the rest is IBL + emissive
   for (let z = -12; z <= 12; z += 8) {
@@ -419,7 +433,7 @@ function buildStructure(scene) {
     light.target.position.set(0, 0, z)
     scene.add(light, light.target)
   }
-  return colliders
+  return { colliders, shell }
 }
 
 function buildFloorMarkings(scene) {
@@ -544,13 +558,48 @@ function buildFixtures(scene) {
   }
 }
 
+// Third-party facility shell (assets-src/facility.py). It supplies the building
+// envelope only -- the source contains no racking, shelving or pallets -- so the
+// racking, rack slots, loads and every collider below stay procedural and none
+// of the training-critical geometry depends on it. If it fails to load, the
+// procedural shell it replaces stays on screen.
+const facilityLoader = new GLTFLoader()
+
+function loadFacilityShell(scene, fallbackShell) {
+  // Headless verification builds the warehouse to assert collider topology and
+  // has no fetch; it keeps the procedural shell, which is the same fallback a
+  // browser gets if the asset is missing.
+  if (typeof window === 'undefined') return
+  const url = `${import.meta.env?.BASE_URL ?? '/'}models/facility.glb`
+  facilityLoader.load(url, (gltf) => {
+    gltf.scene.traverse((object) => {
+      if (!object.isMesh) return
+      // A 41 x 53 m shell casting shadows would blow the shadow-map budget for
+      // no gain; it receives them instead.
+      object.castShadow = false
+      object.receiveShadow = true
+      // Our own floor carries the aisle markings and the concrete surfacing
+      // pass, so the model's floor is dropped rather than z-fighting with it.
+      if (/^Floor_Object/i.test(object.name)) object.visible = false
+    })
+    scene.add(gltf.scene)
+    if (fallbackShell) {
+      scene.remove(fallbackShell)
+      fallbackShell.traverse((object) => { if (object.isMesh) object.geometry.dispose() })
+    }
+  }, undefined, (error) => {
+    console.warn('ProLTO: facility shell unavailable, keeping procedural structure', error)
+  })
+}
+
 export function createWarehouse(scene) {
-  const floor = new THREE.Mesh(new THREE.BoxGeometry(23, .3, 44), concreteMaterial())
-  floor.position.set(0, -.15, -1)
+  const floor = new THREE.Mesh(new THREE.BoxGeometry(41, .3, 53), concreteMaterial())
+  floor.position.set(0, -.15, 3)
   floor.receiveShadow = true
   scene.add(floor)
 
-  const structureColliders = buildStructure(scene)
+  const { colliders: structureColliders, shell } = buildStructure(scene)
+  loadFacilityShell(scene, shell)
   buildFloorMarkings(scene)
   const leftRack = buildRackRun(scene, -6.4, -16, 11, 1)
   const rightRack = buildRackRun(scene, 6.4, -16, 11, -1)

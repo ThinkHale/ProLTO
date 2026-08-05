@@ -6,14 +6,18 @@ import { XRHandModelFactory } from 'three/addons/webxr/XRHandModelFactory.js'
 import { Crosshair, Gamepad2, Headphones, Keyboard, MousePointer2, RotateCcw, Volume2 } from 'lucide-react'
 import { createWarehouseLoadPhysics, forkConfigurationForProfile } from '../sim/loadPhysics.js'
 import { controlMeshes, createVehicleRig } from '../sim/vehicleFactory.js'
-import { createWarehouse } from '../sim/warehouse.js'
+import { FACILITY, createWarehouse } from '../sim/warehouse.js'
 import { advanceSteerAngle, integrateSteering, steerLimits, tailSwingRadius } from '../sim/vehicleDynamics.js'
 import { solveStability, stabilityWarning } from '../sim/stability.js'
 import { applyFleetSurfacing } from '../sim/surfacing.js'
 
 // Broad fail-safe bounds sit just inside the authored walls. Exact contact is
 // resolved by the warehouse wall, column, rack, and fixture colliders below.
-const WORLD = { minX: -10.9, maxX: 10.9, minZ: -20.9, maxZ: 18.9 }
+// Derived from the facility footprint so the two cannot drift apart.
+const WORLD = {
+  minX: FACILITY.minX + .4, maxX: FACILITY.maxX - .4,
+  minZ: FACILITY.minZ + .4, maxZ: FACILITY.maxZ - .4,
+}
 const ZERO = { travel: 0, steer: 0, lift: 0, reach: 0, tilt: 0, sideshift: 0, brake: 0, horn: 0, presence: 0, belly: 0 }
 // Simulator state carries operator-facing units (fork height in inches, load in
 // pounds) because that is what the panels and the capacity plates read in. The
@@ -58,9 +62,39 @@ const TRUCK_COLLIDERS = {
   ],
 }
 
+// The load backrest / carriage face. Every truck previously carried ONE body
+// envelope behind the mast, so nothing at all occupied the space the mast,
+// carriage and backrest actually fill. The forks are deliberately left free to
+// enter a pallet, but with no carriage collider the whole front of the truck
+// drove straight on through the load once they were in. This plate is what a
+// fully-entered pallet stops against, and it tracks lift and reach.
+const CARRIAGE_FACE_ID = 'carriage-face'
+const BACKREST_HEIGHT = 1.15
+
+function carriageFaceCollider(rig) {
+  const metrics = rig.forkMetrics
+  if (!metrics) return null
+  return {
+    id: CARRIAGE_FACE_ID,
+    offsetX: 0,
+    offsetZ: metrics.heelZ,
+    halfWidth: Math.max(metrics.faceHalfWidth, metrics.spread * .5 + metrics.tineWidth),
+    halfLength: .07,
+    minY: 0,
+    maxY: BACKREST_HEIGHT,
+    // Load-end collider: like a carried pallet, it has to be able to nestle into
+    // a rack bay past the beams it is placing onto, while still being stopped by
+    // uprights and by stored loads.
+    loadEnd: true,
+  }
+}
+
 function truckColliders(profile, rig) {
-  if (profile.family !== 'pallet') return TRUCK_COLLIDERS[profile.family]
-  return rig.walkie ? TRUCK_COLLIDERS['pallet-walkie'] : TRUCK_COLLIDERS['pallet-rider']
+  const base = profile.family !== 'pallet'
+    ? TRUCK_COLLIDERS[profile.family]
+    : rig.walkie ? TRUCK_COLLIDERS['pallet-walkie'] : TRUCK_COLLIDERS['pallet-rider']
+  const face = carriageFaceCollider(rig)
+  return face ? [...base, face] : base
 }
 
 // Resting head pose per family. Stand-up trucks look down into a near console;
@@ -249,10 +283,12 @@ const Simulator = forwardRef(function Simulator({ profile, onTelemetry, onSafety
       forkCamTarget = new THREE.WebGLRenderTarget(320, 200, {
         minFilter: THREE.LinearFilter, magFilter: THREE.LinearFilter, depthBuffer: true,
       })
-      forkCamera = new THREE.PerspectiveCamera(68, 320 / 200, .04, 26)
-      // Angled down the blades so the fork tips and the pallet face are both in
-      // frame, which is what the operator is actually judging.
-      forkCamera.rotation.x = -.22
+      // Wide and close to level. At 68 degrees pitched 12.6 degrees down the
+      // nearby floor filled the whole frame and the feed read as a flat colour;
+      // a real fork camera is a wide-angle lens aimed down the blades, showing
+      // the tips low in frame and the slot or pallet ahead of them.
+      forkCamera = new THREE.PerspectiveCamera(78, 320 / 200, .04, 30)
+      forkCamera.rotation.x = -.08
       rig.forkCam.add(forkCamera)
       rig.forkCamDisplay.material = new THREE.MeshBasicMaterial({
         map: forkCamTarget.texture, toneMapped: false,
@@ -400,6 +436,9 @@ const Simulator = forwardRef(function Simulator({ profile, onTelemetry, onSafety
         }
       },
     })
+    // Live handle on the normalized carriage-face collider so the frame loop
+    // can move it with lift and reach.
+    const carriageFace = loadPhysics.truckColliders.find((entry) => entry.id === CARRIAGE_FACE_ID) || null
     engineRef.current.loadPhysics = loadPhysics
 
     const keyDown = (event) => {
@@ -803,6 +842,13 @@ const Simulator = forwardRef(function Simulator({ profile, onTelemetry, onSafety
       // Real steering is rate-limited hydraulics, not an instant snap to lock.
       state.steerAngle = advanceSteerAngle(state.steerAngle, steerInput, steering, dt)
       state.steer = state.steerAngle / steering.maxSteer
+      // The carriage face rides the carriage, so its envelope has to follow lift
+      // and reach or it stops guarding the moment either one moves.
+      if (carriageFace) {
+        carriageFace.offsetZ = rig.forkMetrics.heelZ - state.reach * INCH
+        carriageFace.minY = state.fork * INCH
+        carriageFace.maxY = state.fork * INCH + BACKREST_HEIGHT
+      }
       const previousPose = { x: state.x, z: state.z, heading: state.heading }
       // Steered-axle kinematics: the truck pivots about its FIXED axle, so the
       // steered end sweeps outside the turn. See src/sim/vehicleDynamics.js.

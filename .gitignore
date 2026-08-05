@@ -5,3 +5,8 @@ dist/
 tmp/
 __pycache__/
 *.pyc
+
+# Third-party source art (606 MB). Processed into public/models/facility.glb
+# by assets-src/facility.py; only the processed asset is committed.
+Warehouse Model/
+.DS_Store

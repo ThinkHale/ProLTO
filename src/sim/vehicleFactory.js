@@ -121,6 +121,13 @@ function measureForks(gltfScene) {
     length: box.max.z - box.min.z,
     spread: Math.abs(centers[centers.length - 1] - centers[0]),
     tineWidth: perBlade[0].max.x - perBlade[0].min.x,
+    // Forward is -Z, so the heel (shank end, against the carriage) is the MAX z
+    // and the tips are the min. The heel is where the load backrest sits, and
+    // that plane is what has to stop the truck once a pallet is fully entered.
+    heelZ: box.max.z,
+    tipZ: box.min.z,
+    // Carriage face spans the outer edges of the tines plus the backrest.
+    faceHalfWidth: Math.max(box.max.x, -box.min.x),
   }
 }
 

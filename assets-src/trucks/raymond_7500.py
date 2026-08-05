@@ -161,26 +161,35 @@ def power_unit(root):
 def compartment(root):
     char = CHAR()
     # rear cowl: boxier charcoal loft
+    # UNIVERSAL STANCE ENTRY IS AT THE REAR, NOT THE RIGHT.
+    # This compartment previously copied the Crown RR's side-stance arrangement:
+    # left wall closed, right wall cut short for a side entry, and a full-height
+    # wall across the back. That is the wrong truck. Universal Stance supports
+    # the operator on BOTH sides so they can work facing forward, sideways or
+    # angled, and the operator steps in over a low sill at the rear. So the rear
+    # cowl drops to a step-through height and the right tower is closed to match
+    # the left.
     cowl = []
-    for y, w, h, z0 in ((-1.17, 0.96, 0.90, 0.10), (-1.06, 1.09, 1.00, 0.09),
-                        (-0.94, 1.12, 1.04, 0.08)):
+    for y, w, h, z0 in ((-1.17, 0.96, 0.42, 0.10), (-1.06, 1.09, 0.48, 0.09),
+                        (-0.94, 1.12, 0.50, 0.08)):
         cowl.append((y, rounded_rect(w, h, 0.08, 0.10, z0=z0)))
     P.loft_shell('cowl_rear', cowl, char, root, subsurf=1)
     P.rounded_box('bumper_rear', (1.14, 0.40, 0.16), (0, -1.02, 0.11), DARK(), root,
                   radius=0.03)
-    # side towers: left closed, right shorter for the entry
+    # side towers: both closed and supporting, mirroring each other
     P.rounded_box('tower_left', (0.10, 0.85, 1.13), (-0.51, -0.75, 0.80), char, root,
                   radius=0.04)
-    P.rounded_box('tower_right', (0.10, 0.44, 1.13), (0.51, -0.98, 0.80), char, root,
+    P.rounded_box('tower_right', (0.10, 0.85, 1.13), (0.51, -0.75, 0.80), char, root,
                   radius=0.04)
-    P.rounded_box('pad_right', (0.035, 0.34, 0.72), (0.455, -0.98, 0.85),
+    P.rounded_box('pad_left', (0.035, 0.66, 0.72), (-0.455, -0.75, 0.85),
                   M.grip_rubber(), root, radius=0.015)
-    P.rounded_box('pad_back', (0.46, 0.05, 0.42), (0, -0.93, 0.88),
-                  M.grip_rubber(), root, radius=0.02)
+    P.rounded_box('pad_right', (0.035, 0.66, 0.72), (0.455, -0.75, 0.85),
+                  M.grip_rubber(), root, radius=0.015)
     # open flat floor (universal stance)
     P.tread_plate('floor', (0.94, 0.66), M.floor_mat(), root, (0, -0.68, 0.235),
                   rib_axis='X', rib_gap=0.11)
-    P.rounded_box('entry_sill', (0.12, 0.38, 0.05), (0.50, -0.56, 0.26), DARK(), root,
+    # Step-over sill now spans the rear opening rather than the right flank.
+    P.rounded_box('entry_sill', (0.62, 0.12, 0.05), (0, -1.00, 0.26), DARK(), root,
                   radius=0.012)
     # D-shaped grab handles both sides + vertical entry bar
     P.grab_bar('grab_left', [(-0.44, -0.62, 1.02), (-0.40, -0.68, 1.12),
@@ -189,10 +198,11 @@ def compartment(root):
     P.grab_bar('grab_right', [(0.44, -0.82, 1.00), (0.40, -0.88, 1.10),
                               (0.40, -1.02, 1.10), (0.44, -1.08, 1.00)], 0.016,
                DARK(), root)
-    P.grab_bar('grab_entry', [(0.52, -0.80, 0.95), (0.52, -0.80, 1.9)], 0.018,
+    # Entry grab bar moves to the rear opening the operator now steps through.
+    P.grab_bar('grab_entry', [(0.50, -1.02, 0.62), (0.50, -1.02, 1.9)], 0.018,
                DARK(), root)
     P.text_mesh('logo_rear', 'RAYMOND', 0.062, 0.002, M.decal_white(), root,
-                loc=(0, -1.172, 0.74), facing='-Y')
+                loc=(0, -1.172, 0.34), facing='-Y')
     P.label('label_warn', (0.12, 0.16), M.warning_amber(), root,
             (-0.455, -0.75, 0.85), rot=(0, 0, -math.pi / 2))
 

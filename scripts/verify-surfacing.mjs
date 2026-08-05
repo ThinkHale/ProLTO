@@ -22,7 +22,11 @@ const {
 } = await import('../src/sim/surfacing.js')
 
 // --- every shipped material is accounted for ---------------------------------
-const models = readdirSync('public/models').filter((name) => name.endsWith('.glb'))
+// Fleet only. facility.glb is the third-party building shell: it ships its own
+// textures and is deliberately outside the name-bound surfacing contract.
+const NON_FLEET = new Set(['facility.glb'])
+const models = readdirSync('public/models')
+  .filter((name) => name.endsWith('.glb') && !NON_FLEET.has(name))
 assert.ok(models.length === 8, `expected the full fleet, found ${models.length} models`)
 
 const unmapped = new Map()
