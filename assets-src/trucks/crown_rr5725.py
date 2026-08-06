@@ -225,7 +225,7 @@ def console(root):
     # Page 22: the brake is reverse-acting. Held down = brake off. Foot lifted
     # = brake applied. Modeled with a longer travel than a normal pedal so the
     # released position is visibly proud of the floorboard.
-    brake = P.pedal('pedal_brake', (0.15, 0.14), parent=root, loc=(-0.22, -0.47, 0.285), angle=-0.12)
+    brake = P.pedal('pedal_brake', (0.15, 0.14), parent=root, loc=(-0.22, -0.47, 0.266), angle=-0.12)  # seated on the tread plate, not 19 mm above it
     R.tag_control(brake, 'brake', 'Left foot brake (hold down to release)',
                   'pedal', True, inverted=True)
     presence = P.pedal('pedal_presence', (0.26, 0.22), parent=root, loc=(0.18, -0.58, 0.275), angle=0)
@@ -291,7 +291,8 @@ def mast_and_reach(root):
     # fork carriage plate + backrest + forks
     P.box('carriage_plate', (0.98, 0.05, 0.42), (0, 0.32, 0.4), BLACK(), reach_grp, bevel=0.006)
     P.load_backrest('backrest', 0.92, 1.15, parent=reach_grp, loc=(0, 0.36, 0.55))
-    P.fork_pair(reach_grp, spread=0.55, length=1.07, z=0.05)
+    # Standard fork on the RR 5725-45 is 36 in; 30/39/42/45/48 are options.
+    P.fork_pair(reach_grp, spread=0.55, length=0.914, z=0.05)
     return mast, carriage, reach_grp
 
 

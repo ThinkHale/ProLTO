@@ -119,6 +119,9 @@ def bodywork(root):
     chev.rotation_euler = (-0.22, 0, 0)
 
 
+CONSOLE_LIFT = 0.31  # seat cushion tops at 1.110; a seated wheel sits ~0.30 above it
+
+
 def operator_station(root):
     """SC 6200 standard manual-lever cockpit, operator-manual page 10.
 
@@ -146,53 +149,56 @@ def operator_station(root):
     # Low, shallow molded cowl from the official operator-eye plate. Its top
     # stays below the wheel hub so the forks remain visible over it.
     cowl_sections = []
-    for y, w, z0, z1, rt in ((0.09, 0.98, 0.50, 0.78, 0.06),
-                             (0.22, 1.02, 0.50, 0.84, 0.07),
-                             (0.38, 0.96, 0.50, 0.80, 0.09),
-                             (0.53, 0.84, 0.50, 0.69, 0.09)):
+    for y, w, z0, z1, rt in ((0.09, 0.98, 0.50, 1.09, 0.06),
+                             (0.22, 1.02, 0.50, 1.15, 0.07),
+                             (0.38, 0.96, 0.50, 1.11, 0.09),
+                             (0.53, 0.84, 0.50, 1.00, 0.09)):
         cowl_sections.append((y, rounded_rect(w, z1 - z0, 0.035, rt, z0=z0)))
     P.loft_shell('cowl_low', cowl_sections, molded, root, subsurf=1)
-    P.rounded_box('cowl_top_shelf', (0.92, 0.23, 0.055), (0, 0.15, 0.805),
+    P.rounded_box('cowl_top_shelf', (0.92, 0.23, 0.055), (0, 0.15, 1.115),
                   molded, root, radius=0.025, segments=5, rot=(-0.035, 0, 0))
 
     # Compact sculpted column housing. The top leans toward the seat and the
     # tapered sides match the narrow Crown column visible through the wheel.
-    column_profile = [(-0.01, 0.64), (0.24, 0.64), (0.25, 0.79),
-                      (0.13, 1.04), (-0.035, 1.10), (-0.10, 0.98),
-                      (-0.065, 0.76)]
+    column_profile = [(-0.01, 0.64), (0.24, 0.64), (0.25, 1.10),
+                      (0.13, 1.35), (-0.035, 1.41), (-0.10, 1.29),
+                      (-0.065, 1.07)]
     P.extrude_profile('column_housing', column_profile, 0.22, molded, root,
                       plane='YZ', bevel=0.025, loc=(-0.23, 0, 0))
-    P.rounded_box('column_upper_cap', (0.24, 0.13, 0.105), (-0.12, -0.025, 1.04),
+    P.rounded_box('column_upper_cap', (0.24, 0.13, 0.105), (-0.12, -0.025, 1.35),
                   M.plastic_dark(), root, radius=0.035, segments=6,
                   rot=(COLUMN_RAKE, 0, 0))
 
     # Crown Access display is right of the wheel in the exact standard layout.
-    P.rounded_box('display_sc_recess', (0.25, 0.055, 0.145), (0.19, 0.075, 0.84),
+    # Face tilts UP: the seated eye is 0.735 m above this, so a +X rotation
+    # aimed the screen at the floor. Crown's cockpit plate shows the display
+    # pod angled back and up toward the operator.
+    P.rounded_box('display_sc_recess', (0.25, 0.055, 0.145), (0.19, 0.075, 1.15),
                   M.plastic_dark(), root, radius=0.025, segments=6,
-                  rot=(0.44, 0, 0))
+                  rot=(-0.44, 0, 0))
     _, screen = P.display('display_sc', 0.205, 0.105, parent=root,
-                          loc=(0.19, 0.042, 0.855), rot=(0.44, 0, 0),
+                          loc=(0.19, 0.042, 1.165), rot=(-0.44, 0, 0),
                           screen_name='screen_sc')
     P.text_mesh('display_crown_wordmark', 'CROWN', 0.014, 0.001,
-                M.decal_white(), root, loc=(0.15, 0.004, 0.906),
+                M.decal_white(), root, loc=(0.15, 0.004, 1.216),
                 facing='-Y')
     for i, x in enumerate((0.275, 0.305, 0.335)):
-        P.cyl(f'display_key_{i}', 0.009, 0.006, (x, 0.006, 0.858),
-              M.plastic_dark(), root, rot=(math.pi / 2 + 0.44, 0, 0),
+        P.cyl(f'display_key_{i}', 0.009, 0.006, (x, 0.006, 1.168),
+              M.plastic_dark(), root, rot=(math.pi / 2 - 0.44, 0, 0),
               verts=20, bevel=0.002)
 
     # Fan, rear work light, and front work light rocker row on the left cowl.
     for i, (name, x) in enumerate((('fan', -0.39), ('rear_work', -0.33),
                                     ('front_work', -0.27))):
         P.rounded_box(f'switch_{name}', (0.044, 0.018, 0.063),
-                      (x, 0.040, 0.817), M.plastic_dark(), root, radius=0.008,
-                      segments=4, rot=(0.44, 0, 0))
+                      (x, 0.040, 1.127), M.plastic_dark(), root, radius=0.008,
+                      segments=4, rot=(-0.44, 0, 0))
         P.box(f'switch_{name}_mark', (0.018, 0.004, 0.006),
-              (x, 0.027, 0.833), M.decal_white(), root, bevel=0.001,
-              rot=(0.44, 0, 0))
+              (x, 0.027, 1.143), M.decal_white(), root, bevel=0.001,
+              rot=(-0.44, 0, 0))
 
     # 10 inch diameter wheel with spinner, exactly the standard SC 6200 item.
-    pivot = R.empty('rig_wheelPivot', (-0.12, -0.075, 1.075), root)
+    pivot = R.empty('rig_wheelPivot', (-0.12, -0.075, 1.385), root)
     pivot.rotation_euler = (COLUMN_RAKE, 0, 0)
     wheel = P.steering_wheel('steering_wheel_10in', 0.127, parent=pivot,
                              loc=(0, 0, 0.02))
@@ -215,23 +221,28 @@ def operator_station(root):
     # pivot they orbited with the wheel -- barely visible at the old 86 degree
     # sweep, unmissable now that the wheel turns its true 630 degrees lock to
     # lock. Same location and rake, so the local coordinates below are unchanged.
-    column = R.empty('steer_column', (-0.12, -0.075, 1.075), root)
+    column = R.empty('steer_column', (-0.12, -0.075, 1.385), root)
     column.rotation_euler = (COLUMN_RAKE, 0, 0)
+    # The stalk and its paddle hang off rig_travelPivot so the shifter actually
+    # throws when the operator selects forward or reverse. Without it the stalk
+    # was tagged as a travel control but had nothing animating it, so selecting
+    # a direction produced no movement at all.
+    shifter = R.empty('rig_travelPivot', (0, 0, 0), column)
     P.tube('direction_stalk', [(-0.015, 0.0, 0.0), (0.165, 0.0, 0.0)],
-           0.010, M.steel_dark(), column)
+           0.010, M.steel_dark(), shifter)
     direction = P.rounded_box('direction_control', (0.040, 0.024, 0.046),
-                              (0.185, 0, 0), M.plastic_dark(), column,
+                              (0.185, 0, 0), M.plastic_dark(), shifter,
                               radius=0.011, segments=6)
     R.tag_control(direction, 'travel', 'Forward and reverse direction control',
                   'horizontal', False, motion='horizontal')
     P.rounded_box('steer_tilt_release', (0.032, 0.050, 0.085),
-                  (-0.215, 0.018, 0.84), M.plastic_dark(), root, radius=0.01,
+                  (-0.215, 0.018, 1.15), M.plastic_dark(), root, radius=0.01,
                   segments=4, rot=(0.18, 0, 0))
 
     # Key switch sits below the display at the inner edge of the right cowl.
-    P.cyl('key_switch_bezel', 0.018, 0.012, (0.055, 0.012, 0.786),
+    P.cyl('key_switch_bezel', 0.018, 0.012, (0.055, 0.012, 1.096),
           M.steel_dark(), root, rot=(math.pi / 2 + 0.40, 0, 0), verts=28)
-    key = P.box('key_blade', (0.009, 0.006, 0.038), (0.055, -0.004, 0.805),
+    key = P.box('key_blade', (0.009, 0.006, 0.038), (0.055, -0.004, 1.115),
                 M.steel_dark(), root, bevel=0.002, rot=(0.40, 0, -0.18))
 
     # Automotive-type service brake and accelerator, with distinct widths and
@@ -249,15 +260,15 @@ def operator_station(root):
     # separate accordion boots and their offset handles carry tactile icons.
     # Keep the hydraulic pod outside the display recess. The former 310 mm pod
     # crossed 85 mm into the display volume and was visibly clipping the bezel.
-    P.rounded_box('manual_lever_pod', (0.22, 0.22, 0.075), (0.405, 0.13, 0.80),
+    P.rounded_box('manual_lever_pod', (0.22, 0.22, 0.075), (0.335, 0.13, 1.11),
                   molded, root, radius=0.025, segments=5)
     lever_specs = (('lift', 'Lift and lower manual lever'),
                    ('tilt', 'Mast tilt manual lever'),
                    ('sideshift', 'Sideshift manual lever'),
                    ('reach', 'Auxiliary hydraulic manual lever'))
     for i, (action, label) in enumerate(lever_specs):
-        x = 0.315 + i * 0.055
-        piv = R.empty(f'rig_lever_{i}', (x, 0.10, 0.815), root)
+        x = 0.255 + i * 0.050
+        piv = R.empty(f'rig_lever_{i}', (x, 0.10, 1.125), root)
         P.lathe(f'lever_boot_{i}',
                 [(0.0, 0), (0.030, 0), (0.034, 0.012), (0.027, 0.024),
                  (0.030, 0.036), (0.021, 0.048), (0.023, 0.058),
@@ -310,7 +321,9 @@ def mast_and_forks(root):
     carriage = R.empty('rig_carriage', (0, 0.14, 0.12), mast)
     P.box('carriage_plate', (0.90, 0.045, 0.40), (0, 0.16, 0.32), BLACK(), carriage, bevel=0.006)
     P.load_backrest('backrest', 0.88, 1.0, parent=carriage, loc=(0, 0.20, 0.44))
-    P.fork_pair(carriage, spread=0.62, length=1.07, z=0.02)
+    # 36 x 4 x 1.75 in forks per the published specification, not the 42 in
+    # section carried by the reach trucks.
+    P.fork_pair(carriage, spread=0.62, length=0.914, z=0.02)
     # tilt cylinders from the body to the mast (chrome rods forward)
     for sx in (-1, 1):
         body = P.cyl(f'tiltcyl_{sx}', 0.032, 0.24, (sx * 0.38, 0.28, 0.72),

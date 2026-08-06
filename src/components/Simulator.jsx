@@ -708,23 +708,31 @@ const Simulator = forwardRef(function Simulator({ profile, onTelemetry, onSafety
       }
       return closest
     }
+    // Hands, controllers and grips MUST live in the same space as the camera.
+    // three.js writes raw XR reference-space poses into these objects' local
+    // transforms, so parenting them to the scene while the camera hangs off
+    // xrOrigin -- which rides the truck at (0, 0, 11.5) and moves with it --
+    // resolved the hands at the play-space origin while the head was at the
+    // truck. In the headset that reads as the controllers floating far out in
+    // front, out of reach of every control.
+    const xrSpace = xrOrigin
     const controllerModelFactory = new XRControllerModelFactory()
     const handModelFactory = new XRHandModelFactory()
     const hands = [0, 1].map((index) => {
       const hand = renderer.xr.getHand(index)
       hand.add(handModelFactory.createHandModel(hand, 'mesh'))
-      scene.add(hand)
+      xrSpace.add(hand)
       return hand
     })
     const controllers = [0, 1].map((index) => {
       const controller = renderer.xr.getController(index)
       const grip = renderer.xr.getControllerGrip(index)
       grip.add(controllerModelFactory.createControllerModel(grip))
-      scene.add(grip)
+      xrSpace.add(grip)
       const line = new THREE.Line(new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(), new THREE.Vector3(0, 0, -2.5)]), new THREE.LineBasicMaterial({ color: 0xffad21 }))
       line.visible = false
       controller.add(line)
-      scene.add(controller)
+      xrSpace.add(controller)
       const interactionPose = (source) => {
         const hand = hands[index]
         const fingertip = hand.joints?.['index-finger-tip']

@@ -10,12 +10,24 @@
 //   +X is the operator's right.        +Y is up from the floor.
 // Every distance is meters, every mass kilograms, every angle degrees.
 //
-// PROVENANCE: these are reconstructed working values derived from published
-// capacity charts, footprint drawings, and turning-radius figures, then checked
-// for internal consistency (wheelbase against turning radius, service weight
-// against rated capacity and load center). They are NOT data-plate values. The
-// boundary in docs/realism-fidelity-audit.md applies here too: validate against
-// the exact truck's data plate and capacity chart before any hiring decision.
+// PROVENANCE: mixed, and the difference matters.
+//
+// PUBLISHED figures, taken from manufacturer specification sheets and marked at
+// the value they annotate:
+//   Crown SC 6200   wheelbase 60.9 in, fork 36 in, capacity 4000 lb @ 24 in
+//   Crown RR 5725   service weight 2.74 t, wheelbase 59.6-64.0 in, fork 36 in
+//   Crown SP 1500   wheelbase 51-52 in, service 6845 lb + 1520 lb battery
+//   Crown PE 4500   capacity 8000 lb, wheelbase consistent with 48 in forks
+//
+// RECONSTRUCTED estimates for everything else -- CG heights and positions, all
+// Raymond masses, steer rates -- derived from footprint drawings and turning
+// radii, then checked for internal consistency. Three of the four corrections
+// above replaced estimates that were wrong by 13% to 54%, so treat any value
+// not listed as published as provisional.
+//
+// The boundary in docs/realism-fidelity-audit.md applies either way: validate
+// against the exact truck's data plate and capacity chart before any hiring
+// decision. Published brochure figures are not a data plate.
 
 const IN = .0254
 
@@ -30,7 +42,10 @@ export const CHASSIS = {
     // the steered drive wheel sits under the power unit behind the operator.
     fixedAxleZ: -.62, steerAxleZ: .93, trackWidth: .84,
     maxSteerDeg: 88, steerRateDegPerSec: 165,
-    serviceWeight: 4210, cgFromFixedAxleZ: .58, cgHeight: .74,
+    // Service weight 2.74 t published (was a 4210 kg estimate, 54% heavy,
+    // which inflated every stability margin). Wheelbase 59.6-64.0 in confirms
+    // the 1.55 m already modelled.
+    serviceWeight: 2740, cgFromFixedAxleZ: .58, cgHeight: .74,
     // Support polygon is the straddle: two outrigger load wheels forward, the
     // drive wheel and stabilizing caster aft. Wider and far more longitudinally
     // stable than a counterbalance truck -- until the pantograph reaches out.
@@ -57,9 +72,12 @@ export const CHASSIS = {
   'Crown:order-picker': {
     // SP 1500: the operator platform and the load both rise, so the combined CG
     // climbs with lift height far more than on any other family here.
-    fixedAxleZ: -.78, steerAxleZ: 1.1, trackWidth: .74,
+    // Wheelbase 51-52 in = 1.308 m published; the 1.88 m estimate was 0.57 m
+    // long, which made the platform far more longitudinally stable than it is.
+    fixedAxleZ: -.78, steerAxleZ: .528, trackWidth: .74,
     maxSteerDeg: 86, steerRateDegPerSec: 150,
-    serviceWeight: 2760, cgFromFixedAxleZ: .74, cgHeight: .68,
+    // 6845 lb service + 1520 lb battery = 3794 kg published.
+    serviceWeight: 3794, cgFromFixedAxleZ: .74, cgHeight: .68,
     support: 'straddle',
     outriggerHalfWidth: .43, outriggerTipZ: -.78,
     driveHalfWidth: .25,
@@ -114,14 +132,21 @@ export const CHASSIS = {
   'Crown:counterbalance': {
     // SC 6200: four-wheel sit-down. Fixed drive axle forward under the mast,
     // steered rear axle under the counterweight -- the classic tail swing.
-    fixedAxleZ: -.16, steerAxleZ: 1.19, trackWidth: .93,
+    // Wheelbase 60.9 in = 1.547 m and overall width 44.5 in = 1.130 m, from
+    // the published SCF 6261-40 specification. The previous 1.35 m wheelbase
+    // was a reconstructed estimate and was 0.197 m short, which made the truck
+    // turn tighter than the real machine can.
+    fixedAxleZ: -.16, steerAxleZ: 1.387, trackWidth: .93,
     maxSteerDeg: 78, steerRateDegPerSec: 120,
     serviceWeight: 3420, cgFromFixedAxleZ: .69, cgHeight: .58,
     // Four-wheel counterbalance trucks are still a TRIANGLE: the rear axle
     // pivots on a center trunnion, so the third support point is the pivot,
     // not the rear tires. This is the whole reason a forklift tips sideways.
     support: 'triangle',
-    fixedHalfWidth: .465, pivotZ: 1.19,
+    // The trunnion is ON the steered axle, so it moves with the corrected
+    // wheelbase; leaving it at 1.19 would have put the stability triangle's
+    // apex 0.2 m ahead of the axle it actually sits on.
+    fixedHalfWidth: .465, pivotZ: 1.387,
     ratedLoadCenter: 24 * IN, ratedCapacity: 1814, ratedHeight: 187 * IN,
     heightDerate: .22, reachDerate: 0, maxReachExtension: 0,
     forkZ: -.52, forkPivotZ: -.16,

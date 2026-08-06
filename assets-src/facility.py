@@ -36,16 +36,21 @@ MAX_TEXTURE = 1024
 
 # name prefix -> decimate ratio. First match wins, so order matters.
 RATIOS = [
-    ('hanging_lamp', 0.03),
-    ('lamp_cover', 0.03),
-    ('hanging_light_glass', 0.03),
-    ('corrugated_sheet', 0.05),
-    ('circular_duct', 0.07),
-    ('rectangular_duct', 0.07),
-    ('roof_duct', 0.07),
-    ('ac_roof', 0.07),
-    ('ac_', 0.07),
-    ('truss', 0.25),
+    # Second pass, tightened after measuring frame time: the shell cost p95
+    # 22.6 ms on desktop, which leaves nothing for a 72-90 Hz headset. These are
+    # all ceiling furniture 10-14 m overhead where silhouette is all that reads.
+    ('hanging_lamp', 0.012),
+    ('lamp_cover', 0.012),
+    ('hanging_light_glass', 0.012),
+    ('corrugated_sheet', 0.02),
+    ('circular_duct', 0.035),
+    ('rectangular_duct', 0.035),
+    ('roof_duct', 0.035),
+    ('ac_roof', 0.035),
+    ('ac_', 0.035),
+    ('truss', 0.12),
+    ('exterior_cladding', 0.30),
+    ('single_door_metal', 0.25),
     ('wire', 0.12),
     ('pipe', 0.12),
     ('stair', 0.15),

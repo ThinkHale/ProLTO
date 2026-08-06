@@ -202,15 +202,15 @@ def cowl_and_controls(root):
     rr = rounded_rect
     # Low cowl bridges the full entry width, then narrows around the column.
     # It stays below the display and lever boots just as it does in the photo.
-    cowl_sections = [(0.05, rr(0.86, 0.30, 0.03, 0.07, z0=0.40)),
-                     (0.20, rr(0.92, 0.38, 0.03, 0.08, z0=0.40)),
-                     (0.38, rr(0.90, 0.35, 0.03, 0.08, z0=0.40)),
-                     (0.53, rr(0.82, 0.24, 0.03, 0.06, z0=0.40))]
+    cowl_sections = [(0.05, rr(0.86, 0.50, 0.03, 0.07, z0=0.40)),
+                     (0.20, rr(0.92, 0.58, 0.03, 0.08, z0=0.40)),
+                     (0.38, rr(0.90, 0.55, 0.03, 0.08, z0=0.40)),
+                     (0.53, rr(0.82, 0.44, 0.03, 0.06, z0=0.40))]
     P.loft_shell('cowl_low', cowl_sections, molded, root, subsurf=1)
     P.box('cowl_kick', (0.84, 0.06, 0.34), (0, 0.52, 0.23),
           M.plastic_dark(), root, bevel=0.008)
     P.rounded_box('cowl_control_shelf', (0.70, 0.34, 0.09),
-                  (0.08, 0.105, 0.725), molded, root, radius=0.035,
+                  (0.08, 0.045, 0.925), molded, root, radius=0.035,
                   segments=6, rot=(-0.04, 0, 0))
 
     # Tapered column molded as one housing. Its upper section leans rearward
@@ -222,7 +222,7 @@ def cowl_and_controls(root):
                        (-0.08, rr(0.22, 0.43, 0.035, 0.075, z0=0.66))]
     P.loft_shell('column_housing', column_sections, molded, column_root,
                  subsurf=1, bevel=0.008)
-    P.rounded_box('column_neck', (0.22, 0.16, 0.11), (-0.15, -0.075, 1.075),
+    P.rounded_box('column_neck', (0.22, 0.16, 0.11), (-0.15, -0.075, 1.180),
                   M.plastic_dark(), root, radius=0.04, segments=6,
                   rot=(COLUMN_RAKE, 0, 0))
     # Concentric bellows around the column tilt joint.
@@ -234,7 +234,7 @@ def cowl_and_controls(root):
                 rot=(COLUMN_RAKE, 0, 0))
 
     # Left-offset three-spoke steering wheel with large lower-left spinner.
-    pivot = R.empty('rig_wheelPivot', (-0.15, -0.11, 1.12), root)
+    pivot = R.empty('rig_wheelPivot', (-0.15, -0.11, 1.225), root)  # seat top 0.945 + ~0.28 seated wheel height
     pivot.rotation_euler = (COLUMN_RAKE, 0, 0)  # documented rake; local Z = column axis
     wheel = P.steering_wheel('steer_wheel_legacy', radius=0.16,
                              parent=pivot, loc=(0, 0, 0.03))
@@ -256,11 +256,11 @@ def cowl_and_controls(root):
     # Three long cowl-mounted levers in individual accordion boots. This is
     # the named three-function legacy configuration, not an optional fourth
     # auxiliary lever or any later fingertip-control package.
-    lever_specs = (('lift', 'Lift and lower lever', 0.16),
-                   ('tilt', 'Mast tilt lever', 0.27),
-                   ('sideshift', 'Integral sideshift lever', 0.38))
+    lever_specs = (('lift', 'Lift and lower lever', 0.12),
+                   ('tilt', 'Mast tilt lever', 0.21),
+                   ('sideshift', 'Integral sideshift lever', 0.30))
     for i, (action, label, x) in enumerate(lever_specs):
-        piv = R.empty(f'rig_lever_{i}', (x, 0.17, 0.765), root)
+        piv = R.empty(f'rig_lever_{i}', (x, 0.11, 0.965), root)
         P.lathe(f'lever_boot_{i}',
                 [(0.0, 0), (0.037, 0), (0.041, 0.012), (0.032, 0.026),
                  (0.036, 0.040), (0.027, 0.054), (0.030, 0.068),
