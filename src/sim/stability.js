@@ -109,7 +109,35 @@ export function ratedCapacityAt(chassis, loadCenter, height, reachExtension = 0)
  * All distances meters, masses kilograms, speed m/s, tilt radians.
  * `yawRate` and `forwardAccel` come straight out of the steering integrator.
  */
+// Each truck's margin at rest, empty and stationary. A parked counterbalance
+// sits at 0.73 and a parked pallet truck at 0.44 -- both correct, because the
+// margin is distance to the nearest edge of the support polygon and no truck
+// carries its CG exactly at the centroid. But a gauge that never reads full
+// when parked is unreadable, so the DISPLAY is scaled against this reference
+// while `margin` stays the raw physical value the warnings are judged on.
+const REST_INPUT = Object.freeze({
+  loadMass: 0, forkHeight: 0, speed: 0, yawRate: 0, turnRadius: Infinity, forwardAccel: 0,
+})
+const restMargins = new Map()
+
+function restMargin(profile) {
+  const key = `${profile.manufacturer}:${profile.family}`
+  if (!restMargins.has(key)) {
+    restMargins.set(key, Math.max(solveCore(profile, REST_INPUT).margin, .05))
+  }
+  return restMargins.get(key)
+}
+
 export function solveStability(profile, input) {
+  const result = solveCore(profile, input)
+  // 100% = as stable as this truck gets standing empty; 0% = the resultant has
+  // left the support polygon.
+  result.percent = Math.round(Math.max(0, Math.min(1, result.margin / restMargin(profile))) * 100)
+  result.restMargin = restMargin(profile)
+  return result
+}
+
+function solveCore(profile, input) {
   const chassis = getChassis(profile)
   const polygon = supportPolygon(chassis)
   const {
@@ -179,7 +207,8 @@ export function solveStability(profile, input) {
 
   return {
     margin: Math.max(0, Math.min(1, worst.margin)),
-    percent: Math.round(Math.max(0, Math.min(1, worst.margin)) * 100),
+    // Overwritten by solveStability with the normalized display value.
+    percent: 0,
     tipping: worst.margin <= 0,
     criticalEdge: worst.edge,
     criticalAxis: worst.axis,

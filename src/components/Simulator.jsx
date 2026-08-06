@@ -136,14 +136,31 @@ const Simulator = forwardRef(function Simulator({ profile, onTelemetry, onSafety
   const [guideOpen, setGuideOpen] = useState(false)
   const [activeControl, setActiveControl] = useState('Cab controls armed')
   const [stability, setStability] = useState(100)
+  // The bar is the normalized display; the label is driven by the RAW physical
+  // margin, so the words stay true even though the bar is rescaled to be legible.
+  const [stabilityState, setStabilityState] = useState('STABLE')
   const [presence, setPresence] = useState(false)
 
   useImperativeHandle(ref, () => ({
     async enterVR() {
       const engine = engineRef.current
       if (!engine || !navigator.xr) return false
-      const session = await navigator.xr.requestSession('immersive-vr', { requiredFeatures: ['local-floor'], optionalFeatures: ['bounded-floor', 'hand-tracking'] })
-      engine.prepareXR(session)
+      // Only `viewer` and `local` are guaranteed reference spaces for
+      // immersive-vr. `local-floor` is NOT, so listing it under requiredFeatures
+      // made the entire session request fail with "the specified session
+      // configuration is not supported" on any runtime that does not offer it,
+      // instead of degrading to something usable. Ask for it as optional and
+      // adapt to whatever the runtime actually grants.
+      const session = await navigator.xr.requestSession('immersive-vr', {
+        optionalFeatures: ['local-floor', 'bounded-floor', 'hand-tracking'],
+      })
+      let floorTracked = true
+      try {
+        await session.requestReferenceSpace('local-floor')
+      } catch {
+        floorTracked = false
+      }
+      engine.prepareXR(session, floorTracked)
       try {
         await engine.renderer.xr.setSession(session)
       } catch (error) {
@@ -339,12 +356,18 @@ const Simulator = forwardRef(function Simulator({ profile, onTelemetry, onSafety
       state.viewPitch = defaultViewPitch
       camera.rotation.set(defaultViewPitch, 0, 0)
     }
-    const prepareXR = (session) => {
+    const prepareXR = (session, floorTracked = true) => {
       if (activeXRSession) restoreDesktopCamera()
       state.viewYaw = 0
       state.viewPitch = 0
+      // Must be set before setSession, or three.js requests the wrong space.
+      renderer.xr.setReferenceSpaceType(floorTracked ? 'local-floor' : 'local')
       xrOrigin.add(camera)
-      camera.position.set(0, 0, 0)
+      // With a floor-relative space the headset's own tracked height supplies
+      // eye height above the compartment floor, so the origin needs no offset.
+      // Plain `local` puts the origin wherever the head was when the session
+      // began, so the authored anthropometric eye height has to stand in.
+      camera.position.set(0, floorTracked ? 0 : FALLBACK_XR_EYE_HEIGHT[profile.family], 0)
       camera.rotation.set(0, 0, 0)
       activeXRSession = session
       xrSessionEnd = () => {
@@ -1005,6 +1028,7 @@ const Simulator = forwardRef(function Simulator({ profile, onTelemetry, onSafety
       if (time - state.lastTelemetry > 100) {
         state.lastTelemetry = time
         setStability(stabilityValue)
+        setStabilityState(stabilityResult.margin > .35 ? 'STABLE' : stabilityResult.margin > .18 ? 'CAUTION' : 'CRITICAL')
         onTelemetry({
           speed: speedMph,
           signedSpeed: state.forwardSpeed / .44704,
@@ -1090,7 +1114,7 @@ const Simulator = forwardRef(function Simulator({ profile, onTelemetry, onSafety
           major warning, below 18% a critical one, and 0 is the resultant leaving
           the support polygon. The old 55% cut belonged to the tuned scalar this
           replaced and read CAUTION on a healthy truck. */}
-      <div className="stability-meter"><span>Stability</span><div><i style={{ height: `${stability}%` }} /></div><b>{stability > 35 ? 'STABLE' : stability > 18 ? 'CAUTION' : 'CRITICAL'}</b></div>
+      <div className="stability-meter"><span>Stability</span><div><i style={{ height: `${stability}%` }} /></div><b>{stabilityState}</b></div>
       <div className="sim-reticle" aria-hidden="true"><i /><i /></div>
       <div className="sim-hints">
         <button onClick={() => setGuideOpen((value) => !value)}><Keyboard size={17} /> Controls</button>

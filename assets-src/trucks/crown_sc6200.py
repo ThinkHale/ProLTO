@@ -210,10 +210,17 @@ def operator_station(root):
                   motion='vertical')
 
     # Direction paddle and wheel-tilt release flank the column in the manual.
+    # These are COLUMN mounted, not wheel mounted, so they hang off a static
+    # twin of the wheel pivot rather than the pivot itself. Parented to the
+    # pivot they orbited with the wheel -- barely visible at the old 86 degree
+    # sweep, unmissable now that the wheel turns its true 630 degrees lock to
+    # lock. Same location and rake, so the local coordinates below are unchanged.
+    column = R.empty('steer_column', (-0.12, -0.075, 1.075), root)
+    column.rotation_euler = (COLUMN_RAKE, 0, 0)
     P.tube('direction_stalk', [(-0.015, 0.0, 0.0), (0.165, 0.0, 0.0)],
-           0.010, M.steel_dark(), pivot)
+           0.010, M.steel_dark(), column)
     direction = P.rounded_box('direction_control', (0.040, 0.024, 0.046),
-                              (0.185, 0, 0), M.plastic_dark(), pivot,
+                              (0.185, 0, 0), M.plastic_dark(), column,
                               radius=0.011, segments=6)
     R.tag_control(direction, 'travel', 'Forward and reverse direction control',
                   'horizontal', False, motion='horizontal')
@@ -332,7 +339,9 @@ def build():
     # Tracked-floor origin and authored desktop eye are separate. The headset
     # supplies the seated user's real eye height above the 0.506 m floor.
     R.empty('rig_xrOrigin', (0, -0.48, 0.506), root)
-    R.empty('rig_cameraMount', (0, -0.48, 1.84), root)
+    # Seated eye point: seat_cushion tops out at 1.110, plus 0.79 m of
+    # 50th-percentile sitting eye height. Anthropometry, not framing.
+    R.empty('rig_cameraMount', (0, -0.48, 1.90), root)
     root['spec'] = 'Crown SC 6200 four-wheel 48V, standard manual-lever configuration'
     root['control_configuration'] = 'SC6200_STD_MANUAL_4LEVER_10IN_WHEEL'
     return {

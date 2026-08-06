@@ -92,6 +92,10 @@ export function forkConfigurationForProfile(profile, rig) {
     specification.length = metrics.length
     specification.spread = metrics.spread
     specification.tineWidth = metrics.tineWidth
+    // Heel position in the fork frame's own space, so a picked-up load can be
+    // seated against the backrest instead of left wherever the approach stopped.
+    const frameWorldZ = forkFrame.getWorldPosition(new THREE.Vector3()).z
+    specification.heelLocalZ = metrics.heelZ - frameWorldZ
   }
   return { forkFrame, forkSpecification: specification }
 }
@@ -807,6 +811,15 @@ export class WarehouseLoadPhysics {
     const pose = worldPose(body.object)
     this.forkFrame.updateWorldMatrix(true, false)
     body.carryPosition.copy(this.forkFrame.worldToLocal(new THREE.Vector3(pose.x, pose.y, pose.z)))
+    // Seat the load against the backrest. The forks are shorter than the pallet
+    // is deep, so a load picked up "fully" still ended up carried wherever the
+    // approach happened to stop -- which pushed the cartons back through the
+    // mast, the chains and the overhead guard, and buried the fork camera
+    // inside them. Real trucks stop the load at the backrest; so does this.
+    if (Number.isFinite(this.forkSpecification.heelLocalZ)) {
+      const seated = this.forkSpecification.heelLocalZ - body.depth * .5
+      body.carryPosition.z = Math.min(body.carryPosition.z, seated)
+    }
     const forkQuaternion = this.forkFrame.getWorldQuaternion(new THREE.Quaternion()).invert()
     body.carryQuaternion.copy(forkQuaternion.multiply(body.object.getWorldQuaternion(new THREE.Quaternion())))
     body.originSupportY = body.supportY

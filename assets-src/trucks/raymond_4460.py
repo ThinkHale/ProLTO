@@ -353,7 +353,9 @@ def build():
     # Tracked-floor origin and desktop eye stay separate. WebXR supplies the
     # seated user's real tracked eye height above the 0.431 m floorboard.
     R.empty('rig_xrOrigin', (0, -0.44, 0.431), root)
-    R.empty('rig_cameraMount', (0, -0.44, 1.68), root)
+    # Seated eye point: seat_cushion tops out at 0.945, plus 0.79 m of
+    # 50th-percentile sitting eye height.
+    R.empty('rig_cameraMount', (0, -0.44, 1.735), root)
     root['spec'] = 'Raymond 4460 three-wheel sit-down 36V, legacy three-lever cowl'
     root['control_configuration'] = 'RAYMOND4460_LEGACY_3LEVER_MONO_DISPLAY'
     return {

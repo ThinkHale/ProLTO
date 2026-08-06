@@ -469,12 +469,17 @@ def mast_and_reach(root):
     carriage = R.empty('rig_carriage', (0, -0.06, 0.06), mast)
     reach_grp = R.empty('rig_reachGroup', (0, 0, 0), carriage)
     # Fork camera looking along the blades toward the tips. It sits AHEAD of
-    # the carriage bars and ABOVE the blades: mounted level with them the red
+    # the carriage bars and BETWEEN THE TINES at blade level, which is where
+    # real reach-truck systems put it: the load sits ON the forks, above the
+    # lens, so it never blocks the view, and the tines frame the bottom of the
+    # shot. Mounted above the load instead, a pallet stands ~1.05 m
+    # proud of the blades, so anything lower is inside the cartons and the feed
+    # is a flat wall of carton. Mounted level with the blades the red
     # forks filled the whole feed, and behind them the low carriage bar filled
     # of the feed with red steel. Rides the reach
     # group so it tracks the carriage through lift and reach, which is what makes
     # the guard monitor useful when placing into a top slot.
-    R.empty('rig_forkCam', (0, 0.50, 0.68), reach_grp)
+    R.empty('rig_forkCam', (0, 0.50, 0.16), reach_grp)
 
     # pantograph scissor
     for sx in (-1, 1):
