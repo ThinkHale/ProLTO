@@ -480,6 +480,7 @@ def cage_display(parent, width=0.20, height=0.125, name='forkcam'):
     # The display face itself. Left unlit and slightly proud of the bezel.
     screen = box(f'{name}_display', (width - 0.022, 0.004, height - 0.020),
                  (0, -0.014, 0), M.screen_glass(), parent, bevel=0.001)
+    planar_uv(screen)
     return screen
 
 
@@ -579,12 +580,44 @@ def thumb_switch(name, size=(0.026, 0.012, 0.016), mat=None, parent=None, loc=(0
                        housing, radius=0.003, segments=4)
 
 
+def planar_uv(obj, plane='XZ'):
+    """Planar UV projection normalized to the mesh bounds.
+
+    THIS IS NOT OPTIONAL FOR ANYTHING THAT CARRIES A TEXTURE. box() and friends
+    build geometry with bmesh.ops.create_cube, which creates no uv layer at all.
+    A material with a map and no UVs samples texel (0,0) for every fragment, so
+    the whole panel renders as ONE FLAT COLOUR. Every instrument screen in the
+    fleet was doing exactly that -- the live telemetry canvas was being drawn
+    and then sampled at a single pixel -- and so was the fork camera monitor,
+    which is why its feed looked like a solid colour that changed as the truck
+    moved instead of like a picture.
+    """
+    mesh = obj.data
+    if mesh.uv_layers:
+        return obj
+    axis_a, axis_b = {'XZ': (0, 2), 'XY': (0, 1), 'YZ': (1, 2)}[plane]
+    coords = [vertex.co for vertex in mesh.vertices]
+    if not coords:
+        return obj
+    low_a = min(c[axis_a] for c in coords)
+    low_b = min(c[axis_b] for c in coords)
+    span_a = max(max(c[axis_a] for c in coords) - low_a, 1e-6)
+    span_b = max(max(c[axis_b] for c in coords) - low_b, 1e-6)
+    uv = mesh.uv_layers.new(name='UVMap')
+    for loop in mesh.loops:
+        co = mesh.vertices[loop.vertex_index].co
+        uv.data[loop.index].uv = ((co[axis_a] - low_a) / span_a,
+                                  (co[axis_b] - low_b) / span_b)
+    return obj
+
+
 def display(name, width=0.17, height=0.115, mat_screen=None, parent=None, loc=(0, 0, 0),
             rot=(0, 0, 0), screen_name=None):
     bezel = rounded_box(name, (width, 0.03, height), loc, M.plastic_dark(), parent,
                         radius=0.012, rot=rot)
     screen = box(screen_name or f'{name}_screen', (width * 0.82, 0.004, height * 0.72),
                  (0, -0.017, 0.004), mat_screen or M.screen_glass(), bezel, bevel=0.002)
+    planar_uv(screen)
     return bezel, screen
 
 

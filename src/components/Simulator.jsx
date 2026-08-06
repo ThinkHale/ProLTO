@@ -146,14 +146,38 @@ const Simulator = forwardRef(function Simulator({ profile, onTelemetry, onSafety
       const engine = engineRef.current
       if (!engine || !navigator.xr) return false
       // Only `viewer` and `local` are guaranteed reference spaces for
-      // immersive-vr. `local-floor` is NOT, so listing it under requiredFeatures
-      // made the entire session request fail with "the specified session
-      // configuration is not supported" on any runtime that does not offer it,
-      // instead of degrading to something usable. Ask for it as optional and
-      // adapt to whatever the runtime actually grants.
-      const session = await navigator.xr.requestSession('immersive-vr', {
-        optionalFeatures: ['local-floor', 'bounded-floor', 'hand-tracking'],
-      })
+      // immersive-vr; `local-floor` is NOT. It used to be a requiredFeature,
+      // which made the whole request fail rather than degrade. Even as an
+      // optional feature some runtimes reject a configuration outright, so walk
+      // from the richest request down to a bare one and take the first that is
+      // accepted. If even `{}` is refused, the runtime genuinely cannot open an
+      // immersive-vr session and the message below says so instead of blaming
+      // the feature list.
+      const configurations = [
+        { optionalFeatures: ['local-floor', 'bounded-floor', 'hand-tracking'] },
+        { optionalFeatures: ['local-floor'] },
+        {},
+      ]
+      let session = null
+      let refusal = null
+      for (const configuration of configurations) {
+        try {
+          session = await navigator.xr.requestSession('immersive-vr', configuration)
+          break
+        } catch (error) {
+          refusal = error
+          console.warn('ProLTO: XR configuration refused', configuration, error.name, error.message)
+        }
+      }
+      if (!session) {
+        const supported = await navigator.xr.isSessionSupported('immersive-vr').catch(() => false)
+        throw new Error(
+          `${refusal?.name || 'Error'}: ${refusal?.message || 'no session'} `
+          + `(immersive-vr reported ${supported ? 'supported' : 'UNSUPPORTED'}, `
+          + `secure context ${window.isSecureContext ? 'yes' : 'NO'}). `
+          + 'A headset must be connected and its runtime running before entering VR',
+        )
+      }
       let floorTracked = true
       try {
         await session.requestReferenceSpace('local-floor')
@@ -305,7 +329,11 @@ const Simulator = forwardRef(function Simulator({ profile, onTelemetry, onSafety
       // a real fork camera is a wide-angle lens aimed down the blades, showing
       // the tips low in frame and the slot or pallet ahead of them.
       forkCamera = new THREE.PerspectiveCamera(78, 320 / 200, .04, 30)
-      forkCamera.rotation.x = -.08
+      // Above the load AND angled down at the tips. Level from up here sees only
+      // the aisle; steep from down at blade level sits inside the cartons. From
+      // 1.2 m above the blades the tips are 53 degrees down at 0.9 m, so a 30
+      // degree pitch puts them low in frame with the slot still above them.
+      forkCamera.rotation.x = -.52
       rig.forkCam.add(forkCamera)
       rig.forkCamDisplay.material = new THREE.MeshBasicMaterial({
         map: forkCamTarget.texture, toneMapped: false,

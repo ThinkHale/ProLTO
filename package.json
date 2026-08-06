@@ -8,7 +8,9 @@
     "build": "vite build",
     "preview": "vite preview --host 0.0.0.0",
     "check": "eslint src",
-    "verify": "npm run check && node scripts/verify-models.mjs && node scripts/verify-rig-binding.mjs && node scripts/verify-physics.mjs && node scripts/verify-dynamics.mjs && node scripts/verify-facility.mjs && node scripts/verify-surfacing.mjs && npm run build"
+    "verify": "npm run check && node scripts/verify-models.mjs && node scripts/verify-rig-binding.mjs && node scripts/verify-physics.mjs && node scripts/verify-dynamics.mjs && node scripts/verify-facility.mjs && node scripts/verify-surfacing.mjs && npm run build",
+    "dev:vr": "vite --mode vr --host 0.0.0.0",
+    "preview:vr": "vite build && vite preview --mode vr --host 0.0.0.0"
   },
   "dependencies": {
     "@vitejs/plugin-react": "latest",
@@ -19,6 +21,7 @@
     "vite": "latest"
   },
   "devDependencies": {
+    "@vitejs/plugin-basic-ssl": "^2.3.0",
     "eslint": "latest",
     "eslint-plugin-react-hooks": "latest",
     "eslint-plugin-react-refresh": "latest",

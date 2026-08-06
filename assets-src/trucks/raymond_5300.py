@@ -297,11 +297,11 @@ def platform_assembly(carriage):
               BLACK(), platform, bevel=0.008)
     P.text_mesh('roof_logo', 'RAYMOND', 0.038, 0.0018, M.decal_white(), platform,
                 loc=(0, 0.62, 2.47), facing='+Y')
-    # Operator stands at the rear of the platform. console() is authored for an
-    # operator on its +Y side, so the wall is carried to the front rail and
-    # turned to face back at them, putting the pods on the operator's side.
-    console_root = R.empty('console_root', (0, 0.60, 0.05), platform)
-    console_root.rotation_euler = (0, 0, math.pi)
+    # Station sits at the POWER-UNIT end, not the fork end. The operator drives
+    # facing the power unit and turns to pick, so the controls are behind them
+    # while they work the pallet -- the same topology as the Crown SP.
+    # Unrotated here so the pods face the power unit rather than the forks.
+    console_root = R.empty('console_root', (0, -0.25, 0.05), platform)
     console(console_root)
     presence = P.pedal('pedal_presence', (0.21, 0.24), parent=platform,
                        loc=(0.18, 0.10, 0.305), angle=0)

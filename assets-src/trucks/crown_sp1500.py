@@ -315,12 +315,16 @@ def platform_assembly(carriage):
         P.tube(f'gate_mid_{i}', [(0, 0.48, -0.015), (0, 0.48, -0.325)], 0.011, ORANGE(), gate,
                corner_radius=0)
         P.box(f'gate_hinge_{i}', (0.03, 0.05, 0.1), (0, 0.01, -0.02), BLACK(), gate, bevel=0.006)
-    # Single operator station at the mast end, facing the forks.
-    forks_controls = R.empty('forks_facing_controls', (0, 0.72, 0.28), platform)
-    console(forks_controls, 'forks', primary=True)
-    # The opposing station is removed: it put a second full console on the
-    # platform facing the other way, which reads as duplicate controls rather
-    # than as a dual-position truck.
+    # SINGLE STATION AT THE POWER-UNIT END, FACING THE POWER UNIT.
+    # Crown's SP 1500 spec: dual controls (one facing the power unit, one facing
+    # the forks) are OPTIONAL, and the centred operator window serves travel 'in
+    # the direction of the power unit' -- so the standard station faces the motor.
+    # The operator drives facing the power unit and TURNS to pick, which puts the
+    # controls at their back while they work the pallet. Steering is the
+    # left-hand tiller, which lands on +X for an operator facing the power unit.
+    power_controls = R.empty('power_unit_facing_controls', (0, -0.20, 0.28), platform)
+    power_controls.rotation_euler = (0, 0, math.pi)
+    console(power_controls, 'power', primary=True)
 
     # SP brake/deadman pedal: removing the foot applies the parking brake.
     presence = P.pedal('pedal_presence', (0.19, 0.22), parent=platform,

@@ -277,7 +277,7 @@ def mast_and_reach(root):
     # of the feed with red steel. Rides the reach
     # group so it tracks the carriage through lift and reach, which is what makes
     # the guard monitor useful when placing into a top slot.
-    R.empty('rig_forkCam', (0, 0.50, 0.16), reach_grp)
+    R.empty('rig_forkCam', (0, 0.50, 1.30), reach_grp)
 
     # pantograph scissor
     for sx in (-1, 1):

@@ -55,6 +55,23 @@ for (const file of models) {
   // The premise of the triplanar approach: most geometry has no UVs at all, so
   // any future switch to conventional mapping needs a re-export first.
   assert.equal((gltf.images || []).length, 0, `${file} now ships images; revisit the surfacing strategy`)
+
+  // ANY mesh the Simulator binds a LIVE texture to must carry UVs. Without them
+  // the sampler reads texel (0,0) for every fragment and the panel renders as
+  // one flat colour -- which is what every instrument screen in the fleet and
+  // the fork camera monitor were doing. Triplanar rescues untextured surfaces;
+  // it does not apply to these, because they use a real map.
+  for (const node of gltf.nodes || []) {
+    if (node.mesh == null) continue
+    const name = node.name || ''
+    if (!/screen/i.test(name) && name !== 'forkcam_display') continue
+    for (const primitive of gltf.meshes[node.mesh].primitives) {
+      assert.ok(
+        primitive.attributes.TEXCOORD_0 != null,
+        `${file}: ${name} takes a live texture but has no UVs, so it will render as a single flat colour. Wrap it in P.planar_uv().`,
+      )
+    }
+  }
 }
 
 if (unmapped.size) {

@@ -317,8 +317,9 @@ def console(root):
     cluster = P.rounded_box('display_housing', (0.40, 0.25, 0.055),
                             (0.175, -0.330, 1.196), inset, root,
                             radius=0.016, segments=6, rot=(-0.44, 0, -0.05))
-    P.rounded_box('screen_ray', (0.205, 0.115, 0.008), (-0.038, -0.014, 0.034),
-                  M.screen_glass(), cluster, radius=0.009, segments=5)
+    # planar_uv is mandatory on anything the Simulator binds a live texture to.
+    P.planar_uv(P.rounded_box('screen_ray', (0.205, 0.115, 0.008), (-0.038, -0.014, 0.034),
+                              M.screen_glass(), cluster, radius=0.009, segments=5), plane='XY')
     # Segmented state-of-charge bar: discrete lit segments, amber at the low end
     # grading to green, which is the row of colour visible above the LCD.
     for index in range(10):
@@ -479,7 +480,7 @@ def mast_and_reach(root):
     # of the feed with red steel. Rides the reach
     # group so it tracks the carriage through lift and reach, which is what makes
     # the guard monitor useful when placing into a top slot.
-    R.empty('rig_forkCam', (0, 0.50, 0.16), reach_grp)
+    R.empty('rig_forkCam', (0, 0.50, 1.30), reach_grp)
 
     # pantograph scissor
     for sx in (-1, 1):
