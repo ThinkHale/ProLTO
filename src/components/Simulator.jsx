@@ -426,6 +426,10 @@ const Simulator = forwardRef(function Simulator({ profile, onTelemetry, onSafety
         } else if (event.type === 'cone-contact') {
           fireEvent('cone-contact', 'Safety cone struck', 'major', 8, 2500)
           setActiveControl('Safety cone contact')
+        } else if (event.type === 'load-pushed') {
+          // Fires while contact persists, so the cooldown does the throttling.
+          fireEvent('load-pushed', `Load pushed ${event.distance.toFixed(1)} m across the floor instead of carried`, 'major', 8, 6000)
+          setActiveControl('Pushing load across the floor')
         } else if (event.type === 'load-contact') {
           fireEvent('load-contact', 'Hard contact with palletized load', 'major', 10, 2500)
           setActiveControl('Pallet contact')

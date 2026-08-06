@@ -6,6 +6,16 @@ import * as THREE from 'three'
 
 const EPSILON = 1e-7
 const DEG = Math.PI / 180
+const POUND = .45359237
+
+// Pallet weights are authored in pounds; `referenceMass` is the mass at which a
+// shoved load moves at roughly half the truck's rate. An empty pallet skitters,
+// a 2400 lb load barely shifts.
+const PALLET_PUSH = Object.freeze({
+  referenceMass: 520,
+  maxEfficiency: .85,
+  minEfficiency: .1,
+})
 
 export const DEFAULT_TRUCK_COLLIDER = Object.freeze({
   id: 'truck-body',
@@ -659,11 +669,67 @@ export class WarehouseLoadPhysics {
     }
   }
 
+  // A pallet on the floor is not a bollard. Pressing a truck into one shoves it,
+  // scrubbing across the concrete: it never keeps up with the truck, it stops
+  // the instant the truck does, and a heavy load barely moves at all. Modeled as
+  // displacement while in contact rather than as an impulse, because friction
+  // between wood and sealed concrete is high enough that a shoved pallet has no
+  // meaningful coast -- and because displacement cannot jitter.
+  pushEfficiency(body) {
+    const mass = (body.weight || 0) * POUND
+    const ratio = PALLET_PUSH.referenceMass / (PALLET_PUSH.referenceMass + mass)
+    return THREE.MathUtils.clamp(ratio, PALLET_PUSH.minEfficiency, PALLET_PUSH.maxEfficiency)
+  }
+
+  pushBlockingPallets(result, from, to) {
+    const dx = to.x - from.x
+    const dz = to.z - from.z
+    const distance = Math.hypot(dx, dz)
+    if (distance < 1e-5) return false
+    const remaining = distance * (1 - result.fraction)
+    if (remaining < 1e-5) return false
+    let moved = false
+    for (const contact of result.blockingContacts) {
+      const palletId = contact.obstacle.palletId
+      if (!palletId) continue
+      const body = this.pallets.find((candidate) => candidate.id === palletId)
+      // Racked loads stay put: nudging a beam-level pallet with the mast should
+      // be scored as a rack strike, not turned into a shoving match.
+      if (!body || body === this.carried || body.status !== 'floor') continue
+      const step = remaining * this.pushEfficiency(body)
+      if (step < 1e-5) continue
+      setWorldPose(body.object, {
+        x: body.pose.x + (dx / distance) * step,
+        y: body.pose.y,
+        z: body.pose.z + (dz / distance) * step,
+        yaw: body.pose.yaw,
+      })
+      body.pose = worldPose(body.object)
+      body.obstacleCache = null
+      body.pushedDistance = (body.pushedDistance || 0) + step
+      moved = true
+      this.onEvent({
+        type: 'load-pushed',
+        severity: 'major',
+        label: 'Load pushed across the floor instead of carried',
+        pallet: body,
+        obstacle: contact.obstacle,
+        distance: body.pushedDistance,
+      })
+    }
+    return moved
+  }
+
   resolveTruckMotion(previousPose, proposedPose, options = {}) {
     const colliders = [...this.truckColliders]
     const carried = this.carriedCollider()
     if (carried) colliders.push(carried)
-    const result = sweepPose(previousPose, proposedPose, colliders, this.activeObstacles(), options)
+    let result = sweepPose(previousPose, proposedPose, colliders, this.activeObstacles(), options)
+    // If the block was a floor pallet, shove it and re-solve so the truck
+    // advances into the space it just cleared.
+    if (result.blocked && this.pushBlockingPallets(result, previousPose, proposedPose)) {
+      result = sweepPose(previousPose, proposedPose, colliders, this.activeObstacles(), options)
+    }
     const currentContactIds = new Set(result.contacts.map((contact) => contact.obstacle.id))
     for (const contact of result.contacts) {
       const registeredObstacle = this.obstacles.find((candidate) => candidate.id === contact.obstacle.id)
@@ -904,6 +970,7 @@ export class WarehouseLoadPhysics {
       body.truckLocal = null
       body.wasClear = false
       body.obstacleCache = null
+      body.pushedDistance = 0
     }
   }
 }

@@ -138,4 +138,54 @@ near(coneObject.position.x, 0)
 near(coneObject.position.z, 0)
 near(coneObject.rotation.x, 0)
 
-console.log('PASS load physics: collision sweep, fork engagement, rigid carry, rack placement, rack removal, cone response')
+// Floor pallets are shoved rather than treated as bollards, and a heavy load
+// resists far more than a light one. Racked loads must NOT slide.
+{
+  const pushScene = new THREE.Scene()
+  const pushTruck = new THREE.Group()
+  pushScene.add(pushTruck)
+  const makePallet = (name, weight, z) => {
+    const body = new THREE.Group()
+    body.name = name
+    body.position.set(0, 0, z)
+    body.userData.physics = { id: name, weight, dimensions: { x: 1.016, y: 1.05, z: 1.2192 } }
+    pushScene.add(body)
+    return body
+  }
+  const light = makePallet('light-load', 200, 0)
+  const heavy = makePallet('heavy-load', 4000, 0)
+  pushScene.updateMatrixWorld(true)
+
+  const pushed = []
+  const physics = new WarehouseLoadPhysics({
+    truckRoot: pushTruck,
+    pallets: [light, heavy],
+    truckColliders: [{ id: 'body', offsetX: 0, offsetZ: 0, halfWidth: .6, halfLength: .8, minY: 0, maxY: 2 }],
+    onEvent: (event) => { if (event.type === 'load-pushed') pushed.push(event.pallet.id) },
+  })
+  // Drive from +Z toward the loads sitting at the origin.
+  physics.resolveTruckMotion({ x: 0, z: 2.4, heading: 0 }, { x: 0, z: 1.2, heading: 0 }, { speed: 1.2 })
+  const lightMoved = Math.abs(light.position.z - 0)
+  const heavyMoved = Math.abs(heavy.position.z - 0)
+  assert.ok(lightMoved > 0, 'a floor pallet must be pushable')
+  assert.ok(lightMoved > heavyMoved, `a light load must shove further than a heavy one (${lightMoved.toFixed(3)} vs ${heavyMoved.toFixed(3)})`)
+  assert.ok(pushed.length > 0, 'pushing a load must be reported to the evaluator')
+
+  physics.reset()
+  near(light.position.z, 0)
+  // A racked load is not a shoving match; it stays put and scores as a strike.
+  const racked = makePallet('racked-load', 1200, -4)
+  racked.userData.physics.status = 'racked'
+  pushScene.updateMatrixWorld(true)
+  const rackedPhysics = new WarehouseLoadPhysics({
+    truckRoot: pushTruck,
+    pallets: [{ object: racked, status: 'racked', slotId: 'slot-x', weight: 1200 }],
+    rackSlots: [{ id: 'slot-x', position: { x: 0, y: 0, z: -4 }, halfExtents: { x: .56, z: .69 } }],
+    truckColliders: [{ id: 'body', offsetX: 0, offsetZ: 0, halfWidth: .6, halfLength: .8, minY: 0, maxY: 2 }],
+  })
+  const before = racked.position.z
+  rackedPhysics.resolveTruckMotion({ x: 0, z: -2, heading: 0 }, { x: 0, z: -3.2, heading: 0 }, { speed: 1.2 })
+  near(racked.position.z, before)
+}
+
+console.log('PASS load physics: collision sweep, fork engagement, rigid carry, rack placement, rack removal, cone response, pallet pushing')

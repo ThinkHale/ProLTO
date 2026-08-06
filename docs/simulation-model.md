@@ -104,10 +104,19 @@ the floor to infinity — the entire rack face was a solid wall, so a trainee co
 never enter a bay or judge an approach. Pedestrians had no collider at all and
 could be driven straight through.
 
+A pallet on the floor is not a bollard. Pressing a truck into one shoves it
+across the concrete, modeled as displacement while in contact rather than as an
+impulse: friction between wood and sealed concrete is high enough that a shoved
+load has no meaningful coast, it stops the instant the truck does, and it never
+quite keeps up. Resistance scales with load — an empty pallet skitters, a
+2400 lb load barely shifts. Racked loads are excluded, because nudging a
+beam-level pallet with the mast is a rack strike, not a shoving match. Pushing
+is scored, since carrying is the correct technique.
+
 **Limits.** Kinematic sweep with a binary search on first contact, not impulse
-resolution. Loads are rigid and do not shift, slip, or topple on the forks.
-Racks do not deflect or fail; a strike is scored, not simulated. Cones are the
-only knockable object.
+resolution. Pushed loads translate but do not rotate, tip, or spill, and loads
+on the forks are rigid — they do not shift or slip. Racks do not deflect or
+fail; a strike is scored, not simulated.
 
 ## Verification
 

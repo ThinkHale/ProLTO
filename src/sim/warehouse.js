@@ -582,6 +582,13 @@ function loadFacilityShell(scene, fallbackShell) {
       // pass, so the model's floor is dropped rather than z-fighting with it.
       if (/^Floor_Object/i.test(object.name)) object.visible = false
     })
+    // The model's slab sits at exactly y = 0.000 -- the same plane as our floor's
+    // top face -- and its stair trim and door thresholds sit within 2 mm of it.
+    // Coplanar surfaces z-fight, which is what made the floor shimmer. Dropping
+    // the whole shell 3 cm puts every one of those surfaces cleanly underneath
+    // instead of tied with it; walls and columns just start fractionally lower,
+    // which is invisible.
+    gltf.scene.position.y = -.03
     scene.add(gltf.scene)
     if (fallbackShell) {
       scene.remove(fallbackShell)
