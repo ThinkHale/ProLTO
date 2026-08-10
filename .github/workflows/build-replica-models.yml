@@ -8,6 +8,7 @@ on:
       - 'assets-src/trucks/crown_sp3500.py'
       - 'assets-src/trucks/raymond_7500_video_replica.py'
       - '.github/workflows/build-replica-models.yml'
+      - 'assets-src/lib/qa.py'
   workflow_dispatch:
     inputs:
       samples:
@@ -22,6 +23,8 @@ jobs:
   build-replicas:
     runs-on: ubuntu-latest
     timeout-minutes: 45
+    env:
+      PROLTO_QA_DENOISE: '0'
     steps:
       - uses: actions/checkout@v4
 
