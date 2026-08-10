@@ -1,0 +1,51 @@
+name: Build replica model candidates
+
+on:
+  workflow_dispatch:
+    inputs:
+      samples:
+        description: Cycles samples per QA render
+        required: false
+        default: '32'
+
+permissions:
+  contents: read
+
+jobs:
+  build-replicas:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Blender
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes blender
+          blender --version
+
+      - name: Build Crown SP 3500 candidate
+        run: >-
+          blender -b -P assets-src/build.py --
+          --truck crown_sp3500 --export --render
+          --views hero,side,rear34,cab,console,operator,mast
+          --samples ${{ inputs.samples }}
+
+      - name: Build Raymond 7500 video candidate
+        run: >-
+          blender -b -P assets-src/build.py --
+          --truck raymond_7500_video_replica --export --render
+          --views hero,side,rear34,cab,cowl,video_side,video_operator
+          --samples ${{ inputs.samples }}
+
+      - name: Upload candidates without changing production assets
+        uses: actions/upload-artifact@v4
+        with:
+          name: prolto-replica-candidates
+          if-no-files-found: error
+          path: |
+            public/models/crown_sp3500.glb
+            public/models/raymond_7500_video_replica.glb
+            qa/blender/crown_sp3500/*.png
+            qa/blender/raymond_7500_video_replica/*.png
+
