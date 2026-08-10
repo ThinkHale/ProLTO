@@ -89,7 +89,9 @@ def render_views(truck, out_dir, views=('hero', 'side', 'rear34', 'cab'), sample
     device = scene_lib.enable_gpu()
     scn.cycles.device = 'GPU' if device != 'CPU' else 'CPU'
     scn.cycles.samples = samples
-    scn.cycles.use_denoising = True
+    # Some distro Blender builds omit OpenImageDenoiser. Allow CI to disable
+    # denoising while keeping it enabled for normal workstation beauty renders.
+    scn.cycles.use_denoising = os.environ.get('PROLTO_QA_DENOISE', '1') != '0'
     scn.render.resolution_x, scn.render.resolution_y = resolution
     scn.render.image_settings.file_format = 'PNG'
     scn.view_settings.view_transform = 'AgX' if 'AgX' in [
