@@ -324,6 +324,14 @@ const Simulator = forwardRef(function Simulator({ profile, onTelemetry, onSafety
       forkCamTarget = new THREE.WebGLRenderTarget(320, 200, {
         minFilter: THREE.LinearFilter, magFilter: THREE.LinearFilter, depthBuffer: true,
       })
+      // A render target is drawn by the GPU with its origin at the BOTTOM left,
+      // while the canvas textures on the instrument screens are flipped on
+      // upload (flipY) so theirs ends up at the top. `flipY` does nothing to a
+      // render target because nothing is uploaded, so the same planar UVs that
+      // read correctly on the dash displays showed this feed upside down.
+      // Inverting V through the texture transform is the fix that does work.
+      forkCamTarget.texture.repeat.set(1, -1)
+      forkCamTarget.texture.offset.set(0, 1)
       // Wide and close to level. At 68 degrees pitched 12.6 degrees down the
       // nearby floor filled the whole frame and the feed read as a flat colour;
       // a real fork camera is a wide-angle lens aimed down the blades, showing

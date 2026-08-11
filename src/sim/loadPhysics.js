@@ -94,8 +94,15 @@ export function forkConfigurationForProfile(profile, rig) {
     specification.tineWidth = metrics.tineWidth
     // Heel position in the fork frame's own space, so a picked-up load can be
     // seated against the backrest instead of left wherever the approach stopped.
-    const frameWorldZ = forkFrame.getWorldPosition(new THREE.Vector3()).z
-    specification.heelLocalZ = metrics.heelZ - frameWorldZ
+    //
+    // metrics.heelZ is TRUCK-LOCAL -- measureForks runs during rig mapping,
+    // before the Simulator moves the truck to its start position. Subtracting a
+    // WORLD frame position from it mixed the two spaces and put `seated` about
+    // 13 m ahead of the forks, which is why a picked-up pallet shot forty feet
+    // down the aisle while still tracking lift. Both terms must be truck-local.
+    const frameLocal = forkFrame.getWorldPosition(new THREE.Vector3())
+    if (rig.root) rig.root.worldToLocal(frameLocal)
+    specification.heelLocalZ = metrics.heelZ - frameLocal.z
   }
   return { forkFrame, forkSpecification: specification }
 }

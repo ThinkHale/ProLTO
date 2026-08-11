@@ -188,4 +188,47 @@ near(coneObject.rotation.x, 0)
   near(racked.position.z, before)
 }
 
-console.log('PASS load physics: collision sweep, fork engagement, rigid carry, rack placement, rack removal, cone response, pallet pushing')
+// REGRESSION: a picked-up load must end up ON the forks, wherever the truck
+// happens to be standing. forkConfigurationForProfile derives the backrest seat
+// position from a TRUCK-LOCAL blade measurement; subtracting a WORLD frame
+// position from it put the seat ~13 m ahead of the forks, so engaging a pallet
+// flung it forty feet down the aisle while it still tracked lift.
+{
+  const farScene = new THREE.Scene()
+  const farTruck = new THREE.Group()
+  farTruck.position.set(0, 0, 11.5)          // the Simulator's start position
+  farScene.add(farTruck)
+  const carriage = new THREE.Group()
+  carriage.position.set(0, .04, 0)
+  farTruck.add(carriage)
+  // Blades measured in TRUCK-LOCAL space, as measureForks does during rig mapping.
+  const blade = new THREE.Mesh(new THREE.BoxGeometry(.1, .04, 1.07))
+  blade.name = 'forks_L'
+  blade.position.set(0, 0, -.415)
+  carriage.add(blade)
+  const blade2 = blade.clone()
+  blade2.name = 'forks_R'
+  carriage.add(blade2)
+  farScene.updateMatrixWorld(true)
+
+  const box = new THREE.Box3().setFromObject(blade)
+  const rig = {
+    root: farTruck,
+    carriage,
+    forkMetrics: {
+      clearance: box.min.y, bladeBottom: box.min.y,
+      length: 1.07, spread: .56, tineWidth: .1,
+      // Truck-local, i.e. relative to farTruck, not world.
+      heelZ: box.max.z - farTruck.position.z,
+      tipZ: box.min.z - farTruck.position.z,
+      faceHalfWidth: .33,
+    },
+  }
+  const { forkSpecification } = forkConfigurationForProfile({ manufacturer: 'Crown', family: 'counterbalance' }, rig)
+  assert.ok(
+    Math.abs(forkSpecification.heelLocalZ) < 1.5,
+    `heelLocalZ ${forkSpecification.heelLocalZ.toFixed(2)} is not a fork-frame offset; world and truck-local spaces have been mixed`,
+  )
+}
+
+console.log('PASS load physics: collision sweep, fork engagement, rigid carry, rack placement, rack removal, cone response, pallet pushing, load seating')
