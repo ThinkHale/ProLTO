@@ -62,7 +62,12 @@ export default function App() {
   }, [])
 
   const handleLifecycleChange = useCallback((next) => {
-    setEngineStatus((current) => ({ ...current, ...next }))
+    setEngineStatus((current) => ({
+      ...current,
+      ...next,
+      error: next.error ?? null,
+      code: next.code ?? null,
+    }))
   }, [])
 
   const resetAssessmentData = () => {
@@ -97,22 +102,32 @@ export default function App() {
     const transition = ++transitionSequenceRef.current
     if (nextFamily === familyId) return
     if (assessmentHasEvidence && !window.confirm('Switch equipment? This permanently clears the current score, checklist, knowledge result, and safety events. The candidate name is preserved.')) return
-    await simulatorRef.current?.exitVR().catch(() => {})
+    try {
+      await simulatorRef.current?.exitVR()
+    } catch (error) {
+      setNotice(`Equipment was not changed because the active VR session could not close: ${error.message}`)
+      return
+    }
     if (transition !== transitionSequenceRef.current) return
     setFamilyId(nextFamily)
     resetAssessmentData()
-    setEngineStatus((current) => ({ ...current, phase: 'loading', message: 'Loading simulator', error: null }))
+    setEngineStatus((current) => ({ ...current, phase: 'loading', message: 'Loading simulator', error: null, code: null }))
   }
 
   const selectManufacturer = async (nextManufacturer) => {
     const transition = ++transitionSequenceRef.current
     if (nextManufacturer === manufacturer) return
     if (assessmentHasEvidence && !window.confirm('Switch manufacturer? This permanently clears the current score, checklist, knowledge result, and safety events. The candidate name is preserved.')) return
-    await simulatorRef.current?.exitVR().catch(() => {})
+    try {
+      await simulatorRef.current?.exitVR()
+    } catch (error) {
+      setNotice(`Manufacturer was not changed because the active VR session could not close: ${error.message}`)
+      return
+    }
     if (transition !== transitionSequenceRef.current) return
     setManufacturer(nextManufacturer)
     resetAssessmentData()
-    setEngineStatus((current) => ({ ...current, phase: 'loading', message: 'Loading simulator', error: null }))
+    setEngineStatus((current) => ({ ...current, phase: 'loading', message: 'Loading simulator', error: null, code: null }))
   }
 
   const enterVR = async () => {
@@ -141,17 +156,22 @@ export default function App() {
     try {
       await simulatorRef.current?.exitVR()
     } catch (error) {
-      setNotice(`VR session ended with a runtime warning: ${error.message}`)
-    } finally {
-      if (transition !== transitionSequenceRef.current) return
-      simulatorRef.current?.reset()
-      resetAssessmentData()
+      setNotice(`Assessment was not restarted because the active VR session could not close: ${error.message}`)
+      return
     }
+    if (transition !== transitionSequenceRef.current) return
+    simulatorRef.current?.reset()
+    resetAssessmentData()
   }
 
   const retrySimulator = async () => {
     const transition = ++transitionSequenceRef.current
-    await simulatorRef.current?.exitVR().catch(() => {})
+    try {
+      await simulatorRef.current?.exitVR()
+    } catch (error) {
+      setNotice(`Simulator was not retried because the active VR session could not close: ${error.message}`)
+      return
+    }
     if (transition !== transitionSequenceRef.current) return
     setRunning(false)
     setEngineStatus((current) => ({ ...current, phase: 'loading', message: 'Retrying simulator', error: null, code: null }))
@@ -207,7 +227,7 @@ export default function App() {
         <div className="main-grid">
           <div className="simulator-column">
             <Simulator key={`${profile.assetId}-${simulatorRevision}`} ref={simulatorRef} profile={profile} running={running} onRunningChange={setRunning} onTelemetry={handleTelemetry} onSafetyEvent={handleSafetyEvent} onLifecycleChange={handleLifecycleChange} />
-            <div className="telemetry-bar" data-heading={telemetry.heading ?? 0} data-steer-angle={telemetry.steerAngle ?? 0}>
+            <div className="telemetry-bar" data-heading={telemetry.heading ?? 0} data-steer-angle={telemetry.steerAngle ?? 0} data-fork-height={telemetry.fork ?? 0}>
               <div><Gauge /><span>Speed<strong>{telemetry.speed.toFixed(1)} <i>mph</i></strong></span></div>
               <div><FileCheck2 /><span>Fork height<strong>{Math.round(telemetry.fork)} <i>in</i></strong></span></div>
               <div><Cuboid /><span>Load<strong>{Math.round(telemetry.load).toLocaleString()} <i>lb</i></strong></span></div>

@@ -3,6 +3,7 @@
 // throwing. Pixel fidelity still requires the separate visual acceptance pass.
 import { chromium } from 'playwright'
 import { mkdirSync } from 'node:fs'
+import { getEquipment } from '../src/data/equipment.js'
 
 const FAMILY_LABEL = {
   reach: 'Reach Truck',
@@ -16,15 +17,10 @@ const launchArgs = process.platform === 'win32'
   ? ['--use-angle=d3d11', '--enable-unsafe-swiftshader']
   : ['--enable-unsafe-swiftshader']
 const ASSET_OR_INIT_FAILURE = /procedural fallback|MODEL_(?:LOAD|PARSE|PROFILE|IDENTITY|RIG)|asset readiness failure|simulator init failed/iu
-// Physical tine colliders require the blades to be inside the pallet opening,
-// not scraping along the floor through the bottom boards. High-lift trucks need
-// only a brief feather; low-lift pallet trucks move more slowly.
-const PRE_APPROACH_LIFT_MS = {
-  counterbalance: 20,
-  reach: 30,
-  'order-picker': 20,
-  pallet: 220,
-}
+// One inch of blade-bottom clearance is inside the authored GMA fork openings
+// for every measured fleet tine, including the 75 mm walkie blades. Waiting on
+// exact telemetry makes this setup deterministic across browser frame rates.
+const PRE_APPROACH_FORK_HEIGHT_IN = 1
 const isTruckModelRequest = (requestUrl) => /\/models\/(?:crown|raymond)_[^/?]+\.glb(?:[?#]|$)/iu.test(requestUrl)
 mkdirSync(outDir, { recursive: true })
 const browser = await chromium.launch({ args: launchArgs })
@@ -36,6 +32,7 @@ const readTelemetry = async (page) => {
   const pose = await telemetry.evaluate((node) => ({
     heading: Number(node.dataset.heading),
     steerAngle: Number(node.dataset.steerAngle),
+    exactFork: Number(node.dataset.forkHeight),
   }))
   const number = (label) => {
     const match = text.match(new RegExp(`${label}\\s*([-\\d.,]+)`, 'i'))
@@ -51,8 +48,10 @@ for (const [family, manufacturer] of [
   ['order-picker', 'Crown'], ['order-picker', 'Raymond'],
 ]) {
   const page = await browser.newPage({ viewport: { width: 1280, height: 800 } })
+  page.setDefaultTimeout(20000)
   const errors = []
-  let modelResponses = 0
+  let selectedModelResponses = 0
+  const profile = getEquipment(manufacturer, family)
   page.on('console', (m) => {
     const text = m.text()
     if (/X4122|cannot be represented accurately/.test(text)) return // benign ANGLE/HLSL notes
@@ -67,22 +66,33 @@ for (const [family, manufacturer] of [
   page.on('response', (response) => {
     if (!isTruckModelRequest(response.url())) return
     if (!response.ok()) errors.push(`model response failed: ${response.status()} ${response.url()}`)
-    else modelResponses += 1
+    else if (response.url().includes(`/models/${profile.assetId}.glb`)) selectedModelResponses += 1
   })
 
   await page.goto(url, { waitUntil: 'networkidle' })
   await page.getByRole('button', { name: FAMILY_LABEL[family] }).click()
   await page.locator('.manufacturer-select select').selectOption(manufacturer)
-  await page.waitForTimeout(3200)
-  await page.getByRole('button', { name: 'Enter operator station' }).click()
-  await page.waitForTimeout(400)
+  await page.waitForFunction(
+    (expected) => document.querySelector('.sim-topbar span:nth-child(2)')?.textContent?.trim() === expected,
+    `${manufacturer} ${profile.model}`,
+  )
+  const desktopButton = page.getByRole('button', { name: /Desktop Mode|Focus Desktop/iu })
+  await desktopButton.click()
+  const inputSurface = page.locator('[data-testid="simulator-input-surface"]')
+  await inputSurface.waitFor({ state: 'visible' })
+  await page.waitForFunction(
+    () => document.activeElement?.getAttribute('data-testid') === 'simulator-input-surface',
+  )
 
   const idle = await readTelemetry(page)
 
   await page.keyboard.down('ShiftLeft')   // operator presence
   await page.waitForTimeout(150)
   await page.keyboard.down('KeyE')
-  await page.waitForTimeout(PRE_APPROACH_LIFT_MS[family])
+  await page.waitForFunction(
+    (minimum) => Number(document.querySelector('[data-testid="simulator-input-surface"]')?.dataset.forkHeight) >= minimum,
+    PRE_APPROACH_FORK_HEIGHT_IN,
+  )
   await page.keyboard.up('KeyE')
   await page.waitForTimeout(80)
   // Drive straight at the training pallet sitting square in the aisle ahead.
@@ -123,9 +133,9 @@ for (const [family, manufacturer] of [
   ))
   const turned = headingChange > .005 && Math.abs(turning.steerAngle) > 1
   const engaged = picked.load > 0
-  const raised = Math.max(picked.fork, lifted.fork) > idle.fork + 1
+  const raised = Math.max(picked.exactFork, lifted.exactFork) > idle.exactFork + 1
   const stabilitySane = [idle, rolling, turning, lifted].every((t) => t.stability >= 0 && t.stability <= 100)
-  if (!modelResponses) errors.push('no successful truck GLB response observed')
+  if (!selectedModelResponses) errors.push(`no successful ${profile.assetId}.glb response observed`)
   const ok = drove && turned && engaged && raised && stabilitySane && errors.length === 0
   if (!ok) failures += 1
   console.log(

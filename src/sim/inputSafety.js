@@ -23,3 +23,13 @@ export function removePointerDrag(pointerDrags, pointerId) {
   pointerDrags.delete(pointerId)
   return drag
 }
+
+export function applyModifierTransition(manual, activeDrags, held) {
+  for (const drag of activeDrags || []) {
+    const control = drag.object?.userData?.control
+    if (!control?.shift2) continue
+    const inactiveAction = held ? control.action2 : control.shift2
+    if (inactiveAction) manual[inactiveAction] = 0
+  }
+  return Boolean(held)
+}

@@ -1,5 +1,7 @@
 import assert from 'node:assert/strict'
 import {
+  assertXRSessionActive,
+  finishXRStartup,
   hasLocalFloorReferenceSpace,
   releaseRemovedXRInputSources,
   requestImmersiveSessionWithFallback,
@@ -41,6 +43,17 @@ assert.equal(await hasLocalFloorReferenceSpace(acceptedSession), true)
 assert.equal(await hasLocalFloorReferenceSpace({ requestReferenceSpace: async () => { throw new Error('no floor') } }), false)
 assert.equal(xrOriginHeight(.24, true, 1.66), .24, 'floor tracking must use the authored compartment floor origin')
 assert.equal(xrOriginHeight(.24, false, 1.66), 1.9, 'local-space fallback height must be applied to the XR origin')
+assert.doesNotThrow(() => assertXRSessionActive(acceptedSession, acceptedSession))
+assert.throws(
+  () => assertXRSessionActive(null, acceptedSession),
+  (error) => error.name === 'AbortError' && /ended before startup completed/u.test(error.message),
+  'an end event during renderer session attachment must cancel XR startup',
+)
+let markedRunning = 0
+finishXRStartup(acceptedSession, acceptedSession, () => { markedRunning += 1 })
+assert.equal(markedRunning, 1, 'an active session may transition to running exactly once')
+assert.throws(() => finishXRStartup(null, acceptedSession, () => { markedRunning += 1 }), { name: 'AbortError' })
+assert.equal(markedRunning, 1, 'an ended session must not be marked running')
 
 const sourceA = { id: 'a' }
 const sourceB = { id: 'b' }

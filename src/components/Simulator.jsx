@@ -23,9 +23,10 @@ import {
 import { solveStability, stabilityWarning } from '../sim/stability.js'
 import { applyFleetSurfacing } from '../sim/surfacing.js'
 import { contactAssessment } from '../sim/safetyEvents.js'
-import { desktopPresenceHeld, isBellyControlActive, isNativeInteractiveTarget, removePointerDrag } from '../sim/inputSafety.js'
+import { applyModifierTransition, desktopPresenceHeld, isBellyControlActive, isNativeInteractiveTarget, removePointerDrag } from '../sim/inputSafety.js'
 import { fetchArrayBuffer } from '../sim/assetFetch.js'
 import {
+  finishXRStartup,
   hasLocalFloorReferenceSpace,
   releaseRemovedXRInputSources,
   requestImmersiveSessionWithFallback,
@@ -398,7 +399,7 @@ const Simulator = forwardRef(function Simulator({ profile, onTelemetry, onSafety
           throw error
         }
         await assertRequestActive(session)
-        engine.markXRRunning()
+        finishXRStartup(engine.activeXRSession(), session, engine.markXRRunning)
         runningRef.current = true
         previousRunningRef.current = true
         onRunningChange(true)
@@ -409,7 +410,7 @@ const Simulator = forwardRef(function Simulator({ profile, onTelemetry, onSafety
         return await request
       } catch (error) {
         if (error.name === 'AbortError') {
-          if (!engine.isDisposed()) engine.setLifecycle('ready', { message: 'Simulator ready. VR request cancelled' })
+          if (!engine.isDisposed() && engine.ready) engine.setLifecycle('ready', { message: 'Simulator ready. VR request cancelled' })
         } else engine.setLifecycle('ready', { message: 'Simulator ready. VR request failed', error: error.message })
         throw error
       } finally {
@@ -880,8 +881,8 @@ const Simulator = forwardRef(function Simulator({ profile, onTelemetry, onSafety
       try {
         await session.end()
       } catch (error) {
-        restoreDesktopCamera()
-        setLifecycle('ready', { message: 'Simulator ready', error: error.message })
+        setLifecycle('xr-running', { message: 'Immersive session is still running', error: error.message })
+        updateXRPanel('Exit failed. Use the headset system menu')
         throw error
       }
       return true
@@ -899,6 +900,7 @@ const Simulator = forwardRef(function Simulator({ profile, onTelemetry, onSafety
       xrRequest: null,
       xrRequestCancelled: false,
       isDisposed: () => disposed,
+      activeXRSession: () => activeXRSession,
       focusDesktop: () => mount.focus({ preventScroll: true }),
       startDesktop: () => {
         if (!engine.ready || renderer.xr.isPresenting) return false
@@ -924,6 +926,7 @@ const Simulator = forwardRef(function Simulator({ profile, onTelemetry, onSafety
     let hornVoice = null
     let hornStartPending = false
     let hornRequested = false
+    let hornAudioFailed = false
     const stopHorn = () => {
       hornRequested = false
       const voice = hornVoice
@@ -946,7 +949,7 @@ const Simulator = forwardRef(function Simulator({ profile, onTelemetry, onSafety
         stopHorn()
         return
       }
-      if (hornVoice || hornStartPending) return
+      if (hornAudioFailed || hornVoice || hornStartPending) return
       const AudioContextClass = window.AudioContext || window.webkitAudioContext
       if (!AudioContextClass) return
       hornStartPending = true
@@ -968,6 +971,10 @@ const Simulator = forwardRef(function Simulator({ profile, onTelemetry, onSafety
           if (hornVoice === voice) hornVoice = null
         }, { once: true })
         oscillator.start()
+      } catch (error) {
+        hornAudioFailed = true
+        stopHorn()
+        console.warn('ProLTO: horn audio unavailable for this session', error)
       } finally {
         hornStartPending = false
       }
@@ -1199,12 +1206,19 @@ const Simulator = forwardRef(function Simulator({ profile, onTelemetry, onSafety
         stopHorn()
       }
     }
+    const setModifierHeld = (held) => {
+      state.modifierHeld = applyModifierTransition(
+        manual,
+        [...state.pointerDrags.values(), ...state.xrDrags.values()],
+        held,
+      )
+    }
     const endXRInteraction = (controller, label) => {
       const drag = state.xrDrags.get(controller)
       if (!drag) return
       if (drag.modifierOnly) {
         state.xrDrags.delete(controller)
-        state.modifierHeld = [...state.xrDrags.values()].some((candidate) => candidate.modifierOnly)
+        setModifierHeld([...state.pointerDrags.values(), ...state.xrDrags.values()].some((candidate) => candidate.modifierOnly))
         if (label) setActiveControl(label)
         return
       }
@@ -1274,7 +1288,7 @@ const Simulator = forwardRef(function Simulator({ profile, onTelemetry, onSafety
         const modifier = object.userData.modifier
         if (modifier) {
           state.pointerDrags.set(event.pointerId, { object, modifierOnly: true })
-          state.modifierHeld = true
+          setModifierHeld(true)
           setActiveControl(modifier.label)
           renderer.domElement.setPointerCapture(event.pointerId)
           return
@@ -1328,6 +1342,7 @@ const Simulator = forwardRef(function Simulator({ profile, onTelemetry, onSafety
           // Only one function owns the shifted axis at a time: engaging the
           // back switch mid-drag must not leave reach commanded behind it.
           if (live !== action2 && action2) manual[action2] = 0
+          if (live === control.action2 && control.shift2) manual[control.shift2] = 0
           manual[live] = clampInput(start2 + axisDelta(control.motion2, event, origin)) * scale
         }
       } else if (lookDrag) {
@@ -1340,7 +1355,7 @@ const Simulator = forwardRef(function Simulator({ profile, onTelemetry, onSafety
       const pointerDrag = removePointerDrag(state.pointerDrags, event.pointerId)
       if (pointerDrag && !pointerDrag.presenceOnly && !pointerDrag.modifierOnly) releaseControl(pointerDrag.object)
       state.lookDrags.delete(event.pointerId)
-      state.modifierHeld = [...state.pointerDrags.values(), ...state.xrDrags.values()].some((drag) => drag.modifierOnly)
+      setModifierHeld([...state.pointerDrags.values(), ...state.xrDrags.values()].some((drag) => drag.modifierOnly))
       if (pointerDrag?.presenceOnly) refreshDesktopPresence(label || 'Modeled desktop presence control released')
       if (label) setActiveControl(label)
       if (releaseCapture && renderer.domElement.hasPointerCapture(event.pointerId)) renderer.domElement.releasePointerCapture(event.pointerId)
@@ -1462,11 +1477,11 @@ const Simulator = forwardRef(function Simulator({ profile, onTelemetry, onSafety
         // Grabbing the back switch of a multi-axis handle holds the modifier,
         // which is what re-maps the Crown thumb ball's reach axis to sideshift.
         if (object.userData.modifier) {
-          state.modifierHeld = true
-          setActiveControl(object.userData.modifier.label)
           state.xrDrags.set(controller, {
             object, pose: pose.node, poseRoot: pose.root, modifierOnly: true, source: event.data,
           })
+          setModifierHeld(true)
+          setActiveControl(object.userData.modifier.label)
           return
         }
         if (object.userData.control.action === 'presence') {
@@ -1660,7 +1675,12 @@ const Simulator = forwardRef(function Simulator({ profile, onTelemetry, onSafety
       while (simulationAccumulator + SIMULATION_TIME_EPSILON >= FIXED_SIMULATION_STEP && simulationSteps < MAX_SIMULATION_STEPS_PER_FRAME) {
       const dt = FIXED_SIMULATION_STEP
       const requestedTravel = enabled ? choose('travel') : 0
-      const requestedHydraulics = enabled ? Math.max(Math.abs(choose('lift')), Math.abs(choose('reach')), Math.abs(choose('tilt'))) : 0
+      const requestedHydraulics = enabled ? Math.max(
+        Math.abs(choose('lift')),
+        Math.abs(choose('reach')),
+        Math.abs(choose('tilt')),
+        Math.abs(choose('sideshift')),
+      ) : 0
       if (requiresPresence && !state.presence && (Math.abs(requestedTravel) > .1 || requestedHydraulics > .1)) fireEvent('presence', 'Operator presence control not engaged', 'major', 10, 5000)
       const permitted = state.presence || !requiresPresence
       const travelInput = permitted ? requestedTravel : 0
@@ -1779,6 +1799,7 @@ const Simulator = forwardRef(function Simulator({ profile, onTelemetry, onSafety
       state.reach = acceptedHydraulicValues.reach
       state.tilt = acceptedHydraulicValues.tilt
       state.sideshift = acceptedHydraulicValues.sideshift
+      mount.dataset.forkHeight = String(state.fork)
       applyHydraulicValues(acceptedHydraulicValues)
       if (rig.tillerPivot) rig.tillerPivot.rotation.y = -state.steer * .72
       // Palm discs and steering wheels spin about their column through several

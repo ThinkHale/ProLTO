@@ -4,6 +4,7 @@
 // much faster than eight separate runs and keeps framing consistent.
 import { chromium } from 'playwright'
 import { mkdir } from 'node:fs/promises'
+import { getEquipment } from '../src/data/equipment.js'
 
 const args = Object.fromEntries(
   process.argv.slice(2).reduce((pairs, token, index, all) => {
@@ -29,8 +30,17 @@ const launchArgs = process.platform === 'win32'
   : ['--enable-unsafe-swiftshader']
 const browser = await chromium.launch({ args: launchArgs })
 const page = await browser.newPage({ viewport: { width: 1440, height: 900 } })
+page.setDefaultTimeout(20000)
 const failures = []
 const recordFailure = (kind, detail) => failures.push(`${kind}: ${detail}`)
+page.on('dialog', async (dialog) => {
+  if (!/Switch (?:equipment|manufacturer)\?/u.test(dialog.message())) {
+    recordFailure('unexpected dialog', dialog.message())
+    await dialog.dismiss()
+    return
+  }
+  await dialog.accept()
+})
 page.on('console', (message) => {
   const text = message.text()
   if (message.type() === 'error' || ASSET_OR_INIT_FAILURE.test(text)) {
@@ -51,12 +61,19 @@ page.on('response', (response) => {
 await page.goto(url, { waitUntil: 'networkidle' })
 
 for (const [family, label, manufacturer] of PROFILES) {
+  const profile = getEquipment(manufacturer, family)
   await page.getByRole('button', { name: label }).click()
   await page.locator('.manufacturer-select select').selectOption(manufacturer)
-  await page.waitForTimeout(3800)
-  const start = page.getByRole('button', { name: 'Enter operator station' })
-  if (await start.isVisible().catch(() => false)) await start.click()
-  await page.waitForTimeout(900)
+  await page.waitForFunction(
+    (expected) => document.querySelector('.sim-topbar span:nth-child(2)')?.textContent?.trim() === expected,
+    `${manufacturer} ${profile.model}`,
+  )
+  const start = page.getByRole('button', { name: /Desktop Mode|Focus Desktop/iu })
+  await start.click()
+  await page.waitForFunction(
+    () => document.activeElement?.getAttribute('data-testid') === 'simulator-input-surface',
+  )
+  await page.waitForTimeout(250)
   const name = `${manufacturer.toLowerCase()}-${family}`
   await page.locator('.simulator-shell').screenshot({ path: `${outdir}/${name}-cab.png` })
   console.log(`CAPTURED ${outdir}/${name}-cab.png`)

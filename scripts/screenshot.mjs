@@ -3,6 +3,9 @@
 //   node scripts/screenshot.mjs --family reach --manufacturer Crown --out qa/app/crown-reach.png \
 //        [--url http://localhost:5173] [--enter] [--hold KeyE:1200] [--look -200,60]
 import { chromium } from 'playwright'
+import { mkdirSync } from 'node:fs'
+import { dirname } from 'node:path'
+import { getEquipment } from '../src/data/equipment.js'
 
 const args = Object.fromEntries(
   process.argv.slice(2).reduce((pairs, token, index, all) => {
@@ -22,26 +25,44 @@ const url = args.url || 'http://localhost:5173'
 const family = args.family || 'reach'
 const manufacturer = args.manufacturer || 'Crown'
 const out = args.out || `qa/app/${manufacturer.toLowerCase()}-${family}.png`
+const profile = getEquipment(manufacturer, family)
+const launchArgs = process.platform === 'win32'
+  ? ['--use-angle=d3d11', '--enable-unsafe-swiftshader']
+  : ['--enable-unsafe-swiftshader']
 
-const browser = await chromium.launch({ args: ['--use-angle=d3d11', '--enable-unsafe-swiftshader'] })
+mkdirSync(dirname(out), { recursive: true })
+const browser = await chromium.launch({ args: launchArgs })
 const page = await browser.newPage({ viewport: { width: 1600, height: 1000 } })
+page.setDefaultTimeout(20000)
 page.on('console', (message) => { if (message.type() === 'error' || message.type() === 'warning') console.log('[page]', message.text()) })
 await page.goto(url, { waitUntil: 'networkidle' })
 
 await page.getByRole('button', { name: FAMILY_LABEL[family] }).click()
 await page.locator('.manufacturer-select select').selectOption(manufacturer)
-await page.waitForTimeout(3500) // GLB + HDRI load
+await page.waitForFunction(
+  (expected) => document.querySelector('.sim-topbar span:nth-child(2)')?.textContent?.trim() === expected,
+  `${manufacturer} ${profile.model}`,
+)
+const desktopButton = page.getByRole('button', { name: /Desktop Mode|Focus Desktop/iu })
+await desktopButton.click({ trial: true })
 
 if (args.enter) {
-  await page.getByRole('button', { name: 'Enter operator station' }).click()
-  await page.waitForTimeout(600)
+  await desktopButton.click()
+  await page.waitForFunction(
+    () => document.activeElement?.getAttribute('data-testid') === 'simulator-input-surface',
+  )
 }
 if (args.hold) {
-  for (const spec of args.hold.split(',')) {
-    const [code, ms] = spec.split(':')
-    await page.keyboard.down(code)
-    await page.waitForTimeout(Number(ms || 800))
-    await page.keyboard.up(code)
+  if (args.enter) await page.keyboard.down('ShiftLeft')
+  try {
+    for (const spec of args.hold.split(',')) {
+      const [code, ms] = spec.split(':')
+      await page.keyboard.down(code)
+      await page.waitForTimeout(Number(ms || 800))
+      await page.keyboard.up(code)
+    }
+  } finally {
+    if (args.enter) await page.keyboard.up('ShiftLeft')
   }
   await page.waitForTimeout(400)
 }

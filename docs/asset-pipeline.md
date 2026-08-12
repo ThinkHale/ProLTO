@@ -107,12 +107,12 @@ Verify all exports before committing them:
 npm run verify
 ```
 
-That runs, in order: ESLint; input fail-safe checks; `verify-models.mjs` (rig
-nodes, actions, signed control scales, motion axes, camera height, no QA
-geometry, and binary hashes); real-GLB rig binding and load-failure checks;
-wheel-articulation checks; `verify-physics.mjs` (collision sweep, fork
-engagement, rigid carry, rack placement); `verify-dynamics.mjs` (steered-axle
-kinematics, tail swing, stability triangle, capacity derating);
+That runs, in order: ESLint; input fail-safe and XR lifecycle checks;
+`verify-models.mjs` (rig nodes, actions, signed control scales, motion axes,
+camera height, no QA geometry, and binary hashes); real-GLB rig binding and
+load-failure checks; wheel-articulation checks; `verify-physics.mjs` (collision
+sweep, fork engagement, rigid carry, rack placement); `verify-dynamics.mjs`
+(steered-axle kinematics, tail swing, stability triangle, capacity derating);
 `verify-facility.mjs` (rack bay openness, beam elevations, solid pedestrians,
 determinism, and render budgets); `verify-surfacing.mjs` (material treatment
 coverage and bake signal); the production build; and the release-artifact gate.
@@ -128,7 +128,9 @@ npm run verify:browser
 
 It verifies desktop input isolation and fail-safe release behavior, then loads
 all eight profiles, drives and lifts each one, captures an operator-eye
-screenshot in `qa/smoke/`, and fails on any console or page error.
+screenshot in `qa/smoke/`, and fails on any console or page error. CI retains
+the complete capture set as the `browser-smoke-evidence` workflow artifact on
+both passing and failing runs.
 
 ## Runtime loading and readiness
 
@@ -186,7 +188,7 @@ bakes one packed RGBA detail map per surface family — slope in RG from a real
 height field, roughness modulation in B, a grime mask in A — and samples it with
 a **triplanar projection in object space**. Two constraints drove that choice:
 
-- Only about 15% of primitives carry `TEXCOORD_0`, so conventional mapping would
+- Only about 17% of primitives carry `TEXCOORD_0`, so conventional mapping would
   need a full UV unwrap and re-export of all eight parametric models first.
 - Sampling in world space would look right on the static facility but would make
   the detail swim across the truck's own panels as it drives. Object space locks
@@ -229,7 +231,9 @@ node scripts/screenshot.mjs --family reach --manufacturer Crown --enter true --o
 ```
 
 The harness can hold control keys (`--hold KeyE:1800`) and drag the view
-(`--look -260,40`) to capture articulated states.
+(`--look -260,40`) to capture articulated states. When `--enter` and `--hold`
+are combined, it also holds the desktop training-presence key so travel and
+hydraulic captures exercise the enabled machine rather than the fail-safe lock.
 
 ## Provenance
 

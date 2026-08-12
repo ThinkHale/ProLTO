@@ -35,6 +35,18 @@ export function xrOriginHeight(baseHeight, floorTracked, fallbackEyeHeight) {
   return baseHeight + (floorTracked ? 0 : fallbackEyeHeight)
 }
 
+export function assertXRSessionActive(activeSession, expectedSession) {
+  if (activeSession === expectedSession) return
+  const error = new Error('XR session ended before startup completed')
+  error.name = 'AbortError'
+  throw error
+}
+
+export function finishXRStartup(activeSession, expectedSession, markRunning) {
+  assertXRSessionActive(activeSession, expectedSession)
+  markRunning()
+}
+
 export function releaseRemovedXRInputSources(state, removedSources, endInteraction) {
   const removed = new Set(removedSources || [])
   state.xrDrags.forEach((drag, controller) => {
