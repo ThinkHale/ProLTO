@@ -12,4 +12,21 @@ import basicSsl from '@vitejs/plugin-basic-ssl'
 export default defineConfig(({ mode }) => ({
   plugins: [react(), ...(mode === 'vr' ? [basicSsl()] : [])],
   base: './',
+  build: {
+    // Three's ESM core is one indivisible upstream module. It is isolated for
+    // long-term caching, while the application and addons remain small chunks.
+    chunkSizeWarningLimit: 600,
+    rolldownOptions: {
+      output: {
+        codeSplitting: {
+          groups: [
+            { name: 'three-addons', test: /node_modules[\\/]three[\\/]examples[\\/]jsm[\\/]/, priority: 4, includeDependenciesRecursively: false },
+            { name: 'three', test: /node_modules[\\/]three[\\/]/, priority: 3 },
+            { name: 'react', test: /node_modules[\\/](react|react-dom|scheduler)[\\/]/, priority: 2 },
+            { name: 'icons', test: /node_modules[\\/]lucide-react[\\/]/, priority: 1 },
+          ],
+        },
+      },
+    },
+  },
 }))

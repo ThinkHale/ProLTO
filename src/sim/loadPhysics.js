@@ -6,7 +6,9 @@ import * as THREE from 'three'
 
 const EPSILON = 1e-7
 const DEG = Math.PI / 180
+const IN = .0254
 const POUND = .45359237
+const BEAM_SUPPORT_SKIN = .015
 
 // Pallet weights are authored in pounds; `referenceMass` is the mass at which a
 // shoved load moves at roughly half the truck's rate. An empty pallet skitters,
@@ -37,9 +39,16 @@ export const DEFAULT_FORK_SPEC = Object.freeze({
   thickness: .05,
   minimumPenetration: .34,
   maximumApproachAngle: 18 * DEG,
-  pickupClearance: .035,
+  // Require a small positive lift command, then attach when the blade top
+  // reaches the underside of the pallet deck. A generic 35 mm rise cannot fit
+  // above the thicker low-lift blades inside a real GMA opening.
+  pickupClearance: .002,
+  pickupContactTolerance: .003,
   dropClearance: .06,
   landingTolerance: .045,
+  // Integration hook only. The Simulator must supply the current provisional
+  // derated capacity; no manufacturer plate value is inferred here.
+  maximumLoadWeight: Infinity,
 })
 
 export const DEFAULT_PALLET_SPEC = Object.freeze({
@@ -51,8 +60,15 @@ export const DEFAULT_PALLET_SPEC = Object.freeze({
   depth: 1.2192,
   height: 1.05,
   weight: 1200,
-  pocketMin: .025,
-  pocketMax: .13,
+  // Authored GMA geometry has .7 in bottom boards and stringers ending at
+  // 4.4 in. Keep a 4 mm wood clearance at each surface.
+  pocketMin: .7 * IN + .004,
+  pocketMax: 4.4 * IN - .004,
+  // GMA stringer geometry matching src/sim/warehouse.js. Each tine must remain
+  // wholly inside one of the two openings, not merely inside the pallet outline.
+  stringerWidth: 1.4 * IN,
+  edgeStringerInset: .06,
+  channelClearance: .006,
 })
 
 // These presets use the authored blade heel, tip, and tine-center dimensions in
@@ -75,6 +91,12 @@ export function forkConfigurationForProfile(profile, rig) {
   const frame = preset.frame ? rig[preset.frame] : rig.reachGroup || rig.carriage
   const forkFrame = frame || rig.carriage || rig.root
   const specification = { ...DEFAULT_FORK_SPEC, ...preset }
+  // Equipment capacities are authored in pounds, as are pallet weights. Wire
+  // the selected reference configuration into engagement at the module
+  // boundary so an integration cannot accidentally leave the default Infinity
+  // in place. A live derated limit can still be supplied through
+  // engagementEligibility.
+  if (Number.isFinite(profile.capacity)) specification.maximumLoadWeight = profile.capacity
 
   // Prefer geometry measured off the actual blade meshes (see
   // vehicleFactory.measureForks) over the authored constants above. The presets
@@ -146,6 +168,11 @@ export function colliderAtPose(pose, localCollider = DEFAULT_TRUCK_COLLIDER) {
     // body envelope; without it the carriage face is treated as chassis and
     // cannot enter a rack bay.
     loadEnd: localCollider.loadEnd === true,
+    // Fork metadata is retained so the pallet narrow phase can distinguish a
+    // tine inside a real GMA channel from a tine cutting through wood.
+    forkTine: localCollider.forkTine === true,
+    forkSetId: localCollider.forkSetId || 'forks',
+    maximumApproachAngle: localCollider.maximumApproachAngle,
   }
 }
 
@@ -310,15 +337,137 @@ function normalizeObstacle(input, index = 0) {
   })
 }
 
-function collisionQuery(pose, colliders, obstacles) {
+function contactKey(contact) {
+  return `${contact.collider.id}\u0000${contact.obstacle.id}`
+}
+
+function horizontalContactPenetration(collider, obstacle) {
+  if (obstacle.shape === 'circle') {
+    const local = worldToLocal2(collider, obstacle.x, obstacle.z)
+    const overlapX = collider.halfWidth + obstacle.radius - Math.abs(local.x)
+    const overlapZ = collider.halfLength + obstacle.radius - Math.abs(local.z)
+    return Math.min(overlapX, overlapZ)
+  }
+
+  const box = obstacle.shape === 'obb'
+    ? obstacle
+    : {
+        x: (obstacle.minX + obstacle.maxX) * .5,
+        z: (obstacle.minZ + obstacle.maxZ) * .5,
+        halfWidth: (obstacle.maxX - obstacle.minX) * .5,
+        halfLength: (obstacle.maxZ - obstacle.minZ) * .5,
+        heading: 0,
+      }
+  const deltaX = box.x - collider.x
+  const deltaZ = box.z - collider.z
+  const colliderCosine = Math.cos(collider.heading || 0)
+  const colliderSine = Math.sin(collider.heading || 0)
+  const boxCosine = Math.cos(box.heading || 0)
+  const boxSine = Math.sin(box.heading || 0)
+  const colliderAxes = [
+    { x: colliderCosine, z: -colliderSine },
+    { x: colliderSine, z: colliderCosine },
+  ]
+  const boxAxes = [
+    { x: boxCosine, z: -boxSine },
+    { x: boxSine, z: boxCosine },
+  ]
+  let penetration = Infinity
+  for (const axis of [...colliderAxes, ...boxAxes]) {
+    const distance = Math.abs(deltaX * axis.x + deltaZ * axis.z)
+    const colliderRadius = collider.halfWidth * Math.abs(colliderAxes[0].x * axis.x + colliderAxes[0].z * axis.z)
+      + collider.halfLength * Math.abs(colliderAxes[1].x * axis.x + colliderAxes[1].z * axis.z)
+    const boxRadius = box.halfWidth * Math.abs(boxAxes[0].x * axis.x + boxAxes[0].z * axis.z)
+      + box.halfLength * Math.abs(boxAxes[1].x * axis.x + boxAxes[1].z * axis.z)
+    penetration = Math.min(penetration, colliderRadius + boxRadius - distance)
+  }
+  return penetration
+}
+
+function verticalContactPenetration(collider, obstacle) {
+  const colliderMin = collider.minY ?? -Infinity
+  const colliderMax = collider.maxY ?? Infinity
+  const obstacleMin = obstacle.minY ?? -Infinity
+  const obstacleMax = obstacle.maxY ?? Infinity
+  const fromBelow = colliderMax - obstacleMin
+  const fromAbove = obstacleMax - colliderMin
+  return Math.min(fromBelow, fromAbove)
+}
+
+function contactPenetration(collider, obstacle) {
+  const horizontalPenetration = horizontalContactPenetration(collider, obstacle)
+  const verticalPenetration = verticalContactPenetration(collider, obstacle)
+  return {
+    horizontalPenetration,
+    verticalPenetration,
+    // Minimum translation in any separating direction is the relevant 3D
+    // overlap. This is what lets a lift or lower operation prove it is escaping
+    // an existing contact instead of looking unchanged in the XZ projection.
+    penetration: Math.min(horizontalPenetration, verticalPenetration),
+  }
+}
+
+function forkTineChannelAtPallet(collider, obstacle) {
+  if (!collider.forkTine || obstacle.kind !== 'pallet') return null
+  const palletWidth = obstacle.width ?? obstacle.halfWidth * 2
+  const local = worldToLocal2(obstacle, collider.x, collider.z)
+  const angle = normalizeAngle((collider.heading || 0) - (obstacle.heading || 0))
+  const cosine = Math.cos(angle)
+  const sine = Math.sin(angle)
+  const directionAlignment = Math.abs(cosine)
+  const requiredAlignment = Math.cos(collider.maximumApproachAngle ?? DEFAULT_FORK_SPEC.maximumApproachAngle)
+  const lateralHalfSpan = collider.halfWidth * Math.abs(cosine) + collider.halfLength * Math.abs(sine)
+  const sweptMin = local.x - lateralHalfSpan
+  const sweptMax = local.x + lateralHalfSpan
+  const clearance = obstacle.channelClearance ?? DEFAULT_PALLET_SPEC.channelClearance
+  const stringerWidth = obstacle.stringerWidth ?? DEFAULT_PALLET_SPEC.stringerWidth
+  const edgeInset = obstacle.edgeStringerInset ?? DEFAULT_PALLET_SPEC.edgeStringerInset
+  const edgeCenter = palletWidth * .5 - edgeInset
+  const halfStringer = stringerWidth * .5
+  const channels = [
+    { min: -edgeCenter + halfStringer + clearance, max: -halfStringer - clearance },
+    { min: halfStringer + clearance, max: edgeCenter - halfStringer - clearance },
+  ]
+  const channel = channels.findIndex((candidate) => (
+    sweptMin >= candidate.min - EPSILON && sweptMax <= candidate.max + EPSILON
+  ))
+  const pocketBottom = (obstacle.minY ?? 0) + (obstacle.pocketMin ?? DEFAULT_PALLET_SPEC.pocketMin)
+  const pocketTop = (obstacle.minY ?? 0) + (obstacle.pocketMax ?? DEFAULT_PALLET_SPEC.pocketMax)
+  const verticalEligible = collider.minY >= pocketBottom - EPSILON && collider.maxY <= pocketTop + EPSILON
+  return {
+    channel,
+    eligible: channel >= 0 && verticalEligible && directionAlignment >= requiredAlignment,
+    directionAlignment,
+    verticalEligible,
+    sweptMin,
+    sweptMax,
+  }
+}
+
+function forkChannelAccess(collider, obstacle, worldColliders) {
+  const entry = forkTineChannelAtPallet(collider, obstacle)
+  if (!entry?.eligible) return null
+  const peers = worldColliders.filter((candidate) => (
+    candidate.forkTine
+    && (candidate.forkSetId || 'forks') === (collider.forkSetId || 'forks')
+  ))
+  const peerEntries = peers.map((candidate) => ({
+    collider: candidate,
+    channel: forkTineChannelAtPallet(candidate, obstacle),
+  }))
+  const distinctChannels = new Set(
+    peerEntries.filter((candidate) => candidate.channel?.eligible).map((candidate) => candidate.channel.channel),
+  )
+  // A valid pickup uses two physical tines in the two separate GMA openings.
+  // One tine, crossed tines, or two tines in one opening still hit pallet wood.
+  if (peers.length < 2 || peerEntries.some((candidate) => !candidate.channel?.eligible) || distinctChannels.size < 2) return null
+  return entry
+}
+
+function collisionQueryWorld(worldColliders, obstacles) {
   const contacts = []
-  const worldColliders = colliders.map((collider) => colliderAtPose(pose, collider))
   for (const collider of worldColliders) {
-    // Load-end colliders are the carried pallet and the carriage face. Both
-    // travel into a rack bay by design, so both may pass an obstacle that opts
-    // out of blocking them (a beam), while still being stopped by everything
-    // else (uprights, stored loads, walls).
-    const carried = collider.id.startsWith('carried:') || collider.loadEnd === true
+    const carriedPallet = collider.id.startsWith('carried:')
     const colliderRadius = Math.hypot(collider.halfWidth, collider.halfLength)
     for (const obstacle of obstacles) {
       if (obstacle.disabled) continue
@@ -327,15 +476,32 @@ function collisionQuery(pose, colliders, obstacles) {
       const dz = collider.z - (obstacle.boundZ ?? 0)
       if (dx * dx + dz * dz > reach * reach) continue
       if (!colliderIntersectsObstacle(collider, obstacle)) continue
-      // A carried load passing through something it is meant to be set onto --
-      // a rack beam -- must not hard-stop the truck, but it is still a contact
-      // the evaluator should see. Recording it as non-blocking keeps the event
-      // without wedging the placement.
-      const passthrough = carried && obstacle.blocksCarriedLoads === false
-      contacts.push({ collider, obstacle, blocking: !passthrough && obstacle.solid !== false })
+      // A pallet may skim or settle onto a beam's top face. It may not enter the
+      // steel horizontally from below. The carriage is never exempted: only the
+      // actual carried pallet gets this narrow support-surface allowance.
+      const onBeamTop = carriedPallet
+        && obstacle.kind === 'rack-beam'
+        && obstacle.blocksCarriedLoads === false
+        && Number.isFinite(obstacle.maxY)
+        && collider.minY >= obstacle.maxY - BEAM_SUPPORT_SKIN
+      const channelAccess = forkChannelAccess(collider, obstacle, worldColliders)
+      const penetration = contactPenetration(collider, obstacle)
+      contacts.push({
+        collider,
+        obstacle,
+        blocking: !onBeamTop && !channelAccess && obstacle.solid !== false,
+        supportContact: onBeamTop,
+        channelAccess: Boolean(channelAccess),
+        tineChannel: channelAccess?.channel ?? null,
+        ...penetration,
+      })
     }
   }
   return contacts
+}
+
+function collisionQuery(pose, colliders, obstacles) {
+  return collisionQueryWorld(colliders.map((collider) => colliderAtPose(pose, collider)), obstacles)
 }
 
 function interpolatePose(from, to, fraction) {
@@ -358,9 +524,26 @@ export function sweepPose(from, to, colliders, obstacles, options = {}) {
   const distance = Math.hypot(to.x - from.x, to.z - from.z)
   const radius = Math.max(...normalizedColliders.map((collider) => Math.hypot(collider.halfWidth, collider.halfLength)))
   const angularDistance = Math.abs(normalizeAngle((to.heading || 0) - (from.heading || 0))) * radius
-  const stepDistance = options.stepDistance || .055
-  const steps = Math.max(1, Math.min(options.maxSteps || 512, Math.ceil(Math.max(distance, angularDistance) / stepDistance)))
+  const stepDistance = Math.max(options.stepDistance || .055, .001)
+  // Never enlarge the step to satisfy a cap. Doing so can jump a pushed load
+  // across thin rack steel or a pedestrian during a large correction.
+  const steps = Math.max(1, Math.ceil(Math.max(distance, angularDistance) / stepDistance))
   const contactsById = new Map()
+  const initialContacts = collisionQuery(
+    { ...from, heading: normalizeAngle(from.heading || 0) },
+    normalizedColliders,
+    normalizedObstacles,
+  )
+  const initialBlocking = new Map(
+    initialContacts.filter((contact) => contact.blocking).map((contact) => [contactKey(contact), contact.penetration]),
+  )
+
+  const allowEscape = (contacts) => contacts.map((contact) => {
+    if (!contact.blocking) return contact
+    const initialPenetration = initialBlocking.get(contactKey(contact))
+    if (initialPenetration === undefined || contact.penetration >= initialPenetration - EPSILON) return contact
+    return { ...contact, blocking: false, escaping: true }
+  })
   let safePose = { ...from, heading: normalizeAngle(from.heading || 0) }
   let safeFraction = 0
   let blockingContacts = []
@@ -368,8 +551,8 @@ export function sweepPose(from, to, colliders, obstacles, options = {}) {
   for (let step = 1; step <= steps; step += 1) {
     const fraction = step / steps
     const pose = interpolatePose(from, to, fraction)
-    const contacts = collisionQuery(pose, normalizedColliders, normalizedObstacles)
-    contacts.forEach((contact) => contactsById.set(contact.obstacle.id, contact))
+    const contacts = allowEscape(collisionQuery(pose, normalizedColliders, normalizedObstacles))
+    contacts.forEach((contact) => contactsById.set(contactKey(contact), contact))
     blockingContacts = contacts.filter((contact) => contact.blocking)
     if (blockingContacts.length) break
     safePose = pose
@@ -385,7 +568,7 @@ export function sweepPose(from, to, colliders, obstacles, options = {}) {
   for (let iteration = 0; iteration < 7; iteration += 1) {
     const middle = (low + high) * .5
     const pose = interpolatePose(from, to, middle)
-    const contacts = collisionQuery(pose, normalizedColliders, normalizedObstacles)
+    const contacts = allowEscape(collisionQuery(pose, normalizedColliders, normalizedObstacles))
     if (contacts.some((contact) => contact.blocking)) high = middle
     else low = middle
   }
@@ -397,6 +580,270 @@ export function sweepPose(from, to, colliders, obstacles, options = {}) {
     contacts: [...contactsById.values()],
     blockingContacts,
   }
+}
+
+function normalizeHydraulicCollider(collider, index, label) {
+  const id = collider?.id || `hydraulic-collider-${index}`
+  const required = ['x', 'z', 'halfWidth', 'halfLength', 'minY', 'maxY']
+  for (const key of required) {
+    if (!Number.isFinite(collider?.[key])) {
+      throw new TypeError(`${label} collider ${id} requires a finite ${key}`)
+    }
+  }
+  if (collider.halfWidth <= 0 || collider.halfLength <= 0) {
+    throw new RangeError(`${label} collider ${id} requires positive half extents`)
+  }
+  if (collider.maxY < collider.minY) {
+    throw new RangeError(`${label} collider ${id} has maxY below minY`)
+  }
+  return {
+    ...collider,
+    id,
+    heading: normalizeAngle(collider.heading || 0),
+    forkSetId: collider.forkSetId || 'forks',
+  }
+}
+
+function normalizeHydraulicConfiguration(configuration, label) {
+  if (!configuration || !Array.isArray(configuration.colliders)) {
+    throw new TypeError(`${label} hydraulic configuration requires a colliders array`)
+  }
+  const colliders = configuration.colliders.map((collider, index) => normalizeHydraulicCollider(collider, index, label))
+  const ids = new Set(colliders.map((collider) => collider.id))
+  if (ids.size !== colliders.length) throw new RangeError(`${label} hydraulic collider ids must be unique`)
+  return {
+    ...configuration,
+    values: { ...(configuration.values || {}) },
+    colliders,
+  }
+}
+
+function interpolateHydraulicValues(currentValues, proposedValues, fraction) {
+  const values = {}
+  const keys = new Set([...Object.keys(currentValues), ...Object.keys(proposedValues)])
+  for (const key of keys) {
+    const current = currentValues[key]
+    const proposed = proposedValues[key]
+    values[key] = Number.isFinite(current) && Number.isFinite(proposed)
+      ? THREE.MathUtils.lerp(current, proposed, fraction)
+      : fraction >= 1 ? proposed : current
+  }
+  return values
+}
+
+function interpolateHydraulicConfiguration(current, proposed, proposedById, fraction) {
+  return {
+    ...current,
+    values: interpolateHydraulicValues(current.values, proposed.values, fraction),
+    colliders: current.colliders.map((from) => {
+      const to = proposedById.get(from.id)
+      const headingDelta = normalizeAngle((to.heading || 0) - (from.heading || 0))
+      return {
+        ...from,
+        ...to,
+        x: THREE.MathUtils.lerp(from.x, to.x, fraction),
+        z: THREE.MathUtils.lerp(from.z, to.z, fraction),
+        halfWidth: THREE.MathUtils.lerp(from.halfWidth, to.halfWidth, fraction),
+        halfLength: THREE.MathUtils.lerp(from.halfLength, to.halfLength, fraction),
+        minY: THREE.MathUtils.lerp(from.minY, to.minY, fraction),
+        maxY: THREE.MathUtils.lerp(from.maxY, to.maxY, fraction),
+        heading: normalizeAngle((from.heading || 0) + headingDelta * fraction),
+      }
+    }),
+  }
+}
+
+function hydraulicMotionDistance(current, proposedById) {
+  let distance = 0
+  for (const collider of current.colliders) {
+    const proposed = proposedById.get(collider.id)
+    const translation = Math.hypot(proposed.x - collider.x, proposed.z - collider.z)
+    const vertical = Math.max(
+      Math.abs(proposed.minY - collider.minY),
+      Math.abs(proposed.maxY - collider.maxY),
+    )
+    const radial = Math.max(
+      Math.hypot(collider.halfWidth, collider.halfLength),
+      Math.hypot(proposed.halfWidth, proposed.halfLength),
+    )
+    const angular = Math.abs(normalizeAngle(proposed.heading - collider.heading)) * radial
+    const resize = Math.max(
+      Math.abs(proposed.halfWidth - collider.halfWidth),
+      Math.abs(proposed.halfLength - collider.halfLength),
+    )
+    distance = Math.max(distance, translation, vertical, angular, resize)
+  }
+  return distance
+}
+
+function penetrationDifference(current, initial) {
+  if (current === initial) return 0
+  return current - initial
+}
+
+function assessHydraulicContacts(contacts, initialBlocking, tolerance) {
+  return contacts.map((contact) => {
+    if (!contact.blocking) return contact
+    const initial = initialBlocking.get(contactKey(contact))
+    const newContact = initial === undefined
+    const horizontalPenetrationDelta = newContact
+      ? contact.horizontalPenetration
+      : penetrationDifference(contact.horizontalPenetration, initial.horizontalPenetration)
+    const verticalPenetrationDelta = newContact
+      ? contact.verticalPenetration
+      : penetrationDifference(contact.verticalPenetration, initial.verticalPenetration)
+    const penetrationDelta = Math.max(horizontalPenetrationDelta, verticalPenetrationDelta)
+    // Treat the horizontal and vertical separating depths independently. A
+    // shallow vertical overlap must not hide a reach command that drives much
+    // deeper into steel, and vice versa. Escape is accepted only when no axis
+    // worsens and at least one axis improves.
+    const worsened = newContact
+      || horizontalPenetrationDelta > tolerance
+      || verticalPenetrationDelta > tolerance
+    return {
+      ...contact,
+      physicalBlocking: true,
+      blocking: worsened,
+      newContact,
+      worsened,
+      escaping: !newContact
+        && !worsened
+        && (horizontalPenetrationDelta < -tolerance || verticalPenetrationDelta < -tolerance),
+      initialPenetration: initial?.penetration ?? null,
+      initialHorizontalPenetration: initial?.horizontalPenetration ?? null,
+      initialVerticalPenetration: initial?.verticalPenetration ?? null,
+      penetrationDelta,
+      horizontalPenetrationDelta,
+      verticalPenetrationDelta,
+    }
+  })
+}
+
+// Resolve simultaneous lift, reach, sideshift, and platform motion as a swept
+// set of world-space OBBs. The solver compares every candidate point with the
+// starting 3D penetration. New overlap and deeper overlap stop at the last safe
+// configuration; lowering or retracting out of a pre-existing overlap remains
+// possible so a machine can never become permanently trapped by correction.
+export function resolveHydraulicMotion(currentConfiguration, proposedConfiguration, obstacles, options = {}) {
+  const current = normalizeHydraulicConfiguration(currentConfiguration, 'current')
+  const proposed = normalizeHydraulicConfiguration(proposedConfiguration, 'proposed')
+  const proposedById = new Map(proposed.colliders.map((collider) => [collider.id, collider]))
+  if (current.colliders.length !== proposed.colliders.length
+    || current.colliders.some((collider) => !proposedById.has(collider.id))) {
+    throw new RangeError('current and proposed hydraulic configurations must contain the same collider ids')
+  }
+  const normalizedObstacles = obstacles.map((obstacle, index) => (
+    obstacle.__normalized ? obstacle : normalizeObstacle(obstacle, index)
+  ))
+  const penetrationTolerance = Math.max(options.penetrationTolerance ?? 1e-5, 0)
+  const stepDistance = Math.max(options.stepDistance ?? .025, .001)
+  const steps = Math.max(1, Math.ceil(hydraulicMotionDistance(current, proposedById) / stepDistance))
+  const contactsById = new Map()
+  const initialRawContacts = collisionQueryWorld(current.colliders, normalizedObstacles)
+  const initialBlocking = new Map(
+    initialRawContacts.filter((contact) => contact.blocking).map((contact) => [contactKey(contact), contact]),
+  )
+  const initialContacts = assessHydraulicContacts(initialRawContacts, initialBlocking, penetrationTolerance)
+  initialContacts.forEach((contact) => contactsById.set(contactKey(contact), contact))
+
+  let safeFraction = 0
+  let blockingFraction = null
+  let blockingContacts = []
+  for (let step = 1; step <= steps; step += 1) {
+    const fraction = step / steps
+    const configuration = interpolateHydraulicConfiguration(current, proposed, proposedById, fraction)
+    const contacts = assessHydraulicContacts(
+      collisionQueryWorld(configuration.colliders, normalizedObstacles),
+      initialBlocking,
+      penetrationTolerance,
+    )
+    contacts.forEach((contact) => contactsById.set(contactKey(contact), contact))
+    blockingContacts = contacts.filter((contact) => contact.blocking)
+    if (blockingContacts.length) {
+      blockingFraction = fraction
+      break
+    }
+    safeFraction = fraction
+  }
+
+  if (blockingFraction === null) {
+    const acceptedConfiguration = interpolateHydraulicConfiguration(current, proposed, proposedById, 1)
+    return {
+      acceptedConfiguration,
+      blocked: false,
+      fraction: 1,
+      contacts: [...contactsById.values()],
+      blockingContacts: [],
+      initialContacts,
+    }
+  }
+
+  let low = safeFraction
+  let high = blockingFraction
+  for (let iteration = 0; iteration < 8; iteration += 1) {
+    const middle = (low + high) * .5
+    const configuration = interpolateHydraulicConfiguration(current, proposed, proposedById, middle)
+    const contacts = assessHydraulicContacts(
+      collisionQueryWorld(configuration.colliders, normalizedObstacles),
+      initialBlocking,
+      penetrationTolerance,
+    )
+    if (contacts.some((contact) => contact.blocking)) {
+      high = middle
+      blockingContacts = contacts.filter((contact) => contact.blocking)
+    } else {
+      low = middle
+    }
+  }
+  const fractionBackoff = Math.max(options.fractionBackoff ?? .0005, 0)
+  const acceptedFraction = Math.max(0, low - fractionBackoff)
+  return {
+    acceptedConfiguration: interpolateHydraulicConfiguration(current, proposed, proposedById, acceptedFraction),
+    blocked: true,
+    fraction: low,
+    contacts: [...contactsById.values()],
+    blockingContacts,
+    initialContacts,
+  }
+}
+
+export function forkTineCollidersFromPose(fork, options = {}) {
+  const length = fork.length ?? DEFAULT_FORK_SPEC.length
+  const spread = fork.spread ?? DEFAULT_FORK_SPEC.spread
+  const tineWidth = fork.tineWidth ?? DEFAULT_FORK_SPEC.tineWidth
+  const thickness = fork.thickness ?? DEFAULT_FORK_SPEC.thickness
+  const horizontalForward = Math.hypot(fork.forwardX, fork.forwardZ)
+  if (horizontalForward < EPSILON) throw new RangeError('fork direction must have a horizontal component')
+  const heading = Math.atan2(fork.forwardX, fork.forwardZ)
+  const forwardY = fork.forwardY || 0
+  const rightY = fork.rightY || 0
+  const upY = Number.isFinite(fork.upY) ? fork.upY : 1
+  const horizontalUp = Math.hypot(fork.upX || 0, fork.upZ || 0)
+  const verticalHalfExtent = Math.abs(forwardY) * length * .5
+    + Math.abs(rightY) * tineWidth * .5
+    + Math.abs(upY) * thickness * .5
+  const centerY = fork.baseY + forwardY * length * .5
+  const prefix = options.idPrefix || 'fork-tine'
+  return [-1, 1].map((side) => {
+    const offset = side * spread * .5
+    return {
+      id: `${prefix}-${side < 0 ? 'left' : 'right'}`,
+      x: fork.baseX + fork.forwardX * length * .5 + fork.rightX * offset,
+      z: fork.baseZ + fork.forwardZ * length * .5 + fork.rightZ * offset,
+      halfWidth: tineWidth * .5,
+      halfLength: horizontalForward * length * .5 + horizontalUp * thickness * .5,
+      heading,
+      minY: centerY + rightY * offset - verticalHalfExtent,
+      maxY: centerY + rightY * offset + verticalHalfExtent,
+      forkTine: true,
+      forkSetId: options.forkSetId || 'forks',
+      maximumApproachAngle: fork.maximumApproachAngle ?? DEFAULT_FORK_SPEC.maximumApproachAngle,
+    }
+  })
+}
+
+export function forkTineCollidersForFrame(frame, specification = DEFAULT_FORK_SPEC, options = {}) {
+  return forkTineCollidersFromPose(readForkPose(frame, { ...DEFAULT_FORK_SPEC, ...specification }), options)
 }
 
 function worldYaw(object) {
@@ -422,6 +869,11 @@ function setWorldPose(object, pose) {
   object.position.copy(position)
   object.quaternion.copy(quaternion)
   object.updateMatrixWorld(true)
+}
+
+function syncPalletVisual(body) {
+  const callback = body?.object?.syncLoadVisual || body?.object?.userData?.syncVisual
+  if (typeof callback === 'function') callback()
 }
 
 function normalizePallet(spec, index = 0) {
@@ -478,37 +930,103 @@ function normalizeSlot(slot, index = 0) {
   }
 }
 
+function palletAxes(pallet) {
+  const yaw = pallet.yaw || 0
+  return {
+    forwardX: -Math.sin(yaw),
+    forwardZ: -Math.cos(yaw),
+    rightX: Math.cos(yaw),
+    rightZ: -Math.sin(yaw),
+  }
+}
+
+function tineChannelAt(fork, pallet, axes, tineOffset, start, end) {
+  const baseDx = fork.baseX - pallet.x
+  const baseDz = fork.baseZ - pallet.z
+  const baseLateral = baseDx * axes.rightX + baseDz * axes.rightZ
+  const rightProjection = fork.rightX * axes.rightX + fork.rightZ * axes.rightZ
+  const forwardProjection = fork.forwardX * axes.rightX + fork.forwardZ * axes.rightZ
+  const atStart = baseLateral + tineOffset * rightProjection + start * forwardProjection
+  const atEnd = baseLateral + tineOffset * rightProjection + end * forwardProjection
+  const halfTine = Math.abs(rightProjection) * fork.tineWidth * .5
+  const clearance = pallet.channelClearance ?? DEFAULT_PALLET_SPEC.channelClearance
+  const stringerWidth = pallet.stringerWidth ?? DEFAULT_PALLET_SPEC.stringerWidth
+  const edgeInset = pallet.edgeStringerInset ?? DEFAULT_PALLET_SPEC.edgeStringerInset
+  const edgeCenter = pallet.width * .5 - edgeInset
+  const halfStringer = stringerWidth * .5
+  const channels = [
+    { min: -edgeCenter + halfStringer + clearance, max: -halfStringer - clearance },
+    { min: halfStringer + clearance, max: edgeCenter - halfStringer - clearance },
+  ]
+  const sweptMin = Math.min(atStart, atEnd) - halfTine
+  const sweptMax = Math.max(atStart, atEnd) + halfTine
+  const channel = channels.findIndex((candidate) => sweptMin >= candidate.min - EPSILON && sweptMax <= candidate.max + EPSILON)
+  return { channel, sweptMin, sweptMax, atStart, atEnd }
+}
+
 export function testForkPalletEngagement(fork, pallet) {
   const dx = pallet.x - fork.baseX
   const dz = pallet.z - fork.baseZ
   const lateral = dx * fork.rightX + dz * fork.rightZ
   const longitudinal = dx * fork.forwardX + dz * fork.forwardZ
-  const palletForwardX = -Math.sin(pallet.yaw || 0)
-  const palletForwardZ = -Math.cos(pallet.yaw || 0)
-  const directionAlignment = Math.abs(fork.forwardX * palletForwardX + fork.forwardZ * palletForwardZ)
+  const axes = palletAxes(pallet)
+  const forwardAlignment = fork.forwardX * axes.forwardX + fork.forwardZ * axes.forwardZ
+  const rightAlignment = fork.forwardX * axes.rightX + fork.forwardZ * axes.rightZ
+  const directionAlignment = Math.abs(forwardAlignment)
   const requiredAlignment = Math.cos(fork.maximumApproachAngle ?? 18 * DEG)
-  const frontDistance = longitudinal - pallet.depth * .5
-  const penetration = THREE.MathUtils.clamp(fork.length - Math.max(0, frontDistance), 0, pallet.depth)
-  const tineOuterEdge = fork.spread * .5 + fork.tineWidth * .5
-  const lateralLimit = Math.max(0, pallet.width * .5 - tineOuterEdge)
-  const forkTop = fork.baseY + fork.thickness * .5
+  // Project the rotated pallet footprint onto the fork travel axis, then take
+  // the true interval overlap. The old expression reported full insertion when
+  // the pallet was mostly behind the fork heel.
+  const projectedHalfLength = Math.abs(forwardAlignment) * pallet.depth * .5 + Math.abs(rightAlignment) * pallet.width * .5
+  const frontDistance = longitudinal - projectedHalfLength
+  const backDistance = longitudinal + projectedHalfLength
+  const overlapStart = Math.max(0, frontDistance)
+  const overlapEnd = Math.min(fork.length, backDistance)
+  const penetration = Math.max(0, overlapEnd - overlapStart)
+  const tineOffsets = [-fork.spread * .5, fork.spread * .5]
+  const tineChannels = tineOffsets.map((offset) => tineChannelAt(fork, pallet, axes, offset, overlapStart, overlapEnd))
+  const channelEligible = tineChannels.every((entry) => entry.channel >= 0)
+    && new Set(tineChannels.map((entry) => entry.channel)).size === 2
+  const upY = Number.isFinite(fork.upY) ? fork.upY : 1
+  const forwardY = fork.forwardY || 0
+  const verticalHalfThickness = Math.abs(upY) * fork.thickness * .5
+  const topAtStart = fork.baseY + forwardY * overlapStart + verticalHalfThickness
+  const topAtEnd = fork.baseY + forwardY * overlapEnd + verticalHalfThickness
+  const forkTop = fork.baseY + verticalHalfThickness
   const pocketBottom = pallet.y + (pallet.pocketMin ?? DEFAULT_PALLET_SPEC.pocketMin)
   const pocketTop = pallet.y + (pallet.pocketMax ?? DEFAULT_PALLET_SPEC.pocketMax)
+  const pocketTolerance = pallet.pocketTolerance ?? .006
   const horizontalEligible = directionAlignment >= requiredAlignment
-    && Math.abs(lateral) <= lateralLimit + EPSILON
-    && longitudinal + pallet.depth * .5 >= 0
+    && backDistance >= 0
     && frontDistance <= fork.length
     && penetration >= (fork.minimumPenetration ?? DEFAULT_FORK_SPEC.minimumPenetration)
-  const verticalEligible = forkTop >= pocketBottom - .025 && forkTop <= pocketTop + .025
+    && channelEligible
+  // Both ends of the portion inside the pallet must remain inside the pocket.
+  // This rejects a pitched tine whose heel fits but whose tip cuts a deck board.
+  const minForkTop = Math.min(topAtStart, topAtEnd)
+  const maxForkTop = Math.max(topAtStart, topAtEnd)
+  const verticalEligible = minForkTop >= pocketBottom - pocketTolerance && maxForkTop <= pocketTop + pocketTolerance
+  const maximumLoadWeight = fork.maximumLoadWeight ?? DEFAULT_FORK_SPEC.maximumLoadWeight
+  const loadEligible = !Number.isFinite(maximumLoadWeight) || (pallet.weight || 0) <= maximumLoadWeight
+  const geometryEligible = horizontalEligible && verticalEligible
   return {
-    eligible: horizontalEligible && verticalEligible,
+    eligible: geometryEligible && loadEligible,
+    geometryEligible,
     horizontalEligible,
     verticalEligible,
+    channelEligible,
+    loadEligible,
+    rejectionReason: !geometryEligible ? 'geometry' : !loadEligible ? 'overweight' : null,
     penetration,
+    overlapStart,
+    overlapEnd,
     lateral,
     longitudinal,
     forkTop,
+    minimumForkTop: minForkTop,
+    maximumForkTop: maxForkTop,
     directionAlignment,
+    tineChannels,
   }
 }
 
@@ -538,6 +1056,62 @@ export function findRackSlotPlacement(pallet, slots, options = {}) {
   return best
 }
 
+export function evaluateRackPlacementSupport(pallet, slot, obstacles, options = {}) {
+  if (!slot) return { eligible: false, supportY: null, beamIds: [], reason: 'no-slot' }
+  const normalizedObstacles = obstacles.map((obstacle, index) => (
+    obstacle.__normalized ? obstacle : normalizeObstacle(obstacle, index)
+  ))
+  const rackBeams = normalizedObstacles.filter((obstacle) => obstacle.kind === 'rack-beam' && !obstacle.disabled)
+  // A solver can be used with abstract slots and no authored facility. Once a
+  // facility supplies rack beams, however, every placement must be supported by
+  // real beam geometry at the selected slot.
+  if (!rackBeams.length) {
+    return {
+      eligible: options.requirePhysicalSupport === true ? false : true,
+      supportY: slot.y,
+      beamIds: [],
+      reason: options.requirePhysicalSupport === true ? 'no-support-beams' : null,
+      virtual: true,
+    }
+  }
+
+  const verticalTolerance = options.verticalTolerance ?? .06
+  const footprint = {
+    x: slot.x,
+    z: slot.z,
+    halfWidth: pallet.width * .5,
+    halfLength: pallet.depth * .5,
+    heading: slot.yaw || 0,
+    minY: slot.y - verticalTolerance,
+    maxY: slot.y + verticalTolerance,
+  }
+  const supports = rackBeams.filter((beam) => (
+    Number.isFinite(beam.maxY)
+    && Math.abs(beam.maxY - slot.y) <= verticalTolerance
+    && colliderIntersectsObstacle(footprint, beam)
+  ))
+  const uniqueSupports = [...new Map(supports.map((beam) => [beam.id, beam])).values()]
+  const supportOffsets = uniqueSupports.map((beam) => {
+    const local = worldToLocal2(
+      { x: slot.x, z: slot.z, heading: slot.yaw || 0 },
+      beam.boundX,
+      beam.boundZ,
+    )
+    return local.z
+  })
+  const separation = supportOffsets.length > 1 ? Math.max(...supportOffsets) - Math.min(...supportOffsets) : 0
+  const requiredSeparation = options.minimumBeamSeparation ?? Math.min(pallet.depth * .4, .45)
+  const eligible = uniqueSupports.length >= (options.minimumSupportBeams ?? 2) && separation >= requiredSeparation
+  return {
+    eligible,
+    supportY: eligible ? Math.max(...uniqueSupports.map((beam) => beam.maxY)) : null,
+    beamIds: uniqueSupports.map((beam) => beam.id),
+    separation,
+    reason: eligible ? null : uniqueSupports.length < 2 ? 'insufficient-support-beams' : 'support-beams-too-close',
+    virtual: false,
+  }
+}
+
 function readForkPose(frame, specification) {
   frame.updateWorldMatrix(true, false)
   const localBase = new THREE.Vector3(...specification.localBase)
@@ -545,14 +1119,20 @@ function readForkPose(frame, specification) {
   const quaternion = frame.getWorldQuaternion(new THREE.Quaternion())
   const forward = new THREE.Vector3(...specification.localForward).normalize().applyQuaternion(quaternion)
   const right = new THREE.Vector3(1, 0, 0).applyQuaternion(quaternion)
+  const up = new THREE.Vector3(0, 1, 0).applyQuaternion(quaternion)
   return {
     baseX: base.x,
     baseY: base.y,
     baseZ: base.z,
     forwardX: forward.x,
+    forwardY: forward.y,
     forwardZ: forward.z,
     rightX: right.x,
+    rightY: right.y,
     rightZ: right.z,
+    upX: up.x,
+    upY: up.y,
+    upZ: up.z,
     ...specification,
   }
 }
@@ -579,8 +1159,25 @@ function palletObstacle(body) {
     halfLength: body.depth * .5,
     minY: pose.y,
     maxY: pose.y + body.height,
+    width: body.width,
+    depth: body.depth,
+    pocketMin: body.pocketMin,
+    pocketMax: body.pocketMax,
+    stringerWidth: body.stringerWidth,
+    edgeStringerInset: body.edgeStringerInset,
+    channelClearance: body.channelClearance,
   })
   return body.obstacleCache
+}
+
+function worldColliderToLocal(pose, collider) {
+  const local = worldToLocal2(pose, collider.x, collider.z)
+  return {
+    ...collider,
+    offsetX: local.x,
+    offsetZ: local.z,
+    heading: normalizeAngle((collider.heading || 0) - (pose.heading || 0)),
+  }
 }
 
 // What a contact with each class of facility hardware means to an evaluator.
@@ -605,13 +1202,17 @@ export class WarehouseLoadPhysics {
     this.floorY = options.floorY ?? 0
     this.fixedStep = options.fixedStep || 1 / 90
     this.onEvent = options.onEvent || (() => {})
+    this.engagementEligibility = options.engagementEligibility || null
     this.obstacles = []
     this.pallets = []
     this.rackSlots = []
     this.carried = null
     this.contactIds = new Set()
+    this.hydraulicContactIds = new Set()
+    this.hydraulicConfiguration = null
     this.coneAccumulator = 0
     this.lastForkTop = null
+    this.lastEngagement = null
     ;(options.obstacles || []).forEach((obstacle) => this.registerObstacle(obstacle))
     ;(options.rackSlots || []).forEach((slot) => this.registerRackSlot(slot))
     ;(options.pallets || []).forEach((pallet) => this.registerPallet(pallet))
@@ -648,14 +1249,16 @@ export class WarehouseLoadPhysics {
       slot.initialOccupiedBy = body.id
     }
     this.pallets.push(body)
+    syncPalletVisual(body)
     return body
   }
 
-  configureTruck({ truckRoot, forkFrame, truckColliders, forkSpecification } = {}) {
+  configureTruck({ truckRoot, forkFrame, truckColliders, forkSpecification, engagementEligibility } = {}) {
     if (truckRoot) this.truckRoot = truckRoot
     if (forkFrame) this.forkFrame = forkFrame
     if (truckColliders) this.truckColliders = truckColliders.map(normalizeCollider)
     if (forkSpecification) this.forkSpecification = { ...this.forkSpecification, ...forkSpecification }
+    if (engagementEligibility !== undefined) this.engagementEligibility = engagementEligibility
   }
 
   activeObstacles() {
@@ -696,28 +1299,53 @@ export class WarehouseLoadPhysics {
     const dx = to.x - from.x
     const dz = to.z - from.z
     const distance = Math.hypot(dx, dz)
-    if (distance < 1e-5) return false
+    if (distance < 1e-5) return { moved: false, contacts: [] }
     const remaining = distance * (1 - result.fraction)
-    if (remaining < 1e-5) return false
+    if (remaining < 1e-5) return { moved: false, contacts: [] }
     let moved = false
+    const pushContacts = new Map()
+    const attemptedPalletIds = new Set()
     for (const contact of result.blockingContacts) {
       const palletId = contact.obstacle.palletId
-      if (!palletId) continue
+      if (!palletId || attemptedPalletIds.has(palletId)) continue
+      attemptedPalletIds.add(palletId)
       const body = this.pallets.find((candidate) => candidate.id === palletId)
       // Racked loads stay put: nudging a beam-level pallet with the mast should
       // be scored as a rack strike, not turned into a shoving match.
-      if (!body || body === this.carried || body.status !== 'floor') continue
+      if (!body || body === this.carried || body.status !== 'floor' || body.movable === false) continue
       const step = remaining * this.pushEfficiency(body)
       if (step < 1e-5) continue
-      setWorldPose(body.object, {
+      body.pose = worldPose(body.object)
+      const fromPose = { x: body.pose.x, z: body.pose.z, heading: body.pose.yaw }
+      const targetPose = {
         x: body.pose.x + (dx / distance) * step,
-        y: body.pose.y,
         z: body.pose.z + (dz / distance) * step,
-        yaw: body.pose.yaw,
+        heading: body.pose.yaw,
+      }
+      const pushedCollider = {
+        id: `pushed:${body.id}`,
+        offsetX: 0,
+        offsetZ: 0,
+        halfWidth: body.width * .5,
+        halfLength: body.depth * .5,
+        minY: body.pose.y,
+        maxY: body.pose.y + body.height,
+      }
+      const obstacles = this.activeObstacles().filter((obstacle) => obstacle.palletId !== body.id)
+      const pushResult = sweepPose(fromPose, targetPose, [pushedCollider], obstacles, { stepDistance: .025 })
+      pushResult.contacts.forEach((pushContact) => pushContacts.set(contactKey(pushContact), pushContact))
+      const acceptedDistance = Math.hypot(pushResult.pose.x - fromPose.x, pushResult.pose.z - fromPose.z)
+      if (acceptedDistance < 1e-5) continue
+      setWorldPose(body.object, {
+        x: pushResult.pose.x,
+        y: body.pose.y,
+        z: pushResult.pose.z,
+        yaw: pushResult.pose.heading,
       })
       body.pose = worldPose(body.object)
+      syncPalletVisual(body)
       body.obstacleCache = null
-      body.pushedDistance = (body.pushedDistance || 0) + step
+      body.pushedDistance = (body.pushedDistance || 0) + acceptedDistance
       moved = true
       this.onEvent({
         type: 'load-pushed',
@@ -726,26 +1354,52 @@ export class WarehouseLoadPhysics {
         pallet: body,
         obstacle: contact.obstacle,
         distance: body.pushedDistance,
+        blocked: pushResult.blocked,
       })
     }
-    return moved
+    return { moved, contacts: [...pushContacts.values()] }
   }
 
   resolveTruckMotion(previousPose, proposedPose, options = {}) {
-    const colliders = [...this.truckColliders]
+    const collidersById = new Map(this.truckColliders.map((collider) => [collider.id, collider]))
     const carried = this.carriedCollider()
-    if (carried) colliders.push(carried)
+    if (carried) collidersById.set(carried.id, carried)
+    // The last accepted hydraulic bodies become ordinary truck-local sweep
+    // bodies during travel. This closes the old gap where forks were checked
+    // while lifting but could still drive horizontally through the same steel.
+    const hydraulicConfiguration = options.hydraulicConfiguration || this.hydraulicConfiguration
+    for (const collider of hydraulicConfiguration?.colliders || []) {
+      // A load can settle or be released after the hydraulic configuration was
+      // committed. Do not keep its stale carried envelope for the next travel
+      // step once the pallet has become an active world obstacle again.
+      if (collider.id.startsWith('carried:') && collider.id !== `carried:${this.carried?.id || ''}`) continue
+      collidersById.set(collider.id, worldColliderToLocal(previousPose, collider))
+    }
+    const colliders = [...collidersById.values()]
     let result = sweepPose(previousPose, proposedPose, colliders, this.activeObstacles(), options)
     // If the block was a floor pallet, shove it and re-solve so the truck
     // advances into the space it just cleared.
-    if (result.blocked && this.pushBlockingPallets(result, previousPose, proposedPose)) {
+    const pushResult = result.blocked
+      ? this.pushBlockingPallets(result, previousPose, proposedPose)
+      : { moved: false, contacts: [] }
+    if (pushResult.moved) {
       result = sweepPose(previousPose, proposedPose, colliders, this.activeObstacles(), options)
     }
-    const currentContactIds = new Set(result.contacts.map((contact) => contact.obstacle.id))
-    for (const contact of result.contacts) {
+    if (pushResult.contacts.length) {
+      const combinedContacts = new Map(result.contacts.map((contact) => [contactKey(contact), contact]))
+      pushResult.contacts.forEach((contact) => combinedContacts.set(contactKey(contact), contact))
+      result = { ...result, contacts: [...combinedContacts.values()] }
+    }
+    // Support-skin and valid fork-channel contacts are evidence, not strikes.
+    // Knockable objects still report even though they intentionally do not
+    // block travel.
+    const reportableContacts = result.contacts.filter((contact) => contact.blocking || contact.obstacle.knockable)
+    const currentContactIds = new Set(reportableContacts.map((contact) => contact.obstacle.id))
+    const emittedContactIds = new Set(this.contactIds)
+    for (const contact of reportableContacts) {
       const registeredObstacle = this.obstacles.find((candidate) => candidate.id === contact.obstacle.id)
       const obstacle = registeredObstacle || contact.obstacle
-      if (!this.contactIds.has(contact.obstacle.id)) {
+      if (!emittedContactIds.has(contact.obstacle.id)) {
         const rule = CONTACT_RULES[obstacle.kind] || DEFAULT_CONTACT_RULE
         this.onEvent({
           ...rule,
@@ -755,11 +1409,55 @@ export class WarehouseLoadPhysics {
           carriedLoad: contact.collider.id.startsWith('carried:'),
           blocking: contact.blocking,
         })
+        emittedContactIds.add(contact.obstacle.id)
       }
       if (obstacle.knockable) this.knockObstacle(obstacle, previousPose, proposedPose, options.speed || 0)
     }
     this.contactIds = currentContactIds
     return result
+  }
+
+  resolveHydraulicMotion(currentConfiguration, proposedConfiguration, options = {}) {
+    const result = resolveHydraulicMotion(
+      currentConfiguration,
+      proposedConfiguration,
+      this.activeObstacles(),
+      options,
+    )
+    if (options.commit !== false) this.hydraulicConfiguration = result.acceptedConfiguration
+
+    const byObstacle = new Map()
+    for (const contact of result.blockingContacts) {
+      const existing = byObstacle.get(contact.obstacle.id)
+      if (!existing || contact.penetration > existing.penetration) byObstacle.set(contact.obstacle.id, contact)
+    }
+    const currentIds = new Set(byObstacle.keys())
+    if (options.emitEvents !== false) {
+      for (const contact of byObstacle.values()) {
+        if (this.hydraulicContactIds.has(contact.obstacle.id) || this.contactIds.has(contact.obstacle.id)) continue
+        const registeredObstacle = this.obstacles.find((candidate) => candidate.id === contact.obstacle.id)
+        const obstacle = registeredObstacle || contact.obstacle
+        const rule = CONTACT_RULES[obstacle.kind] || DEFAULT_CONTACT_RULE
+        this.onEvent({
+          ...rule,
+          obstacle,
+          collider: contact.collider,
+          label: obstacle.label || obstacle.kind || 'facility',
+          carriedLoad: contact.collider.id.startsWith('carried:'),
+          blocking: true,
+          hydraulicMotion: true,
+          penetration: contact.penetration,
+          penetrationDelta: contact.penetrationDelta,
+        })
+      }
+    }
+    this.hydraulicContactIds = currentIds
+    return result
+  }
+
+  commitHydraulicConfiguration(configuration) {
+    this.hydraulicConfiguration = normalizeHydraulicConfiguration(configuration, 'committed')
+    return this.hydraulicConfiguration
   }
 
   knockObstacle(obstacle, previousPose, proposedPose, speed) {
@@ -813,8 +1511,39 @@ export class WarehouseLoadPhysics {
     }
   }
 
-  attachPallet(body, forkPose) {
+  evaluatePalletEngagement(body, forkPose) {
+    const pose = body.pose || worldPose(body.object)
+    const geometric = testForkPalletEngagement(forkPose, { ...body, ...pose })
+    let hookEligible = true
+    let hookReason = null
+    if (this.engagementEligibility) {
+      const verdict = this.engagementEligibility({ pallet: body, fork: forkPose, engagement: geometric })
+      if (verdict === false) hookEligible = false
+      else if (verdict && typeof verdict === 'object') {
+        hookEligible = verdict.eligible !== false
+        hookReason = verdict.reason || null
+      }
+    }
+    const loadEligible = geometric.loadEligible && hookEligible
+    return {
+      ...geometric,
+      eligible: geometric.geometryEligible && loadEligible,
+      loadEligible,
+      rejectionReason: !geometric.geometryEligible
+        ? 'geometry'
+        : !geometric.loadEligible
+          ? 'overweight'
+          : !hookEligible
+            ? hookReason || 'load-ineligible'
+            : null,
+    }
+  }
+
+  attachPallet(body, forkPose, engagement = null) {
     if (!this.forkFrame || this.carried) return false
+    const eligibility = engagement || this.evaluatePalletEngagement(body, forkPose)
+    this.lastEngagement = { palletId: body.id, ...eligibility }
+    if (!eligibility.eligible) return false
     const pose = worldPose(body.object)
     this.forkFrame.updateWorldMatrix(true, false)
     body.carryPosition.copy(this.forkFrame.worldToLocal(new THREE.Vector3(pose.x, pose.y, pose.z)))
@@ -861,6 +1590,7 @@ export class WarehouseLoadPhysics {
     body.object.quaternion.copy(quaternion)
     body.object.updateMatrixWorld(true)
     body.pose = worldPose(body.object)
+    syncPalletVisual(body)
     if (this.truckRoot) {
       const truckPose = worldPose(this.truckRoot)
       const local = worldToLocal2({ x: truckPose.x, z: truckPose.z, heading: truckPose.yaw }, body.pose.x, body.pose.z)
@@ -872,14 +1602,19 @@ export class WarehouseLoadPhysics {
     }
   }
 
-  settleCarriedPallet(slot = null) {
+  settleCarriedPallet(slot = null, placementSupport = null) {
     const body = this.carried
     if (!body) return false
+    const support = slot
+      ? placementSupport || evaluateRackPlacementSupport(body, slot, this.obstacles)
+      : null
+    if (slot && !support.eligible) return false
     const target = slot
-      ? { x: slot.x, y: slot.y, z: slot.z, yaw: slot.yaw }
+      ? { x: slot.x, y: support.supportY, z: slot.z, yaw: slot.yaw }
       : { x: body.pose.x, y: this.floorY, z: body.pose.z, yaw: body.pose.yaw }
     setWorldPose(body.object, target)
     body.pose = worldPose(body.object)
+    syncPalletVisual(body)
     body.status = slot ? 'racked' : 'floor'
     body.slotId = slot?.id || null
     body.supportY = target.y
@@ -888,7 +1623,13 @@ export class WarehouseLoadPhysics {
     body.obstacleCache = null
     if (slot) slot.occupiedBy = body.id
     this.carried = null
-    this.onEvent({ type: slot ? 'pallet-racked' : 'pallet-grounded', pallet: body, slot, severity: 'info' })
+    this.onEvent({
+      type: slot ? 'pallet-racked' : 'pallet-grounded',
+      pallet: body,
+      slot,
+      supportBeamIds: support?.beamIds || [],
+      severity: 'info',
+    })
     return true
   }
 
@@ -900,42 +1641,64 @@ export class WarehouseLoadPhysics {
       const pallet = { ...this.carried.pose, ...this.carried }
       const validSlot = slot || findRackSlotPlacement(pallet, this.rackSlots, this.forkSpecification)
       if (!validSlot && Math.abs(this.carried.pose.y - this.floorY) > this.forkSpecification.landingTolerance) return false
-      return this.settleCarriedPallet(validSlot)
+      const support = validSlot ? evaluateRackPlacementSupport(this.carried, validSlot, this.obstacles) : null
+      if (validSlot && !support.eligible) return false
+      return this.settleCarriedPallet(validSlot, support)
     }
-    return this.settleCarriedPallet(slot || null)
+    if (!slot) return this.settleCarriedPallet(null)
+    const support = evaluateRackPlacementSupport(this.carried, slot, this.obstacles)
+    return support.eligible ? this.settleCarriedPallet(slot, support) : false
   }
 
-  update(dt, options = {}) {
+  update(dt) {
     this.stepCones(dt)
     if (!this.forkFrame) return this.snapshot()
     const fork = readForkPose(this.forkFrame, this.forkSpecification)
     const forkTop = fork.baseY + fork.thickness * .5
 
     if (this.carried) {
+      this.lastEngagement = null
       this.syncCarriedPallet()
       const body = this.carried
       const descending = body.pose.y < body.lastBaseY - .0002
       body.wasClear ||= body.pose.y > body.originSupportY + this.forkSpecification.dropClearance
       const slot = findRackSlotPlacement({ ...body.pose, ...body }, this.rackSlots, this.forkSpecification)
-      if (body.wasClear && descending && slot) this.settleCarriedPallet(slot)
+      const support = slot ? evaluateRackPlacementSupport(body, slot, this.obstacles) : null
+      if (body.wasClear && descending && slot && support.eligible) this.settleCarriedPallet(slot, support)
       else if (body.wasClear && descending && body.pose.y <= this.floorY + this.forkSpecification.landingTolerance) this.settleCarriedPallet(null)
       else body.lastBaseY = body.pose.y
     } else {
       let best = null
+      let diagnostic = null
       for (const body of this.pallets) {
         const pose = worldPose(body.object)
         body.pose = pose
-        const engagement = testForkPalletEngagement(fork, { ...body, ...pose })
-        if (!engagement.horizontalEligible) {
+        const engagement = this.evaluatePalletEngagement(body, fork)
+        if (!diagnostic || engagement.penetration > diagnostic.penetration) {
+          diagnostic = { palletId: body.id, ...engagement }
+        }
+        if (!engagement.horizontalEligible || !engagement.loadEligible) {
           body.candidateForkY = null
           continue
         }
-        if (engagement.eligible && body.candidateForkY === null) body.candidateForkY = forkTop
-        if (body.candidateForkY !== null && forkTop - body.candidateForkY >= this.forkSpecification.pickupClearance) {
+        const engagementForkTop = engagement.maximumForkTop ?? forkTop
+        if (engagement.eligible && body.candidateForkY === null) {
+          const pocketTop = pose.y + (body.pocketMax ?? DEFAULT_PALLET_SPEC.pocketMax)
+          const contactTolerance = this.forkSpecification.pickupContactTolerance
+            ?? DEFAULT_FORK_SPEC.pickupContactTolerance
+          const minimumTravel = this.forkSpecification.pickupClearance
+            ?? DEFAULT_FORK_SPEC.pickupClearance
+          body.candidateForkY = Math.max(
+            engagementForkTop + minimumTravel,
+            pocketTop - contactTolerance,
+          )
+        }
+        if (body.candidateForkY !== null && engagementForkTop >= body.candidateForkY - EPSILON) {
           if (!best || engagement.penetration > best.engagement.penetration) best = { body, engagement }
         }
       }
-      if (best) this.attachPallet(best.body, fork)
+      this.lastEngagement = diagnostic
+      if (best) this.attachPallet(best.body, fork, best.engagement)
     }
 
     this.lastForkTop = forkTop
@@ -946,6 +1709,7 @@ export class WarehouseLoadPhysics {
     return {
       carriedPalletId: this.carried?.id || null,
       carriedWeight: this.carried?.weight || 0,
+      engagement: this.lastEngagement,
       pallets: this.pallets.map((body) => ({
         id: body.id,
         status: body.status,
@@ -959,8 +1723,11 @@ export class WarehouseLoadPhysics {
   reset() {
     this.carried = null
     this.contactIds.clear()
+    this.hydraulicContactIds.clear()
+    this.hydraulicConfiguration = null
     this.coneAccumulator = 0
     this.lastForkTop = null
+    this.lastEngagement = null
     for (const obstacle of this.obstacles) {
       if (!obstacle.knockable) continue
       obstacle.x = obstacle.initialX
@@ -981,6 +1748,7 @@ export class WarehouseLoadPhysics {
     for (const body of this.pallets) {
       setWorldPose(body.object, body.initialPose)
       body.pose = { ...body.initialPose }
+      syncPalletVisual(body)
       body.status = body.initialStatus
       body.slotId = body.initialSlotId
       body.supportY = body.initialPose.y

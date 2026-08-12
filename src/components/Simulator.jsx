@@ -1,15 +1,36 @@
 import { forwardRef, useEffect, useImperativeHandle, useRef, useState } from 'react'
 import * as THREE from 'three'
 import { HDRLoader } from 'three/addons/loaders/HDRLoader.js'
-import { XRControllerModelFactory } from 'three/addons/webxr/XRControllerModelFactory.js'
-import { XRHandModelFactory } from 'three/addons/webxr/XRHandModelFactory.js'
 import { Crosshair, Gamepad2, Headphones, Keyboard, MousePointer2, RotateCcw, Volume2 } from 'lucide-react'
-import { createWarehouseLoadPhysics, forkConfigurationForProfile } from '../sim/loadPhysics.js'
+import {
+  colliderAtPose,
+  createWarehouseLoadPhysics,
+  forkConfigurationForProfile,
+  forkTineCollidersForFrame,
+} from '../sim/loadPhysics.js'
 import { controlMeshes, createVehicleRig } from '../sim/vehicleFactory.js'
 import { FACILITY, createWarehouse } from '../sim/warehouse.js'
-import { advanceSteerAngle, integrateSteering, steerLimits, tailSwingRadius } from '../sim/vehicleDynamics.js'
+import {
+  acceptedMotion,
+  advanceDriveSpeed,
+  advanceSteerAngle,
+  integrateSteering,
+  PROVISIONAL_LONGITUDINAL_LIMITS,
+  provisionalSteeringSpeedScale,
+  steerLimits,
+  tailSwingRadius,
+} from '../sim/vehicleDynamics.js'
 import { solveStability, stabilityWarning } from '../sim/stability.js'
 import { applyFleetSurfacing } from '../sim/surfacing.js'
+import { contactAssessment } from '../sim/safetyEvents.js'
+import { desktopPresenceHeld, isBellyControlActive, isNativeInteractiveTarget, removePointerDrag } from '../sim/inputSafety.js'
+import { fetchArrayBuffer } from '../sim/assetFetch.js'
+import {
+  hasLocalFloorReferenceSpace,
+  releaseRemovedXRInputSources,
+  requestImmersiveSessionWithFallback,
+  xrOriginHeight,
+} from '../sim/xrLifecycle.js'
 
 // Broad fail-safe bounds sit just inside the authored walls. Exact contact is
 // resolved by the warehouse wall, column, rack, and fixture colliders below.
@@ -32,12 +53,37 @@ const POUND = .45359237
 // old fixed 1.5 rad, about 86 degrees -- reads as the wheel rocking side to side
 // rather than being steered. Half travel in radians is turns * PI.
 const STEER_LOCK_TO_LOCK = { counterbalance: 3.5, reach: 1.25, 'order-picker': 1.25, pallet: 1 }
+// Longitudinal limits are explicit SI accelerations, not exponential damping
+// constants. These are conservative training defaults reconstructed from the
+// current response envelope. Replace them with serial-specific measured curves
+// before manufacturer-level replica certification.
 const DYNAMICS = {
-  reach: { acceleration: 2.45, braking: 6.8, liftRate: 30.6, reverseScale: .86 },
-  'order-picker': { acceleration: 2.05, braking: 6.4, liftRate: 40, reverseScale: .82 },
-  pallet: { acceleration: 3.2, braking: 8.2, liftRate: 4.2, reverseScale: .72 },
-  counterbalance: { acceleration: 2.15, braking: 6.1, liftRate: 43, reverseScale: .86 },
+  reach: { ...PROVISIONAL_LONGITUDINAL_LIMITS.reach, liftRate: 30.6, reverseScale: .86 },
+  'order-picker': { ...PROVISIONAL_LONGITUDINAL_LIMITS['order-picker'], liftRate: 40, reverseScale: .82 },
+  pallet: { ...PROVISIONAL_LONGITUDINAL_LIMITS.pallet, liftRate: 4.2, reverseScale: .72 },
+  counterbalance: { ...PROVISIONAL_LONGITUDINAL_LIMITS.counterbalance, liftRate: 43, reverseScale: .86 },
 }
+const FIXED_SIMULATION_STEP = 1 / 90
+const MAX_SIMULATION_STEPS_PER_FRAME = 18
+const SIMULATION_TIME_EPSILON = 1e-10
+const DESKTOP_PIXEL_RATIO_CAP = 1.7
+const DESKTOP_SHADOW_MAP_SIZE = 2048
+const ENVIRONMENT_CONTENT_REVISION = '9b3d611cadc3'
+const ENVIRONMENT_LOAD_TIMEOUT_MS = 15000
+// Provisional until a GPU capture is completed on each supported Quest model.
+const PROVISIONAL_QUEST_RENDER_TIER = {
+  framebufferScaleFactor: .82,
+  foveation: .8,
+  shadowMapSize: 1024,
+}
+const DESKTOP_OPERATION_KEYS = new Set([
+  'ShiftLeft', 'ShiftRight',
+  'KeyW', 'KeyS', 'KeyA', 'KeyD',
+  'KeyE', 'KeyQ', 'KeyR', 'KeyF',
+  'KeyT', 'KeyG', 'KeyZ', 'KeyC', 'KeyB',
+  'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight',
+  'Space', 'Home',
+])
 
 // Body envelopes stop the power unit and operator compartment while leaving
 // the authored forks free to enter a pallet. Walk-behind equipment includes a
@@ -47,7 +93,7 @@ const TRUCK_COLLIDERS = {
     { id: 'power-unit', offsetX: 0, offsetZ: .48, halfWidth: .69, halfLength: .92, minY: 0, maxY: 2.35 },
   ],
   'order-picker': [
-    { id: 'operator-platform', offsetX: 0, offsetZ: .43, halfWidth: .57, halfLength: .96, minY: 0, maxY: 2.65 },
+    { id: 'power-unit', offsetX: 0, offsetZ: .58, halfWidth: .57, halfLength: .78, minY: 0, maxY: 1.08 },
   ],
   'pallet-rider': [
     { id: 'power-unit', offsetX: 0, offsetZ: .38, halfWidth: .5, halfLength: .58, minY: 0, maxY: 1.48 },
@@ -123,28 +169,198 @@ function controlPrompt(profile) {
   return 'Hold the presence control, turn the wheel, press the pedals, and manipulate each hydraulic lever. Account for rear counterweight swing.'
 }
 
-const Simulator = forwardRef(function Simulator({ profile, onTelemetry, onSafetyEvent, running, onRunningChange }, ref) {
+function createProceduralControllerVisual(index) {
+  const group = new THREE.Group()
+  group.name = `offline_xr_controller_${index}`
+  const shellMaterial = new THREE.MeshStandardMaterial({ color: 0x20292e, roughness: .54, metalness: .18 })
+  const accentMaterial = new THREE.MeshStandardMaterial({ color: index ? 0x0f8c87 : 0xffad21, roughness: .42, metalness: .12 })
+  const body = new THREE.Mesh(new THREE.CapsuleGeometry(.026, .095, 5, 10), shellMaterial)
+  body.rotation.x = Math.PI * .38
+  body.position.set(0, -.018, .035)
+  const guard = new THREE.Mesh(new THREE.TorusGeometry(.031, .006, 8, 20, Math.PI * 1.35), accentMaterial)
+  guard.rotation.set(Math.PI * .5, 0, -.55)
+  guard.position.set(0, .006, -.028)
+  const trigger = new THREE.Mesh(new THREE.BoxGeometry(.025, .014, .026), accentMaterial)
+  trigger.position.set(0, -.002, -.04)
+  group.add(body, guard, trigger)
+  group.userData.dispose = () => {
+    body.geometry.dispose()
+    guard.geometry.dispose()
+    trigger.geometry.dispose()
+    shellMaterial.dispose()
+    accentMaterial.dispose()
+  }
+  return group
+}
+
+function createProceduralHandSpheres(hand, index) {
+  const geometry = new THREE.SphereGeometry(1, 10, 7)
+  const material = new THREE.MeshStandardMaterial({
+    color: index ? 0x8bd6d0 : 0xffc55f,
+    roughness: .62,
+    metalness: .04,
+  })
+  const meshes = new Map()
+  const update = () => {
+    Object.entries(hand.joints || {}).forEach(([name, joint]) => {
+      let mesh = meshes.get(joint)
+      if (!mesh) {
+        mesh = new THREE.Mesh(geometry, material)
+        mesh.name = `offline_hand_joint_${index}_${name}`
+        joint.add(mesh)
+        meshes.set(joint, mesh)
+      }
+      mesh.scale.setScalar(Math.max(joint.jointRadius || .008, .004))
+    })
+  }
+  return {
+    update,
+    dispose() {
+      meshes.forEach((mesh, joint) => joint.remove(mesh))
+      meshes.clear()
+      geometry.dispose()
+      material.dispose()
+    },
+  }
+}
+
+function createXRStatusPanel() {
+  const canvas = document.createElement('canvas')
+  canvas.width = 768
+  canvas.height = 320
+  const context = canvas.getContext('2d')
+  const texture = new THREE.CanvasTexture(canvas)
+  texture.colorSpace = THREE.SRGBColorSpace
+  texture.minFilter = THREE.LinearFilter
+  texture.magFilter = THREE.LinearFilter
+  const material = new THREE.MeshBasicMaterial({ map: texture, transparent: true, depthTest: false, toneMapped: false })
+  const geometry = new THREE.PlaneGeometry(.64, .267)
+  const mesh = new THREE.Mesh(geometry, material)
+  mesh.renderOrder = 10000
+  mesh.position.set(0, -.3, -.74)
+  mesh.visible = false
+  const update = ({ inputCount = 0, floorTracked = true, message = 'Controls released' } = {}) => {
+    context.clearRect(0, 0, canvas.width, canvas.height)
+    context.fillStyle = 'rgba(5, 14, 19, .92)'
+    context.fillRect(0, 0, canvas.width, canvas.height)
+    context.strokeStyle = '#ffad21'
+    context.lineWidth = 5
+    context.strokeRect(3, 3, canvas.width - 6, canvas.height - 6)
+    context.fillStyle = '#ffad21'
+    context.font = '700 34px sans-serif'
+    context.fillText('PROLTO VR TRAINING INPUT', 30, 51)
+    context.fillStyle = '#eef5f6'
+    context.font = '25px sans-serif'
+    context.fillText(`Tracked inputs: ${inputCount}  |  Floor: ${floorTracked ? 'tracked' : 'fallback'}`, 30, 91)
+    context.fillText('Trigger or pinch: hold modeled control', 30, 131)
+    context.fillText('Squeeze: hold training presence proxy', 30, 171)
+    context.fillText('Stick press: recenter  |  A/X: reset', 30, 211)
+    context.fillText('Hold B/Y: exit VR  |  System menu also exits', 30, 251)
+    context.fillStyle = '#84d5ce'
+    context.font = '22px sans-serif'
+    context.fillText(message.slice(0, 58), 30, 292)
+    texture.needsUpdate = true
+  }
+  update()
+  return {
+    mesh,
+    update,
+    dispose() {
+      geometry.dispose()
+      material.dispose()
+      texture.dispose()
+    },
+  }
+}
+
+function disposeObjectResources(root) {
+  const geometries = new Set()
+  const materials = new Set()
+  const textures = new Set()
+  const instancedMeshes = new Set()
+  const nestedValues = new Set()
+  const collectTextures = (value) => {
+    if (!value || typeof value !== 'object') return
+    if (value.isTexture) {
+      textures.add(value)
+      return
+    }
+    if (nestedValues.has(value)) return
+    nestedValues.add(value)
+    if (Array.isArray(value)) value.forEach(collectTextures)
+    else Object.values(value).forEach(collectTextures)
+  }
+  root?.traverse((object) => {
+    if (object.geometry) geometries.add(object.geometry)
+    if (object.isInstancedMesh) instancedMeshes.add(object)
+    const objectMaterials = Array.isArray(object.material) ? object.material : [object.material]
+    objectMaterials.filter(Boolean).forEach((material) => materials.add(material))
+  })
+  geometries.forEach((geometry) => geometry.dispose())
+  materials.forEach((material) => {
+    Object.values(material).forEach((value) => {
+      if (value?.isTexture) textures.add(value)
+    })
+    collectTextures(material.uniforms)
+    collectTextures(material.userData)
+  })
+  textures.forEach((texture) => texture.dispose())
+  instancedMeshes.forEach((mesh) => mesh.dispose())
+  materials.forEach((material) => material.dispose())
+}
+
+function hdrTextureFromBuffer(buffer) {
+  const data = new HDRLoader().parse(buffer)
+  const texture = new THREE.DataTexture(data.data, data.width, data.height)
+  texture.type = data.type
+  texture.colorSpace = data.colorSpace
+  texture.minFilter = data.minFilter
+  texture.magFilter = data.magFilter
+  texture.generateMipmaps = data.generateMipmaps
+  texture.flipY = data.flipY
+  texture.needsUpdate = true
+  return texture
+}
+
+const Simulator = forwardRef(function Simulator({ profile, onTelemetry, onSafetyEvent, running, onRunningChange, onLifecycleChange }, ref) {
   const mountRef = useRef(null)
   const engineRef = useRef(null)
   const runningRef = useRef(running)
   const previousRunningRef = useRef(running)
+  const lifecycleCallbackRef = useRef(onLifecycleChange)
   const audioRef = useRef(true)
   const assistiveXRRef = useRef(false)
   const [xrSupported, setXrSupported] = useState(false)
   const [audioOn, setAudioOn] = useState(true)
   const [assistiveXR, setAssistiveXR] = useState(false)
   const [guideOpen, setGuideOpen] = useState(false)
+  const [contextRevision, setContextRevision] = useState(0)
+  const [engineReady, setEngineReady] = useState(false)
+  const [enginePhase, setEnginePhase] = useState('loading')
   const [activeControl, setActiveControl] = useState('Cab controls armed')
   const [stability, setStability] = useState(100)
   // The bar is the normalized display; the label is driven by the RAW physical
   // margin, so the words stay true even though the bar is rescaled to be legible.
   const [stabilityState, setStabilityState] = useState('STABLE')
   const [presence, setPresence] = useState(false)
+  lifecycleCallbackRef.current = onLifecycleChange
+
+  const reportLifecycle = (next) => lifecycleCallbackRef.current?.(next)
 
   useImperativeHandle(ref, () => ({
     async enterVR() {
       const engine = engineRef.current
-      if (!engine || !navigator.xr) return false
+      if (!engine?.ready || !navigator.xr) return false
+      if (engine.renderer.xr.isPresenting) return true
+      if (engine.xrRequest) return engine.xrRequest
+      engine.xrRequestCancelled = false
+      const assertRequestActive = async (session = null) => {
+        if (!engine.isDisposed() && !engine.xrRequestCancelled) return
+        await session?.end().catch(() => {})
+        const error = new Error('XR request cancelled because the simulator changed')
+        error.name = 'AbortError'
+        throw error
+      }
       // Only `viewer` and `local` are guaranteed reference spaces for
       // immersive-vr; `local-floor` is NOT. It used to be a requiredFeature,
       // which made the whole request fail rather than degrade. Even as an
@@ -153,61 +369,82 @@ const Simulator = forwardRef(function Simulator({ profile, onTelemetry, onSafety
       // accepted. If even `{}` is refused, the runtime genuinely cannot open an
       // immersive-vr session and the message below says so instead of blaming
       // the feature list.
-      const configurations = [
-        { optionalFeatures: ['local-floor', 'bounded-floor', 'hand-tracking'] },
-        { optionalFeatures: ['local-floor'] },
-        {},
-      ]
-      let session = null
-      let refusal = null
-      for (const configuration of configurations) {
-        try {
-          session = await navigator.xr.requestSession('immersive-vr', configuration)
-          break
-        } catch (error) {
-          refusal = error
-          console.warn('ProLTO: XR configuration refused', configuration, error.name, error.message)
-        }
-      }
-      if (!session) {
-        const supported = await navigator.xr.isSessionSupported('immersive-vr').catch(() => false)
-        throw new Error(
-          `${refusal?.name || 'Error'}: ${refusal?.message || 'no session'} `
-          + `(immersive-vr reported ${supported ? 'supported' : 'UNSUPPORTED'}, `
-          + `secure context ${window.isSecureContext ? 'yes' : 'NO'}). `
-          + 'A headset must be connected and its runtime running before entering VR',
+      const request = (async () => {
+        engine.setLifecycle('xr-requesting', { message: 'Requesting headset permission' })
+        const { session, refusal } = await requestImmersiveSessionWithFallback(
+          navigator.xr,
+          assertRequestActive,
+          (configuration, error) => console.warn('ProLTO: XR configuration refused', configuration, error.name, error.message),
         )
-      }
-      let floorTracked = true
+        if (!session) {
+          const supported = await navigator.xr.isSessionSupported('immersive-vr').catch(() => false)
+          await assertRequestActive()
+          throw new Error(
+            `${refusal?.name || 'Error'}: ${refusal?.message || 'no session'} `
+            + `(immersive-vr reported ${supported ? 'supported' : 'UNSUPPORTED'}, `
+            + `secure context ${window.isSecureContext ? 'yes' : 'NO'}). `
+            + 'A headset must be connected and its runtime running before entering VR',
+          )
+        }
+        const floorTracked = await hasLocalFloorReferenceSpace(session)
+        await assertRequestActive(session)
+        engine.prepareXR(session, floorTracked)
+        try {
+          await engine.renderer.xr.setSession(session)
+        } catch (error) {
+          engine.restoreDesktopCamera()
+          await session.end().catch(() => {})
+          await assertRequestActive()
+          throw error
+        }
+        await assertRequestActive(session)
+        engine.markXRRunning()
+        runningRef.current = true
+        previousRunningRef.current = true
+        onRunningChange(true)
+        return true
+      })()
+      engine.xrRequest = request
       try {
-        await session.requestReferenceSpace('local-floor')
-      } catch {
-        floorTracked = false
-      }
-      engine.prepareXR(session, floorTracked)
-      try {
-        await engine.renderer.xr.setSession(session)
+        return await request
       } catch (error) {
-        engine.restoreDesktopCamera()
-        await session.end().catch(() => {})
+        if (error.name === 'AbortError') {
+          if (!engine.isDisposed()) engine.setLifecycle('ready', { message: 'Simulator ready. VR request cancelled' })
+        } else engine.setLifecycle('ready', { message: 'Simulator ready. VR request failed', error: error.message })
         throw error
+      } finally {
+        if (engine.xrRequest === request) engine.xrRequest = null
       }
-      onRunningChange(true)
-      return true
     },
+    async exitVR() { return engineRef.current?.exitXR() ?? false },
+    recenterVR() { return engineRef.current?.recenterXR() ?? false },
     reset() { engineRef.current?.reset() },
+    startDesktop() {
+      const engine = engineRef.current
+      return engine?.startDesktop() ?? false
+    },
+    focusDesktop() { engineRef.current?.focusDesktop() },
   }))
 
   useEffect(() => {
     let active = true
-    if (navigator.xr) navigator.xr.isSessionSupported('immersive-vr').then((value) => active && setXrSupported(value)).catch(() => setXrSupported(false))
+    if (navigator.xr) navigator.xr.isSessionSupported('immersive-vr').then((value) => {
+      if (!active) return
+      setXrSupported(value)
+      reportLifecycle({ xrSupported: value })
+    }).catch(() => {
+      if (!active) return
+      setXrSupported(false)
+      reportLifecycle({ xrSupported: false })
+    })
+    else reportLifecycle({ xrSupported: false })
     return () => { active = false }
   }, [])
   useEffect(() => {
     const wasRunning = previousRunningRef.current
     runningRef.current = running
-    if (running && !wasRunning) engineRef.current?.setPresence(false, 'Engage the physical presence control')
-    if (!running && wasRunning) engineRef.current?.setPresence(false, 'Operator station exited')
+    if (running && !wasRunning) engineRef.current?.clearInteractions('Engage the physical presence control')
+    if (!running && wasRunning) engineRef.current?.clearInteractions('Operator station exited')
     previousRunningRef.current = running
   }, [running])
   useEffect(() => { audioRef.current = audioOn }, [audioOn])
@@ -216,6 +453,15 @@ const Simulator = forwardRef(function Simulator({ profile, onTelemetry, onSafety
   useEffect(() => {
     const mount = mountRef.current
     if (!mount) return
+    let disposed = false
+    let graphicsContextLost = false
+    const setLifecycle = (phase, details = {}) => {
+      if (disposed) return
+      setEnginePhase(phase)
+      setEngineReady(phase === 'ready')
+      lifecycleCallbackRef.current?.({ phase, ...details })
+    }
+    setLifecycle('loading', { message: `Loading ${profile.manufacturer} ${profile.model}` })
     setActiveControl('Cab controls armed')
     setPresence(false)
     const scene = new THREE.Scene()
@@ -227,8 +473,15 @@ const Simulator = forwardRef(function Simulator({ profile, onTelemetry, onSafety
     const defaultViewPitch = view.pitch
     const camera = new THREE.PerspectiveCamera(view.fov, mount.clientWidth / mount.clientHeight, .035, 90)
     camera.rotation.order = 'YXZ'
-    const renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: 'high-performance' })
-    renderer.setPixelRatio(Math.min(window.devicePixelRatio, 1.7))
+    let renderer
+    try {
+      renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: 'high-performance' })
+    } catch (error) {
+      setActiveControl('WebGL renderer unavailable')
+      setLifecycle('failed', { message: 'WebGL renderer unavailable', error: error.message })
+      return
+    }
+    renderer.setPixelRatio(Math.min(window.devicePixelRatio, DESKTOP_PIXEL_RATIO_CAP))
     renderer.setSize(mount.clientWidth, mount.clientHeight)
     renderer.shadowMap.enabled = true
     renderer.shadowMap.type = THREE.PCFShadowMap
@@ -239,24 +492,62 @@ const Simulator = forwardRef(function Simulator({ profile, onTelemetry, onSafety
     renderer.toneMappingExposure = .98
     renderer.xr.enabled = true
     renderer.xr.setReferenceSpaceType('local-floor')
+    const assetAbortController = new AbortController()
+    let handleReadyContextLoss = null
+    const webglContextLost = (event) => {
+      event.preventDefault()
+      if (disposed || graphicsContextLost) return
+      graphicsContextLost = true
+      assetAbortController.abort(new Error('Graphics context lost during simulator initialization'))
+      handleReadyContextLoss?.()
+      setActiveControl('Graphics context lost')
+      setLifecycle('failed', {
+        message: 'Graphics context lost',
+        error: 'The GPU context was lost. Waiting for browser recovery.',
+      })
+    }
+    const webglContextRestored = () => {
+      if (disposed || !graphicsContextLost) return
+      graphicsContextLost = false
+      setLifecycle('loading', { message: 'Rebuilding graphics after context recovery', error: null })
+      setContextRevision((current) => current + 1)
+    }
     mount.appendChild(renderer.domElement)
+    renderer.domElement.addEventListener('webglcontextlost', webglContextLost)
+    renderer.domElement.addEventListener('webglcontextrestored', webglContextRestored)
 
     // Image-based lighting: PBR paint/clearcoat on the trucks needs a real
     // environment to reflect, or it reads as flat plastic.
     const pmrem = new THREE.PMREMGenerator(renderer)
-    new HDRLoader().load(`${import.meta.env.BASE_URL}env/warehouse_1k.hdr`, (hdr) => {
-      scene.environment = pmrem.fromEquirectangular(hdr).texture
-      scene.environmentIntensity = .62
-      hdr.dispose()
+    let pmremDisposed = false
+    let environmentTarget = null
+    const disposePmrem = () => {
+      if (pmremDisposed) return
+      pmremDisposed = true
       pmrem.dispose()
-    })
+    }
+    const environmentUrl = `${import.meta.env.BASE_URL}env/warehouse_1k.hdr?v=${ENVIRONMENT_CONTENT_REVISION}`
+    const environmentReady = fetchArrayBuffer(environmentUrl, {
+      signal: assetAbortController.signal,
+      timeoutMs: ENVIRONMENT_LOAD_TIMEOUT_MS,
+    }).then((buffer) => {
+      if (disposed) return
+      const hdr = hdrTextureFromBuffer(buffer)
+      try {
+        environmentTarget = pmrem.fromEquirectangular(hdr)
+        scene.environment = environmentTarget.texture
+        scene.environmentIntensity = .62
+      } finally {
+        hdr.dispose()
+      }
+    }).finally(disposePmrem)
     scene.add(new THREE.HemisphereLight(0xe7f3f4, 0x40484b, .8))
     // Key light stands in for the high-bay array: shadows follow the truck so
     // the 2k map stays dense enough to resolve mast and fork shadows.
     const sun = new THREE.DirectionalLight(0xfff4e2, 2.6)
     sun.position.set(-6, 13, 7)
     sun.castShadow = true
-    sun.shadow.mapSize.set(2048, 2048)
+    sun.shadow.mapSize.set(DESKTOP_SHADOW_MAP_SIZE, DESKTOP_SHADOW_MAP_SIZE)
     sun.shadow.camera.left = -9
     sun.shadow.camera.right = 9
     sun.shadow.camera.top = 9
@@ -267,11 +558,25 @@ const Simulator = forwardRef(function Simulator({ profile, onTelemetry, onSafety
     scene.add(sun, sun.target)
 
     const warehouse = createWarehouse(scene)
-    let disposed = false
     const disposers = []
+    let ownedRig = null
+    let ownedRigDisposed = false
+    const disposeOwnedRig = () => {
+      if (!ownedRig || ownedRigDisposed) return
+      ownedRigDisposed = true
+      disposeObjectResources(ownedRig.root)
+    }
     setActiveControl('Loading equipment model...')
-    createVehicleRig(profile).then((rig) => {
-    if (disposed) return
+    const vehicleReady = createVehicleRig(profile, { signal: assetAbortController.signal }).then((rig) => {
+      if (disposed) {
+        disposeObjectResources(rig.root)
+        return null
+      }
+      ownedRig = rig
+      return rig
+    })
+    Promise.all([vehicleReady, environmentReady]).then(([rig]) => {
+    if (disposed || !rig) return
     setActiveControl('Cab controls armed')
     // The exported fleet ships with flat Principled values and no image
     // textures at all. Surfacing injects baked roughness/relief/grime before
@@ -291,6 +596,7 @@ const Simulator = forwardRef(function Simulator({ profile, onTelemetry, onSafety
       xrOrigin.position.y = Math.max(0, xrOrigin.position.y - FALLBACK_XR_EYE_HEIGHT[profile.family])
       desktopCameraMount.parent.add(xrOrigin)
     }
+    const xrOriginRestPosition = xrOrigin.position.clone()
     const interactables = controlMeshes(rig)
     // interactables now also carries modifier switches, which have no .control.
     const presenceControl = interactables.find((object) => object.userData.control?.action === 'presence')
@@ -352,7 +658,7 @@ const Simulator = forwardRef(function Simulator({ profile, onTelemetry, onSafety
       })
     }
     const renderForkCam = () => {
-      if (!forkCamera) return
+      if (!forkCamera || renderer.xr.isPresenting) return
       forkCamTick += 1
       if (forkCamTick % 4) return
       // The monitor must not appear in its own feed, and an XR frame has to be
@@ -372,20 +678,57 @@ const Simulator = forwardRef(function Simulator({ profile, onTelemetry, onSafety
       // `steer` stays the normalized control position that drives the wheel and
       // tiller meshes. `steerAngle` is the real steered-wheel angle in radians
       // that the kinematics integrate. They are not interchangeable.
-      steerAngle: 0, previousSpeed: 0, yawRate: 0, turnRadius: Infinity,
+      steerAngle: 0, previousForwardSpeed: 0, yawRate: 0, turnRadius: Infinity,
       forwardSpeed: 0, smoothedAccel: 0, stabilityLowSince: 0,
       load: 0, horn: false, presence: !requiresPresence, presenceLatched: false, viewYaw: 0, viewPitch: defaultViewPitch, lastTelemetry: 0,
-      eventLocks: {}, keys: new Set(), pointerDrag: null, lookDrag: null, xrDrags: new Map(), hovered: null,
-      modifierHeld: false, modifierObject: null,
+      eventLocks: {}, keys: new Set(), pointerDrags: new Map(), lookDrags: new Map(), xrDrags: new Map(), hovered: null,
+      modifierHeld: false, squeezePresenceSources: new Set(), utilityButtons: new Map(),
     }
     let loadPhysics = null
+    let applyHydraulicValues = () => {}
+    let captureHydraulicConfiguration = () => ({ values: {}, colliders: [] })
+    let commitHydraulicConfiguration = () => {}
     let activeXRSession = null
     let xrSessionEnd = null
-    let clearXRInteractions = () => {}
-    const restoreDesktopCamera = () => {
-      if (activeXRSession && xrSessionEnd) activeXRSession.removeEventListener('end', xrSessionEnd)
-      activeXRSession = null
+    let xrVisibilityChange = null
+    let xrInputSourcesChange = null
+    let activeFloorTracked = true
+    let clearInteractions = () => {}
+    let audioContext = null
+    const setShadowMapSize = (size) => {
+      if (sun.shadow.mapSize.x === size && sun.shadow.mapSize.y === size) return
+      sun.shadow.mapSize.set(size, size)
+      if (sun.shadow.map) {
+        sun.shadow.map.dispose()
+        sun.shadow.map = null
+      }
+    }
+    const xrPanel = createXRStatusPanel()
+    camera.add(xrPanel.mesh)
+    disposers.push(() => xrPanel.dispose())
+    const updateXRPanel = (message = 'Controls released') => {
+      const session = activeXRSession || renderer.xr.getSession()
+      xrPanel.update({
+        inputCount: session?.inputSources?.length || 0,
+        floorTracked: activeFloorTracked,
+        message,
+      })
+    }
+    const removeXRSessionListeners = () => {
+      if (!activeXRSession) return
+      if (xrSessionEnd) activeXRSession.removeEventListener('end', xrSessionEnd)
+      if (xrVisibilityChange) activeXRSession.removeEventListener('visibilitychange', xrVisibilityChange)
+      if (xrInputSourcesChange) activeXRSession.removeEventListener('inputsourceschange', xrInputSourcesChange)
       xrSessionEnd = null
+      xrVisibilityChange = null
+      xrInputSourcesChange = null
+    }
+    const restoreDesktopCamera = () => {
+      removeXRSessionListeners()
+      activeXRSession = null
+      xrPanel.mesh.visible = false
+      setShadowMapSize(DESKTOP_SHADOW_MAP_SIZE)
+      xrOrigin.position.copy(xrOriginRestPosition)
       desktopCameraMount.add(camera)
       camera.position.set(0, 0, 0)
       state.viewYaw = 0
@@ -394,24 +737,62 @@ const Simulator = forwardRef(function Simulator({ profile, onTelemetry, onSafety
     }
     const prepareXR = (session, floorTracked = true) => {
       if (activeXRSession) restoreDesktopCamera()
+      clearInteractions('Entering VR, controls released')
       state.viewYaw = 0
       state.viewPitch = 0
+      activeFloorTracked = floorTracked
+      renderer.xr.setFramebufferScaleFactor(PROVISIONAL_QUEST_RENDER_TIER.framebufferScaleFactor)
+      setShadowMapSize(PROVISIONAL_QUEST_RENDER_TIER.shadowMapSize)
       // Must be set before setSession, or three.js requests the wrong space.
       renderer.xr.setReferenceSpaceType(floorTracked ? 'local-floor' : 'local')
+      xrOrigin.position.copy(xrOriginRestPosition)
+      xrOrigin.position.y = xrOriginHeight(xrOriginRestPosition.y, floorTracked, FALLBACK_XR_EYE_HEIGHT[profile.family])
       xrOrigin.add(camera)
       // With a floor-relative space the headset's own tracked height supplies
       // eye height above the compartment floor, so the origin needs no offset.
       // Plain `local` puts the origin wherever the head was when the session
       // began, so the authored anthropometric eye height has to stand in.
-      camera.position.set(0, floorTracked ? 0 : FALLBACK_XR_EYE_HEIGHT[profile.family], 0)
+      camera.position.set(0, 0, 0)
       camera.rotation.set(0, 0, 0)
       activeXRSession = session
+      xrPanel.mesh.visible = true
+      updateXRPanel('Hold squeeze for the training presence proxy')
       xrSessionEnd = () => {
-        clearXRInteractions('XR session ended, controls released')
+        clearInteractions('XR session ended, controls released')
         restoreDesktopCamera()
-        if (!disposed) onRunningChange(false)
+        if (!disposed) {
+          runningRef.current = false
+          previousRunningRef.current = false
+          onRunningChange(false)
+          if (graphicsContextLost) {
+            setLifecycle('failed', { message: 'Graphics context lost', error: 'The GPU context was lost. Waiting for browser recovery.' })
+          } else {
+            setLifecycle('ready', { message: 'Simulator ready' })
+          }
+        }
+      }
+      xrVisibilityChange = () => {
+        simulationAccumulator = 0
+        timer.reset()
+        if (session.visibilityState === 'visible') {
+          updateXRPanel('XR visible. Re-engage all controls')
+          return
+        }
+        clearInteractions(`XR ${session.visibilityState || 'visibility'} state, controls released`)
+        updateXRPanel('Tracking paused. Re-engage all controls')
+      }
+      xrInputSourcesChange = (event) => {
+        const removedCount = releaseRemovedXRInputSources(
+          state,
+          event.removed,
+          (controller) => endXRInteraction(controller, 'XR input removed, control released'),
+        )
+        refreshXRPresence('XR input removed, presence released')
+        updateXRPanel(removedCount ? 'Input removed. Re-engage all controls' : 'Input source ready')
       }
       session.addEventListener('end', xrSessionEnd, { once: true })
+      session.addEventListener('visibilitychange', xrVisibilityChange)
+      session.addEventListener('inputsourceschange', xrInputSourcesChange)
     }
     const updatePresence = (engaged, label = engaged ? 'Presence control engaged' : 'Presence control released') => {
       state.presenceLatched = engaged
@@ -423,40 +804,173 @@ const Simulator = forwardRef(function Simulator({ profile, onTelemetry, onSafety
         presenceControl.material.emissive.setHex(presenceControl.userData.baseEmissive)
       }
     }
-    const togglePresence = () => updatePresence(!state.presenceLatched)
     const reset = () => {
+      clearInteractions('Simulator reset, controls released')
       Object.assign(state, {
         x: 0, z: 11.5, heading: 0, speed: 0, steer: 0, fork: 0, reach: 0, tilt: 0, sideshift: 0, load: 0,
-        steerAngle: 0, previousSpeed: 0, yawRate: 0, turnRadius: Infinity,
-      forwardSpeed: 0, smoothedAccel: 0, stabilityLowSince: 0,
+        steerAngle: 0, previousForwardSpeed: 0, yawRate: 0, turnRadius: Infinity,
+        forwardSpeed: 0, smoothedAccel: 0, stabilityLowSince: 0,
         viewYaw: 0, viewPitch: defaultViewPitch,
       })
-      Object.assign(manual, ZERO)
+      simulationAccumulator = 0
       state.eventLocks = {}
       rig.root.position.set(0, 0, 11.5)
       rig.root.rotation.y = 0
-      camera.rotation.set(defaultViewPitch, 0, 0)
+      if (rig.carriage) {
+        const rest = rig.carriage.userData.rest
+        rig.carriage.position.y = (rest?.y || 0) - forkClearance
+        rig.carriage.position.x = rest?.x || 0
+      }
+      if (rig.reachGroup) rig.reachGroup.position.z = rig.reachGroup.userData.rest?.z || 0
+      if (rig.tiltGroup) rig.tiltGroup.rotation.x = 0
+      else if (rig.mast) rig.mast.rotation.x = 0
+      if (rig.tillerPivot) rig.tillerPivot.rotation.y = 0
+      if (rig.steerPivot) rig.steerPivot.rotation.y = 0
+      if (rig.travelPivot) rig.travelPivot.rotation.x = 0
+      if (rig.liftPivot) rig.liftPivot.rotation.x = 0
+      if (rig.tiltPivot) rig.tiltPivot.rotation.x = 0
+      if (rig.reachPivot) rig.reachPivot.rotation.z = 0
+      if (rig.sideshiftPivot) rig.sideshiftPivot.rotation.z = 0
+      if (rig.secondaryTravelPivot) rig.secondaryTravelPivot.rotation.x = 0
+      if (rig.wheelPivot) rig.wheelPivot.rotation.z = 0
+      if (rig.levers) rig.levers.forEach((lever) => { lever.rotation.x = lever.userData.restRX ?? -.18 })
+      if (presenceControl) presenceControl.position.y = presenceControl.userData.restY
+      if (brakeControl) brakeControl.position.y = brakeControl.userData.restY
+      rig.wheelArticulation?.reset()
+      rig.root.updateMatrixWorld(true)
+      if (!renderer.xr.isPresenting) camera.rotation.set(defaultViewPitch, 0, 0)
       loadPhysics?.reset()
-      updatePresence(false, runningRef.current ? 'Engage the physical presence control' : 'Cab controls armed')
+      applyHydraulicValues(state)
+      commitHydraulicConfiguration()
       setStability(100)
     }
-    engineRef.current = { renderer, reset, state, rig, setPresence: updatePresence, prepareXR, restoreDesktopCamera }
+    const recenterXR = () => {
+      if (!renderer.xr.isPresenting || typeof XRRigidTransform === 'undefined') return false
+      const referenceSpace = renderer.xr.getReferenceSpace()
+      if (!referenceSpace?.getOffsetReferenceSpace) return false
+      const xrCamera = renderer.xr.getCamera(camera)
+      const headPosition = new THREE.Vector3()
+      const headQuaternion = new THREE.Quaternion()
+      const originQuaternion = new THREE.Quaternion()
+      xrCamera.getWorldPosition(headPosition)
+      xrCamera.getWorldQuaternion(headQuaternion)
+      xrOrigin.getWorldQuaternion(originQuaternion)
+      xrOrigin.worldToLocal(headPosition)
+      headQuaternion.premultiply(originQuaternion.invert())
+      const yaw = new THREE.Euler().setFromQuaternion(headQuaternion, 'YXZ').y
+      const yawQuaternion = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), yaw)
+      const offset = new XRRigidTransform(
+        { x: headPosition.x, y: 0, z: headPosition.z },
+        { x: yawQuaternion.x, y: yawQuaternion.y, z: yawQuaternion.z, w: yawQuaternion.w },
+      )
+      renderer.xr.setReferenceSpace(referenceSpace.getOffsetReferenceSpace(offset))
+      clearInteractions('XR view recentered, controls released')
+      updateXRPanel('View recentered. Re-engage controls')
+      return true
+    }
+    const exitXR = async () => {
+      engine.xrRequestCancelled = true
+      const session = activeXRSession || renderer.xr.getSession()
+      if (!session) {
+        if (engine.xrRequest) setLifecycle('xr-ending', { message: 'Cancelling immersive request' })
+        return Boolean(engine.xrRequest)
+      }
+      setLifecycle('xr-ending', { message: 'Ending immersive session' })
+      clearInteractions('Exiting VR, controls released')
+      try {
+        await session.end()
+      } catch (error) {
+        restoreDesktopCamera()
+        setLifecycle('ready', { message: 'Simulator ready', error: error.message })
+        throw error
+      }
+      return true
+    }
+    const engine = {
+      renderer,
+      reset,
+      state,
+      rig,
+      prepareXR,
+      restoreDesktopCamera,
+      recenterXR,
+      exitXR,
+      ready: false,
+      xrRequest: null,
+      xrRequestCancelled: false,
+      isDisposed: () => disposed,
+      focusDesktop: () => mount.focus({ preventScroll: true }),
+      startDesktop: () => {
+        if (!engine.ready || renderer.xr.isPresenting) return false
+        clearInteractions('Engage the physical presence control')
+        runningRef.current = true
+        previousRunningRef.current = true
+        onRunningChange(true)
+        requestAnimationFrame(() => mount.focus({ preventScroll: true }))
+        return true
+      },
+      clearInteractions: (...args) => clearInteractions(...args),
+      setLifecycle,
+      markXRRunning: () => {
+        renderer.xr.setFoveation(PROVISIONAL_QUEST_RENDER_TIER.foveation)
+        xrPanel.mesh.visible = true
+        updateXRPanel('Inputs ready. Hold squeeze for presence proxy')
+        setLifecycle('xr-running', { message: 'Immersive session running', floorTracked: activeFloorTracked })
+      },
+    }
+    engineRef.current = engine
     updatePresence(false, runningRef.current ? 'Engage the physical presence control' : 'Cab controls armed')
 
-    const soundHorn = () => {
-      if (!audioRef.current) return
+    let hornVoice = null
+    let hornStartPending = false
+    let hornRequested = false
+    const stopHorn = () => {
+      hornRequested = false
+      const voice = hornVoice
+      hornVoice = null
+      if (!voice) return
+      const now = voice.context.currentTime
+      try {
+        voice.gain.gain.cancelScheduledValues(now)
+        voice.gain.gain.setValueAtTime(Math.max(voice.gain.gain.value, .001), now)
+        voice.gain.gain.exponentialRampToValueAtTime(.001, now + .025)
+        voice.oscillator.stop(now + .03)
+      } catch {
+        voice.oscillator.disconnect()
+        voice.gain.disconnect()
+      }
+    }
+    const soundHorn = async () => {
+      hornRequested = true
+      if (!audioRef.current) {
+        stopHorn()
+        return
+      }
+      if (hornVoice || hornStartPending) return
       const AudioContextClass = window.AudioContext || window.webkitAudioContext
       if (!AudioContextClass) return
-      const context = new AudioContextClass()
-      const oscillator = context.createOscillator()
-      const gain = context.createGain()
-      oscillator.type = 'square'
-      oscillator.frequency.value = profile.family === 'pallet' ? 410 : 330
-      gain.gain.setValueAtTime(.07, context.currentTime)
-      gain.gain.exponentialRampToValueAtTime(.001, context.currentTime + .2)
-      oscillator.connect(gain).connect(context.destination)
-      oscillator.start()
-      oscillator.stop(context.currentTime + .21)
+      hornStartPending = true
+      try {
+        if (!audioContext) audioContext = new AudioContextClass()
+        if (audioContext.state === 'suspended') await audioContext.resume().catch(() => {})
+        if (disposed || !hornRequested || !audioRef.current || audioContext.state === 'closed') return
+        const oscillator = audioContext.createOscillator()
+        const gain = audioContext.createGain()
+        oscillator.type = 'square'
+        oscillator.frequency.value = profile.family === 'pallet' ? 410 : 330
+        gain.gain.setValueAtTime(.055, audioContext.currentTime)
+        oscillator.connect(gain).connect(audioContext.destination)
+        const voice = { context: audioContext, oscillator, gain }
+        hornVoice = voice
+        oscillator.addEventListener('ended', () => {
+          oscillator.disconnect()
+          gain.disconnect()
+          if (hornVoice === voice) hornVoice = null
+        }, { once: true })
+        oscillator.start()
+      } finally {
+        hornStartPending = false
+      }
     }
     const fireEvent = (type, label, severity = 'minor', deduction = 4, cooldown = 7000) => {
       const now = performance.now()
@@ -473,7 +987,11 @@ const Simulator = forwardRef(function Simulator({ profile, onTelemetry, onSafety
       rackSlots: warehouse.rackSlots,
       obstacles: [...warehouse.staticColliders, ...warehouse.cones, ...warehouse.pedestrians],
       onEvent: (event) => {
-        if (event.type === 'pallet-engaged') {
+        const assessment = contactAssessment(event)
+        if (assessment) {
+          fireEvent(assessment.type, assessment.label, assessment.severity, assessment.deduction, assessment.cooldown)
+          setActiveControl(assessment.activeControl)
+        } else if (event.type === 'pallet-engaged') {
           state.load = event.pallet.weight
           setActiveControl(`${Math.round(event.pallet.weight).toLocaleString()} lb pallet engaged`)
         } else if (event.type === 'pallet-racked') {
@@ -502,27 +1020,151 @@ const Simulator = forwardRef(function Simulator({ profile, onTelemetry, onSafety
     // Live handle on the normalized carriage-face collider so the frame loop
     // can move it with lift and reach.
     const carriageFace = loadPhysics.truckColliders.find((entry) => entry.id === CARRIAGE_FACE_ID) || null
+    const platformColliderMetrics = (() => {
+      if (profile.family !== 'order-picker') return null
+      if (!rig.platform) throw new Error(`${profile.assetId} has no dynamic order-picker platform`)
+      rig.root.updateMatrixWorld(true)
+      const bounds = new THREE.Box3().setFromObject(rig.platform)
+      const size = bounds.getSize(new THREE.Vector3())
+      const center = bounds.getCenter(new THREE.Vector3())
+      const origin = rig.platform.getWorldPosition(new THREE.Vector3())
+      const centerLocal = rig.platform.worldToLocal(center.clone())
+      if (![size.x, size.y, size.z, centerLocal.x, centerLocal.z].every(Number.isFinite)
+        || size.x <= 0 || size.y <= 0 || size.z <= 0) {
+        throw new Error(`${profile.assetId} has invalid dynamic platform bounds`)
+      }
+      return {
+        centerLocal,
+        halfWidth: size.x * .5,
+        halfLength: size.z * .5,
+        minYOffset: bounds.min.y - origin.y,
+        maxYOffset: bounds.max.y - origin.y,
+      }
+    })()
+
+    applyHydraulicValues = (values) => {
+      if (rig.carriage) {
+        const rest = rig.carriage.userData.rest
+        rig.carriage.position.y = (rest?.y || 0) + values.fork * INCH - forkClearance
+        rig.carriage.position.x = (rest?.x || 0) + values.sideshift
+      }
+      if (rig.reachGroup) rig.reachGroup.position.z = (rig.reachGroup.userData.rest?.z || 0) - values.reach * INCH
+      const tiltRadians = THREE.MathUtils.degToRad(values.tilt)
+      if (rig.tiltGroup) rig.tiltGroup.rotation.x = tiltRadians
+      else if (rig.mast) rig.mast.rotation.x = tiltRadians
+      if (carriageFace) {
+        const sine = Math.sin(tiltRadians)
+        const cosine = Math.cos(tiltRadians)
+        const halfHeight = BACKREST_HEIGHT * .5
+        carriageFace.offsetX = values.sideshift
+        carriageFace.offsetZ = rig.forkMetrics.heelZ - values.reach * INCH + sine * halfHeight
+        carriageFace.halfLength = Math.abs(sine) * halfHeight + Math.abs(cosine) * .07
+        const centerY = values.fork * INCH + cosine * halfHeight
+        const verticalHalf = Math.abs(cosine) * halfHeight + Math.abs(sine) * .07
+        carriageFace.minY = centerY - verticalHalf
+        carriageFace.maxY = centerY + verticalHalf
+      }
+      rig.root.updateMatrixWorld(true)
+      loadPhysics?.syncCarriedPallet()
+    }
+
+    captureHydraulicConfiguration = (values = state) => {
+      const truckPose = { x: state.x, z: state.z, heading: state.heading }
+      const colliders = []
+      if (carriageFace) colliders.push(colliderAtPose(truckPose, carriageFace))
+      colliders.push(...forkTineCollidersForFrame(
+        forkConfiguration.forkFrame,
+        forkConfiguration.forkSpecification,
+        { idPrefix: 'truck-fork' },
+      ))
+      const carried = loadPhysics.carriedCollider()
+      if (carried) colliders.push(colliderAtPose(truckPose, carried))
+      if (platformColliderMetrics) {
+        const origin = rig.platform.getWorldPosition(new THREE.Vector3())
+        const center = rig.platform.localToWorld(platformColliderMetrics.centerLocal.clone())
+        colliders.push({
+          id: 'elevated-operator-platform',
+          x: center.x,
+          z: center.z,
+          halfWidth: platformColliderMetrics.halfWidth,
+          halfLength: platformColliderMetrics.halfLength,
+          heading: state.heading,
+          minY: origin.y + platformColliderMetrics.minYOffset,
+          maxY: origin.y + platformColliderMetrics.maxYOffset,
+        })
+      }
+      return {
+        values: {
+          fork: values.fork,
+          reach: values.reach,
+          tilt: values.tilt,
+          sideshift: values.sideshift,
+        },
+        colliders,
+      }
+    }
+    commitHydraulicConfiguration = () => {
+      loadPhysics.commitHydraulicConfiguration(captureHydraulicConfiguration(state))
+    }
+    applyHydraulicValues(state)
+    commitHydraulicConfiguration()
     engineRef.current.loadPhysics = loadPhysics
 
+    const desktopInputActive = () => (
+      runningRef.current
+      && !renderer.xr.isPresenting
+      && document.activeElement === mount
+    )
+    const refreshDesktopPresence = (releasedLabel = 'Desktop presence control released') => {
+      const pointerHeld = [...state.pointerDrags.values()].some((drag) => drag.presenceOnly)
+      const keyboardHeld = state.keys.has('ShiftLeft') || state.keys.has('ShiftRight')
+      updatePresence(
+        desktopPresenceHeld(state.keys, state.pointerDrags),
+        pointerHeld
+          ? 'Modeled desktop presence control held'
+          : keyboardHeld
+            ? 'Keyboard training presence held'
+            : releasedLabel,
+      )
+    }
     const keyDown = (event) => {
-      if (['INPUT', 'TEXTAREA', 'SELECT'].includes(event.target.tagName)) return
+      if (!desktopInputActive() || isNativeInteractiveTarget(event.target)) return
+      if (!DESKTOP_OPERATION_KEYS.has(event.code)) return
       state.keys.add(event.code)
-      if (['Space', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'].includes(event.code)) event.preventDefault()
-      if (event.code === 'Space' && !state.horn) soundHorn()
+      event.preventDefault()
+      if (event.code === 'Space' && !event.repeat) soundHorn()
       if (event.code === 'Home') {
         state.viewYaw = 0
         state.viewPitch = defaultViewPitch
         camera.rotation.set(defaultViewPitch, 0, 0)
         setActiveControl('Operator view centered')
       }
-      if ((event.code === 'ControlLeft' || event.code === 'ControlRight') && !event.repeat && runningRef.current && requiresPresence) {
-        event.preventDefault()
-        togglePresence()
+      if ((event.code === 'ShiftLeft' || event.code === 'ShiftRight') && requiresPresence && !event.repeat) {
+        refreshDesktopPresence()
       }
     }
-    const keyUp = (event) => state.keys.delete(event.code)
-    window.addEventListener('keydown', keyDown)
-    window.addEventListener('keyup', keyUp)
+    const keyUp = (event) => {
+      state.keys.delete(event.code)
+      if ((event.code === 'ShiftLeft' || event.code === 'ShiftRight') && requiresPresence) {
+        refreshDesktopPresence('Keyboard training presence released')
+      }
+    }
+    const focusLost = () => clearInteractions('Simulator focus lost, controls released')
+    const windowBlur = () => {
+      simulationAccumulator = 0
+      clearInteractions('Window focus lost, controls released')
+    }
+    const documentVisibility = () => {
+      if (document.hidden) {
+        simulationAccumulator = 0
+        clearInteractions('Document hidden, controls released')
+      }
+    }
+    mount.addEventListener('keydown', keyDown)
+    mount.addEventListener('keyup', keyUp)
+    mount.addEventListener('blur', focusLost)
+    window.addEventListener('blur', windowBlur)
+    document.addEventListener('visibilitychange', documentVisibility)
 
     const pointerCoordinates = (event) => {
       const rect = renderer.domElement.getBoundingClientRect()
@@ -552,7 +1194,10 @@ const Simulator = forwardRef(function Simulator({ profile, onTelemetry, onSafety
         if (control.action2) manual[control.action2] = 0
         if (control.shift2) manual[control.shift2] = 0
       }
-      if (control.action === 'horn') state.horn = false
+      if (control.action === 'horn') {
+        state.horn = false
+        stopHorn()
+      }
     }
     const endXRInteraction = (controller, label) => {
       const drag = state.xrDrags.get(controller)
@@ -566,24 +1211,43 @@ const Simulator = forwardRef(function Simulator({ profile, onTelemetry, onSafety
       if (!drag.presenceOnly) releaseControl(drag.object)
       state.xrDrags.delete(controller)
       if (drag.presenceOnly) {
-        const presenceStillHeld = [...state.xrDrags.values()].some((candidate) => candidate.presenceOnly)
-        updatePresence(
-          presenceStillHeld,
-          presenceStillHeld ? 'Another presence control remains engaged' : label || `${drag.object.userData.control.label} released`,
-        )
+        refreshXRPresence(label || `${drag.object.userData.control.label} released`)
       } else if (label) setActiveControl(label)
     }
-    clearXRInteractions = (label, updateUI = true) => {
+    const refreshXRPresence = (label = 'XR presence released') => {
+      const physicalPresenceHeld = [...state.xrDrags.values()].some((candidate) => candidate.presenceOnly)
+      const proxyPresenceHeld = state.squeezePresenceSources.size > 0
+      const engaged = physicalPresenceHeld || proxyPresenceHeld
+      updatePresence(
+        engaged,
+        engaged
+          ? proxyPresenceHeld
+            ? 'Accessibility/training squeeze presence proxy held'
+            : 'Modeled physical presence control held'
+          : label,
+      )
+    }
+    clearInteractions = (label, updateUI = true) => {
       state.xrDrags.forEach((drag) => { if (!drag.presenceOnly && !drag.modifierOnly) releaseControl(drag.object) })
       state.xrDrags.clear()
-      if (state.pointerDrag?.object) releaseControl(state.pointerDrag.object)
-      state.pointerDrag = null
-      state.lookDrag = null
+      state.squeezePresenceSources.clear()
+      state.utilityButtons.clear()
+      state.pointerDrags.forEach((drag) => { if (!drag.presenceOnly && !drag.modifierOnly) releaseControl(drag.object) })
+      state.pointerDrags.clear()
+      state.lookDrags.clear()
       state.modifierHeld = false
-      state.modifierObject = null
       state.keys.clear()
       Object.assign(manual, ZERO)
       state.horn = false
+      stopHorn()
+      state.speed = 0
+      state.forwardSpeed = 0
+      state.previousForwardSpeed = 0
+      state.yawRate = 0
+      state.turnRadius = Infinity
+      state.smoothedAccel = 0
+      simulationAccumulator = 0
+      setHovered(null)
       if (updateUI) updatePresence(false, label)
       else {
         state.presenceLatched = false
@@ -603,12 +1267,14 @@ const Simulator = forwardRef(function Simulator({ profile, onTelemetry, onSafety
       control.shift2 && state.modifierHeld ? control.shift2 : control.action2
     )
     const pointerDown = (event) => {
+      if (!runningRef.current || renderer.xr.isPresenting) return
+      mount.focus({ preventScroll: true })
       const object = event.button === 2 ? null : pickControl(event)
       if (object) {
         const modifier = object.userData.modifier
         if (modifier) {
+          state.pointerDrags.set(event.pointerId, { object, modifierOnly: true })
           state.modifierHeld = true
-          state.modifierObject = object
           setActiveControl(modifier.label)
           renderer.domElement.setPointerCapture(event.pointerId)
           return
@@ -616,17 +1282,19 @@ const Simulator = forwardRef(function Simulator({ profile, onTelemetry, onSafety
         const control = object.userData.control
         if (control.action === 'presence') {
           setActiveControl(control.label)
-          togglePresence()
+          state.pointerDrags.set(event.pointerId, { object, presenceOnly: true })
+          refreshDesktopPresence()
+          renderer.domElement.setPointerCapture(event.pointerId)
           return
         }
         const scale = control.scale ?? 1
         const second = secondaryAction(control)
-        state.pointerDrag = {
+        state.pointerDrags.set(event.pointerId, {
           object, x: event.clientX, y: event.clientY,
           start: (manual[control.action] || 0) * scale,
           start2: second ? (manual[second] || 0) * scale : 0,
           action2: second,
-        }
+        })
         renderer.domElement.setPointerCapture(event.pointerId)
         setActiveControl(control.label)
         if (['button', 'pedal'].includes(control.axis)) {
@@ -635,16 +1303,23 @@ const Simulator = forwardRef(function Simulator({ profile, onTelemetry, onSafety
           if (control.action === 'belly') fireEvent('belly-switch', 'Entry Bar safety switch contacted', 'major', 8, 1500)
         }
       } else {
-        state.lookDrag = { x: event.clientX, y: event.clientY, yaw: state.viewYaw, pitch: state.viewPitch }
+        state.lookDrags.set(event.pointerId, { x: event.clientX, y: event.clientY, yaw: state.viewYaw, pitch: state.viewPitch })
         renderer.domElement.setPointerCapture(event.pointerId)
       }
     }
     const pointerMove = (event) => {
-      if (state.pointerDrag) {
-        const { object, start, start2, action2 } = state.pointerDrag
+      if (!runningRef.current || renderer.xr.isPresenting) {
+        setHovered(null)
+        return
+      }
+      const pointerDrag = state.pointerDrags.get(event.pointerId)
+      const lookDrag = state.lookDrags.get(event.pointerId)
+      if (pointerDrag) {
+        if (pointerDrag.presenceOnly || pointerDrag.modifierOnly) return
+        const { object, start, start2, action2 } = pointerDrag
         const control = object.userData.control
         const scale = control.scale ?? 1
-        const origin = state.pointerDrag
+        const origin = pointerDrag
         manual[control.action] = clampInput(start + axisDelta(control.motion, event, origin)) * scale
         // The secondary axis is live in the same drag, so an operator can blend
         // travel with lift, or tilt with reach, exactly as the real part allows.
@@ -655,28 +1330,45 @@ const Simulator = forwardRef(function Simulator({ profile, onTelemetry, onSafety
           if (live !== action2 && action2) manual[action2] = 0
           manual[live] = clampInput(start2 + axisDelta(control.motion2, event, origin)) * scale
         }
-      } else if (state.lookDrag) {
-        const yaw = state.lookDrag.yaw - (event.clientX - state.lookDrag.x) * .004
+      } else if (lookDrag) {
+        const yaw = lookDrag.yaw - (event.clientX - lookDrag.x) * .004
         state.viewYaw = Math.atan2(Math.sin(yaw), Math.cos(yaw))
-        state.viewPitch = THREE.MathUtils.clamp(state.lookDrag.pitch - (event.clientY - state.lookDrag.y) * .0035, -1.35, 1.15)
+        state.viewPitch = THREE.MathUtils.clamp(lookDrag.pitch - (event.clientY - lookDrag.y) * .0035, -1.35, 1.15)
       } else setHovered(pickControl(event))
     }
-    const pointerUp = (event) => {
-      if (state.pointerDrag) releaseControl(state.pointerDrag.object)
-      if (state.modifierObject) {
-        state.modifierHeld = false
-        state.modifierObject = null
+    const endPointerInteraction = (event, releaseCapture = true, label = null) => {
+      const pointerDrag = removePointerDrag(state.pointerDrags, event.pointerId)
+      if (pointerDrag && !pointerDrag.presenceOnly && !pointerDrag.modifierOnly) releaseControl(pointerDrag.object)
+      state.lookDrags.delete(event.pointerId)
+      state.modifierHeld = [...state.pointerDrags.values(), ...state.xrDrags.values()].some((drag) => drag.modifierOnly)
+      if (pointerDrag?.presenceOnly) refreshDesktopPresence(label || 'Modeled desktop presence control released')
+      if (label) setActiveControl(label)
+      if (releaseCapture && renderer.domElement.hasPointerCapture(event.pointerId)) renderer.domElement.releasePointerCapture(event.pointerId)
+    }
+    const pointerUp = (event) => endPointerInteraction(event)
+    const pointerCancel = (event) => endPointerInteraction(event, false, 'Pointer cancelled, control released')
+    const pointerCaptureLost = (event) => {
+      if (state.pointerDrags.has(event.pointerId) || state.lookDrags.has(event.pointerId)) {
+        endPointerInteraction(event, false, 'Pointer capture lost, control released')
       }
-      state.pointerDrag = null
-      state.lookDrag = null
-      if (renderer.domElement.hasPointerCapture(event.pointerId)) renderer.domElement.releasePointerCapture(event.pointerId)
     }
     const preventMenu = (event) => event.preventDefault()
     renderer.domElement.addEventListener('pointerdown', pointerDown)
     renderer.domElement.addEventListener('pointermove', pointerMove)
     renderer.domElement.addEventListener('pointerup', pointerUp)
-    renderer.domElement.addEventListener('pointercancel', pointerUp)
+    renderer.domElement.addEventListener('pointercancel', pointerCancel)
+    renderer.domElement.addEventListener('lostpointercapture', pointerCaptureLost)
     renderer.domElement.addEventListener('contextmenu', preventMenu)
+    handleReadyContextLoss = () => {
+      engine.ready = false
+      engine.xrRequestCancelled = true
+      clearInteractions('Graphics context lost, controls released')
+      runningRef.current = false
+      previousRunningRef.current = false
+      onRunningChange(false)
+      const session = activeXRSession || renderer.xr.getSession()
+      session?.end?.().catch?.(() => {})
+    }
 
     const pulseSource = (source, intensity = .35, duration = 24) => {
       if (!renderer.xr.getSession()) return
@@ -724,23 +1416,23 @@ const Simulator = forwardRef(function Simulator({ profile, onTelemetry, onSafety
     // truck. In the headset that reads as the controllers floating far out in
     // front, out of reach of every control.
     const xrSpace = xrOrigin
-    const controllerModelFactory = new XRControllerModelFactory()
-    const handModelFactory = new XRHandModelFactory()
     const hands = [0, 1].map((index) => {
       const hand = renderer.xr.getHand(index)
-      hand.add(handModelFactory.createHandModel(hand, 'mesh'))
       xrSpace.add(hand)
       return hand
     })
+    const handVisuals = hands.map((hand, index) => createProceduralHandSpheres(hand, index))
     const controllers = [0, 1].map((index) => {
       const controller = renderer.xr.getController(index)
       const grip = renderer.xr.getControllerGrip(index)
-      grip.add(controllerModelFactory.createControllerModel(grip))
+      const controllerVisual = createProceduralControllerVisual(index)
+      grip.add(controllerVisual)
       xrSpace.add(grip)
       const line = new THREE.Line(new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(), new THREE.Vector3(0, 0, -2.5)]), new THREE.LineBasicMaterial({ color: 0xffad21 }))
       line.visible = false
       controller.add(line)
       xrSpace.add(controller)
+      let connectedSource = null
       const interactionPose = (source) => {
         const hand = hands[index]
         const fingertip = hand.joints?.['index-finger-tip']
@@ -749,10 +1441,13 @@ const Simulator = forwardRef(function Simulator({ profile, onTelemetry, onSafety
         return { node: controller, root: controller }
       }
       const selectStart = (event) => {
+        if (!runningRef.current || !renderer.xr.isPresenting) return
         if (state.xrDrags.has(controller)) endXRInteraction(controller, 'Previous control released')
         const pose = interactionPose(event.data)
+        if (!pose.root.visible || !pose.node.visible) return
         const origin = new THREE.Vector3()
         pose.node.getWorldPosition(origin)
+        if (![origin.x, origin.y, origin.z].every(Number.isFinite)) return
         let object = nearControl(origin)
         if (!object && assistiveXRRef.current) {
           const rayOrigin = new THREE.Vector3()
@@ -776,8 +1471,8 @@ const Simulator = forwardRef(function Simulator({ profile, onTelemetry, onSafety
         }
         if (object.userData.control.action === 'presence') {
           setActiveControl(object.userData.control.label)
-          updatePresence(true, `${object.userData.control.label} engaged`)
           state.xrDrags.set(controller, { object, pose: pose.node, poseRoot: pose.root, presenceOnly: true, source: event.data })
+          refreshXRPresence(`${object.userData.control.label} engaged`)
           return
         }
         const frame = object.parent || rig.root
@@ -797,15 +1492,46 @@ const Simulator = forwardRef(function Simulator({ profile, onTelemetry, onSafety
         setActiveControl(object.userData.control.label)
         if (['button', 'pedal'].includes(object.userData.control.axis)) {
           manual[object.userData.control.action] = object.userData.control.scale ?? 1
-          if (object.userData.control.action === 'horn') soundHorn()
+          if (object.userData.control.action === 'horn') { state.horn = true; soundHorn() }
+          if (object.userData.control.action === 'belly') fireEvent('belly-switch', 'Emergency reverse or Entry Bar switch contacted', 'major', 8, 1500)
         }
       }
       const selectEnd = () => endXRInteraction(controller)
-      const disconnected = () => endXRInteraction(controller, 'XR input disconnected, control released')
+      const squeezeStart = (event) => {
+        if (!requiresPresence || !runningRef.current || !renderer.xr.isPresenting) return
+        const source = event.data || connectedSource || controller
+        state.squeezePresenceSources.add(source)
+        refreshXRPresence('Accessibility/training squeeze presence proxy held')
+        updateXRPanel('Training presence proxy held. Trigger remains free')
+        pulseSource(source, .22, 18)
+      }
+      const squeezeEnd = (event) => {
+        const source = event.data || connectedSource || controller
+        state.squeezePresenceSources.delete(source)
+        if (connectedSource) state.squeezePresenceSources.delete(connectedSource)
+        state.squeezePresenceSources.delete(controller)
+        refreshXRPresence('Squeeze presence proxy released')
+        updateXRPanel('Presence proxy released')
+      }
+      const connected = (event) => {
+        connectedSource = event.data || null
+        updateXRPanel('Input tracked. Re-engage all controls')
+      }
+      const disconnected = (event) => {
+        endXRInteraction(controller, 'XR input disconnected, control released')
+        state.squeezePresenceSources.delete(event.data || connectedSource || controller)
+        if (connectedSource) state.squeezePresenceSources.delete(connectedSource)
+        connectedSource = null
+        refreshXRPresence('XR input disconnected, presence released')
+        updateXRPanel('Input disconnected. Controls released')
+      }
       controller.addEventListener('selectstart', selectStart)
       controller.addEventListener('selectend', selectEnd)
+      controller.addEventListener('squeezestart', squeezeStart)
+      controller.addEventListener('squeezeend', squeezeEnd)
+      controller.addEventListener('connected', connected)
       controller.addEventListener('disconnected', disconnected)
-      return { controller, grip, line, selectStart, selectEnd, disconnected }
+      return { controller, grip, line, controllerVisual, source: () => connectedSource, selectStart, selectEnd, squeezeStart, squeezeEnd, connected, disconnected }
     })
 
     const readXRAxes = () => {
@@ -819,21 +1545,75 @@ const Simulator = forwardRef(function Simulator({ profile, onTelemetry, onSafety
       return { ...ZERO, travel: -ly, steer: lx, lift: -ry }
     }
 
+    let xrExitButtonPending = false
+    const readXRUtilityButtons = (time) => {
+      if (!renderer.xr.isPresenting || !runningRef.current) return
+      const sources = [...(renderer.xr.getSession()?.inputSources || [])]
+      sources.forEach((source) => {
+        const gamepad = source.gamepad
+        if (!gamepad || gamepad.mapping !== 'xr-standard') return
+        const previous = state.utilityButtons.get(source) || { stick: false, reset: false, exitSince: 0, exitSent: false }
+        const stick = Boolean(gamepad.buttons[3]?.pressed)
+        const resetPressed = Boolean(gamepad.buttons[4]?.pressed)
+        const exitPressed = Boolean(gamepad.buttons[5]?.pressed)
+        if (stick && !previous.stick) recenterXR()
+        if (resetPressed && !previous.reset) {
+          reset()
+          updateXRPanel('Vehicle reset. Re-engage all controls')
+        }
+        let exitSince = exitPressed ? previous.exitSince || time : 0
+        let exitSent = exitPressed ? previous.exitSent : false
+        if (exitPressed && !exitSent && !xrExitButtonPending && time - exitSince >= 1250) {
+          exitSent = true
+          xrExitButtonPending = true
+          updateXRPanel('Ending immersive session')
+          exitXR().catch((error) => console.warn('ProLTO: XR exit failed', error)).finally(() => { xrExitButtonPending = false })
+        }
+        state.utilityButtons.set(source, { stick, reset: resetPressed, exitSince, exitSent })
+      })
+    }
+
     const timer = new THREE.Timer()
+    timer.connect(document)
+    disposers.push(() => timer.dispose())
+    const xrTrackingPosition = new THREE.Vector3()
+    const xrTrackingBox = new THREE.Box3()
+    let simulationAccumulator = 0
     renderer.setAnimationLoop((time) => {
       timer.update()
-      const dt = Math.min(timer.getDelta(), .04)
+      const elapsed = timer.getDelta()
+      if (Number.isFinite(elapsed) && elapsed > 0) simulationAccumulator += elapsed
       const enabled = runningRef.current
+      if (renderer.xr.isPresenting) handVisuals.forEach((visual) => visual.update())
       controllers.forEach(({ line }) => { line.visible = renderer.xr.isPresenting && assistiveXRRef.current })
+      let proxyTrackingLost = false
+      controllers.forEach(({ controller, grip, source }) => {
+        const inputSource = source()
+        if (inputSource && state.squeezePresenceSources.has(inputSource) && !controller.visible && !grip.visible) {
+          state.squeezePresenceSources.delete(inputSource)
+          proxyTrackingLost = true
+        }
+      })
+      if (proxyTrackingLost) refreshXRPresence('XR tracking lost, presence proxy released')
+      readXRUtilityButtons(time)
       const xr = readXRAxes()
       state.xrDrags.forEach((drag, controller) => {
-        if (drag.presenceOnly) return
-        if (!drag.poseRoot.visible) {
+        if (!drag.poseRoot.visible || !drag.pose.visible) {
           endXRInteraction(controller, 'XR tracking lost, control released')
           return
         }
-        const position = new THREE.Vector3()
+        const position = xrTrackingPosition
         drag.pose.getWorldPosition(position)
+        if (![position.x, position.y, position.z].every(Number.isFinite)) {
+          endXRInteraction(controller, 'XR pose invalid, control released')
+          return
+        }
+        const maximumDistance = drag.presenceOnly ? .18 : .42
+        if (xrTrackingBox.setFromObject(drag.object).distanceToPoint(position) > maximumDistance) {
+          endXRInteraction(controller, 'XR control reach lost, control released')
+          return
+        }
+        if (drag.presenceOnly || drag.modifierOnly) return
         const control = drag.object.userData.control
         if (['button', 'pedal'].includes(control.axis)) return
         const local = drag.frame.worldToLocal(position.clone())
@@ -876,6 +1656,9 @@ const Simulator = forwardRef(function Simulator({ profile, onTelemetry, onSafety
         horn: state.keys.has('Space') ? 1 : 0,
       }
       const choose = (action) => Math.abs(manual[action]) > .02 ? manual[action] : Math.abs(keyboard[action] || 0) > .02 ? keyboard[action] : xr[action] || 0
+      let simulationSteps = 0
+      while (simulationAccumulator + SIMULATION_TIME_EPSILON >= FIXED_SIMULATION_STEP && simulationSteps < MAX_SIMULATION_STEPS_PER_FRAME) {
+      const dt = FIXED_SIMULATION_STEP
       const requestedTravel = enabled ? choose('travel') : 0
       const requestedHydraulics = enabled ? Math.max(Math.abs(choose('lift')), Math.abs(choose('reach')), Math.abs(choose('tilt'))) : 0
       if (requiresPresence && !state.presence && (Math.abs(requestedTravel) > .1 || requestedHydraulics > .1)) fireEvent('presence', 'Operator presence control not engaged', 'major', 10, 5000)
@@ -887,14 +1670,17 @@ const Simulator = forwardRef(function Simulator({ profile, onTelemetry, onSafety
       const auxiliaryInput = profile.family === 'counterbalance' && permitted ? choose('reach') : 0
       const tiltInput = ['reach', 'counterbalance'].includes(profile.family) && permitted ? choose('tilt') : 0
       const sideshiftInput = ['reach', 'counterbalance'].includes(profile.family) && permitted ? choose('sideshift') : 0
-      // On a reverse-acting brake the commanded value APPLIES the brake, and
-      // losing operator presence applies it automatically, which is what
-      // actually happens when the operator's foot comes off the pedal.
-      const brakeInput = reverseActingBrake
-        ? (enabled && state.presence ? choose('brake') : 1)
-        : (enabled ? choose('brake') : 0)
+      // Losing required presence or leaving the exercise applies a fail-safe
+      // brake on every profile. An explicitly modeled brake is read otherwise.
+      const failSafeBrake = !enabled || (requiresPresence && !state.presence)
+      const brakeInput = failSafeBrake ? 1 : choose('brake')
       state.horn = enabled && choose('horn') > .2
+      if (state.horn) soundHorn()
+      else stopHorn()
 
+      // Real steering is rate-limited hydraulics, not an instant snap to lock.
+      state.steerAngle = advanceSteerAngle(state.steerAngle, steerInput, steering, dt)
+      state.steer = state.steerAngle / steering.maxSteer
       const loadRatio = THREE.MathUtils.clamp(state.load / profile.capacity, 0, 1)
       let ratedSpeed = profile.maxSpeed
       if (profile.family === 'reach' && profile.forksFirstSpeed) {
@@ -906,20 +1692,20 @@ const Simulator = forwardRef(function Simulator({ profile, onTelemetry, onSafety
       if (profile.family === 'order-picker') maxMps *= THREE.MathUtils.clamp(1 - (state.fork / profile.maxLift) * .78, .18, 1)
       if (profile.family === 'reach' && state.fork > 120) maxMps *= .48
       if (profile.family === 'counterbalance' && state.fork > 72) maxMps *= .55
+      // Front-drive counterbalance trucks retain the same conservative corner
+      // speed envelope as before, but it is now an explicit provisional control
+      // curve rather than an incorrect consequence of steered-wheel geometry.
+      maxMps *= provisionalSteeringSpeedScale(state.steerAngle, steering)
       const targetSpeed = travelInput * maxMps * (profile.forksFirstSpeed ? 1 : travelInput < 0 ? dynamics.reverseScale : 1)
-      const damping = brakeInput > .1 || Math.abs(travelInput) < .02 ? dynamics.braking * (1 + brakeInput) : dynamics.acceleration
-      state.previousSpeed = state.speed
-      state.speed = THREE.MathUtils.damp(state.speed, brakeInput > .1 ? 0 : targetSpeed, damping, dt)
-      // Real steering is rate-limited hydraulics, not an instant snap to lock.
-      state.steerAngle = advanceSteerAngle(state.steerAngle, steerInput, steering, dt)
-      state.steer = state.steerAngle / steering.maxSteer
-      // The carriage face rides the carriage, so its envelope has to follow lift
-      // and reach or it stops guarding the moment either one moves.
-      if (carriageFace) {
-        carriageFace.offsetZ = rig.forkMetrics.heelZ - state.reach * INCH
-        carriageFace.minY = state.fork * INCH
-        carriageFace.maxY = state.fork * INCH + BACKREST_HEIGHT
-      }
+      state.previousForwardSpeed = state.forwardSpeed
+      state.speed = advanceDriveSpeed(
+        state.speed,
+        targetSpeed,
+        dynamics,
+        dt,
+        brakeInput,
+        Math.abs(travelInput) >= .02,
+      )
       const previousPose = { x: state.x, z: state.z, heading: state.heading }
       // Steered-axle kinematics: the truck pivots about its FIXED axle, so the
       // steered end sweeps outside the turn. See src/sim/vehicleDynamics.js.
@@ -927,16 +1713,11 @@ const Simulator = forwardRef(function Simulator({ profile, onTelemetry, onSafety
       state.x = motion.x
       state.z = motion.z
       state.heading = motion.heading
-      state.yawRate = motion.yawRate
-      state.turnRadius = motion.radius
-      // Forward travel falls away as the wheel is turned toward full lock, so
-      // this is not the same number as state.speed (drive wheel speed).
-      state.forwardSpeed = motion.forwardSpeed
       if (state.x < WORLD.minX || state.x > WORLD.maxX || state.z < WORLD.minZ || state.z > WORLD.maxZ) {
         fireEvent('boundary', 'Contact with facility boundary', 'critical', 18)
         state.x = THREE.MathUtils.clamp(state.x, WORLD.minX, WORLD.maxX)
         state.z = THREE.MathUtils.clamp(state.z, WORLD.minZ, WORLD.maxZ)
-        state.speed *= -.12
+        state.speed = 0
       }
       const collision = loadPhysics.resolveTruckMotion(
         previousPose,
@@ -946,30 +1727,59 @@ const Simulator = forwardRef(function Simulator({ profile, onTelemetry, onSafety
       state.x = collision.pose.x
       state.z = collision.pose.z
       state.heading = collision.pose.heading
-      if (collision.blocked) state.speed *= -.08
+      if (collision.blocked) state.speed = 0
+      const accepted = acceptedMotion(previousPose, collision.pose, steering, dt)
+      state.forwardSpeed = accepted.forwardSpeed
+      state.yawRate = accepted.yawRate
+      state.turnRadius = accepted.radius
+      rig.wheelArticulation?.update({
+        fromPose: previousPose,
+        toPose: collision.pose,
+        steerAngle: state.steerAngle,
+      })
       let liftRate = dynamics.liftRate
       if (profile.liftEmptyFpm) {
         liftRate = liftInput >= 0
           ? THREE.MathUtils.lerp(profile.liftEmptyFpm, profile.liftLoadedFpm, loadRatio) * .2
           : profile.lowerFpm * .2
       }
-      state.fork = THREE.MathUtils.clamp(state.fork + liftInput * liftRate * dt, 0, profile.maxLift)
-      state.reach = THREE.MathUtils.clamp(state.reach + reachInput * 30 * dt, 0, profile.family === 'reach' ? 42 : 0)
-      state.tilt = THREE.MathUtils.clamp(state.tilt + tiltInput * 4.2 * dt, -(profile.tiltForward ?? 5), profile.tiltBack ?? 9)
-      state.sideshift = THREE.MathUtils.clamp(state.sideshift + sideshiftInput * .48 * dt, -.15, .15)
       rig.root.position.set(state.x, 0, state.z)
       rig.root.rotation.y = state.heading
       sun.position.set(state.x - 6, 13, state.z + 7)
       sun.target.position.set(state.x, 0, state.z)
       sun.target.updateMatrixWorld()
-      if (rig.carriage) {
-        const rest = rig.carriage.userData.rest
-        rig.carriage.position.y = (rest?.y || 0) + state.fork * INCH - forkClearance
-        rig.carriage.position.x = (rest?.x || 0) + state.sideshift
+      const currentHydraulicValues = {
+        fork: state.fork,
+        reach: state.reach,
+        tilt: state.tilt,
+        sideshift: state.sideshift,
       }
-      if (rig.reachGroup) rig.reachGroup.position.z = (rig.reachGroup.userData.rest?.z || 0) - state.reach * .0254
-      if (rig.tiltGroup) rig.tiltGroup.rotation.x = THREE.MathUtils.degToRad(state.tilt)
-      else if (rig.mast) rig.mast.rotation.x = THREE.MathUtils.degToRad(state.tilt)
+      applyHydraulicValues(currentHydraulicValues)
+      const currentHydraulicConfiguration = captureHydraulicConfiguration(currentHydraulicValues)
+      const proposedHydraulicValues = {
+        fork: THREE.MathUtils.clamp(state.fork + liftInput * liftRate * dt, 0, profile.maxLift),
+        reach: THREE.MathUtils.clamp(state.reach + reachInput * 30 * dt, 0, profile.family === 'reach' ? 42 : 0),
+        tilt: THREE.MathUtils.clamp(state.tilt + tiltInput * 4.2 * dt, -(profile.tiltForward ?? 5), profile.tiltBack ?? 9),
+        sideshift: THREE.MathUtils.clamp(state.sideshift + sideshiftInput * .48 * dt, -.15, .15),
+      }
+      const hydraulicMoved = Object.keys(currentHydraulicValues).some(
+        (key) => Math.abs(proposedHydraulicValues[key] - currentHydraulicValues[key]) > 1e-9,
+      )
+      let acceptedHydraulicValues = currentHydraulicValues
+      if (hydraulicMoved) {
+        applyHydraulicValues(proposedHydraulicValues)
+        const proposedHydraulicConfiguration = captureHydraulicConfiguration(proposedHydraulicValues)
+        const hydraulicResult = loadPhysics.resolveHydraulicMotion(
+          currentHydraulicConfiguration,
+          proposedHydraulicConfiguration,
+        )
+        acceptedHydraulicValues = hydraulicResult.acceptedConfiguration.values
+      }
+      state.fork = acceptedHydraulicValues.fork
+      state.reach = acceptedHydraulicValues.reach
+      state.tilt = acceptedHydraulicValues.tilt
+      state.sideshift = acceptedHydraulicValues.sideshift
+      applyHydraulicValues(acceptedHydraulicValues)
       if (rig.tillerPivot) rig.tillerPivot.rotation.y = -state.steer * .72
       // Palm discs and steering wheels spin about their column through several
       // full turns; the tiller ARM above is a physical linkage and does not.
@@ -985,8 +1795,6 @@ const Simulator = forwardRef(function Simulator({ profile, onTelemetry, onSafety
       if (rig.sideshiftPivot) rig.sideshiftPivot.rotation.z = -sideshiftInput * .22
       if (rig.secondaryTravelPivot) rig.secondaryTravelPivot.rotation.x = travelInput * .14
       if (rig.wheelPivot) rig.wheelPivot.rotation.z = -state.steer * steerSweep
-      if (rig.driveWheel) rig.driveWheel.rotation.x -= state.speed * dt / .165
-      if (rig.loadWheels) rig.loadWheels.forEach((loadWheel) => { loadWheel.rotation.x -= state.speed * dt / .075 })
       if (rig.levers) {
         const values = [liftInput, tiltInput, sideshiftInput, auxiliaryInput]
         rig.levers.forEach((lever, index) => { lever.rotation.x = (lever.userData.restRX ?? -.18) + (values[index] ?? 0) * .25 })
@@ -1001,11 +1809,14 @@ const Simulator = forwardRef(function Simulator({ profile, onTelemetry, onSafety
         const targetY = brakeControl.userData.restY - (state.presence ? .022 : 0)
         brakeControl.position.y = THREE.MathUtils.damp(brakeControl.position.y, targetY, 14, dt)
       }
-      camera.rotation.y = state.viewYaw
-      camera.rotation.x = state.viewPitch
+      if (!renderer.xr.isPresenting) {
+        camera.rotation.y = state.viewYaw
+        camera.rotation.x = state.viewPitch
+      }
       scene.updateMatrixWorld(true)
       const loadState = loadPhysics.update(dt)
       state.load = loadState.carriedWeight
+      commitHydraulicConfiguration()
 
       // Travel speed means ground speed, which is what an evaluator is judging.
       // At heavy steer angles that is well below drive wheel speed.
@@ -1026,9 +1837,9 @@ const Simulator = forwardRef(function Simulator({ profile, onTelemetry, onSafety
       // belly switch drives the truck AWAY from the operator. On a Crown reach
       // truck the Entry Bar does the opposite: a foot on it sounds the alarm
       // and brings the truck to a stop (operator manual page 20).
-      if (manual.belly > .2) {
-        if (profile.family === 'pallet') state.speed = Math.max(state.speed, .75)
-        else state.speed = THREE.MathUtils.damp(state.speed, 0, 6.5, dt)
+      if (enabled && isBellyControlActive(manual.belly)) {
+        if (profile.family === 'pallet') state.speed = advanceDriveSpeed(state.speed, .75, dynamics, dt, 0, true)
+        else state.speed = advanceDriveSpeed(state.speed, 0, dynamics, dt, 1, true)
       }
 
       // Physical stability: combined center of gravity against the truck's real
@@ -1037,7 +1848,7 @@ const Simulator = forwardRef(function Simulator({ profile, onTelemetry, onSafety
       // Frame-to-frame speed deltas are noisy enough that raw acceleration alone
       // made the margin jitter and trip warnings on a truck that was simply
       // driving. Filter it to the timescale a load actually responds on.
-      const rawAccel = dt > 1e-4 ? (state.speed - state.previousSpeed) / dt : 0
+      const rawAccel = dt > 1e-4 ? (state.forwardSpeed - state.previousForwardSpeed) / dt : 0
       state.smoothedAccel = THREE.MathUtils.damp(state.smoothedAccel, rawAccel, 5, dt)
       const stabilityResult = solveStability(profile, {
         loadMass: state.load * POUND,
@@ -1097,38 +1908,76 @@ const Simulator = forwardRef(function Simulator({ profile, onTelemetry, onSafety
           criticalEdge: stabilityResult.criticalEdge,
         })
       }
+      simulationAccumulator = Math.max(0, simulationAccumulator - FIXED_SIMULATION_STEP)
+      simulationSteps += 1
+      }
+      // View input and rendering run at display cadence; physical state advances
+      // only in deterministic 90 Hz quanta. Any catch-up remainder stays in the
+      // accumulator for the next frame instead of being silently discarded.
+      if (!renderer.xr.isPresenting) {
+        camera.rotation.y = state.viewYaw
+        camera.rotation.x = state.viewPitch
+      }
       renderForkCam()
       renderer.render(scene, camera)
     })
 
     disposers.push(() => {
       const session = activeXRSession || renderer.xr.getSession()
-      if (activeXRSession && xrSessionEnd) activeXRSession.removeEventListener('end', xrSessionEnd)
+      removeXRSessionListeners()
       activeXRSession = null
-      xrSessionEnd = null
-      clearXRInteractions('XR session closed', false)
+      clearInteractions('XR session closed', false)
       try {
         session?.end()?.catch?.(() => {})
       } catch {
         // A session that is already ending needs no additional cleanup.
       }
-      window.removeEventListener('keydown', keyDown)
-      window.removeEventListener('keyup', keyUp)
+      mount.removeEventListener('keydown', keyDown)
+      mount.removeEventListener('keyup', keyUp)
+      mount.removeEventListener('blur', focusLost)
+      window.removeEventListener('blur', windowBlur)
+      document.removeEventListener('visibilitychange', documentVisibility)
       renderer.domElement.removeEventListener('pointerdown', pointerDown)
       renderer.domElement.removeEventListener('pointermove', pointerMove)
       renderer.domElement.removeEventListener('pointerup', pointerUp)
-      renderer.domElement.removeEventListener('pointercancel', pointerUp)
+      renderer.domElement.removeEventListener('pointercancel', pointerCancel)
+      renderer.domElement.removeEventListener('lostpointercapture', pointerCaptureLost)
       renderer.domElement.removeEventListener('contextmenu', preventMenu)
-      controllers.forEach(({ controller, grip, selectStart, selectEnd, disconnected }) => {
+      renderer.domElement.removeEventListener('webglcontextlost', webglContextLost)
+      renderer.domElement.removeEventListener('webglcontextrestored', webglContextRestored)
+      controllers.forEach(({ controller, grip, line, controllerVisual, selectStart, selectEnd, squeezeStart, squeezeEnd, connected, disconnected }) => {
         controller.removeEventListener('selectstart', selectStart)
         controller.removeEventListener('selectend', selectEnd)
+        controller.removeEventListener('squeezestart', squeezeStart)
+        controller.removeEventListener('squeezeend', squeezeEnd)
+        controller.removeEventListener('connected', connected)
         controller.removeEventListener('disconnected', disconnected)
-        scene.remove(controller)
-        scene.remove(grip)
+        controller.parent?.remove(controller)
+        grip.parent?.remove(grip)
+        line.geometry.dispose()
+        line.material.dispose()
+        controllerVisual.userData.dispose?.()
       })
-      hands.forEach((hand) => scene.remove(hand))
+      hands.forEach((hand, index) => {
+        handVisuals[index].dispose()
+        hand.parent?.remove(hand)
+      })
+      camera.remove(xrPanel.mesh)
+      disposeOwnedRig()
+      if (audioContext && audioContext.state !== 'closed') audioContext.close().catch(() => {})
     })
-    }).catch((error) => console.error('ProLTO simulator init failed:', error))
+    engine.ready = true
+    setLifecycle('ready', { message: 'Simulator ready' })
+    }).catch((error) => {
+      if (disposed) return
+      assetAbortController.abort(error)
+      engineRef.current = null
+      disposeOwnedRig()
+      if (graphicsContextLost) return
+      setActiveControl('Simulator failed to initialize')
+      setLifecycle('failed', { message: 'Simulator failed to initialize', error: error.message, code: error.code || null })
+      console.error('ProLTO simulator init failed:', error)
+    })
 
     const resize = () => {
       if (!mount.clientWidth || !mount.clientHeight) return
@@ -1140,20 +1989,44 @@ const Simulator = forwardRef(function Simulator({ profile, onTelemetry, onSafety
     observer.observe(mount)
     return () => {
       disposed = true
-      observer.disconnect()
-      disposers.forEach((dispose) => dispose())
       renderer.setAnimationLoop(null)
+      assetAbortController.abort()
+      if (engineRef.current) {
+        engineRef.current.ready = false
+        engineRef.current.xrRequestCancelled = true
+      }
+      observer.disconnect()
+      renderer.domElement.removeEventListener('webglcontextlost', webglContextLost)
+      renderer.domElement.removeEventListener('webglcontextrestored', webglContextRestored)
+      disposers.forEach((dispose) => dispose())
+      ownedRig?.root.removeFromParent()
+      disposeOwnedRig()
+      scene.environment = null
+      environmentTarget?.dispose()
+      environmentTarget = null
+      sun.shadow.map?.dispose()
+      sun.shadow.map = null
+      disposeObjectResources(scene)
+      disposePmrem()
       renderer.dispose()
+      renderer.forceContextLoss()
       if (renderer.domElement.parentElement === mount) mount.removeChild(renderer.domElement)
       engineRef.current = null
     }
-  }, [profile, onSafetyEvent, onTelemetry, onRunningChange])
+  }, [profile, onSafetyEvent, onTelemetry, onRunningChange, contextRevision])
 
   return (
     <section className={`simulator-shell simulator-${profile.family} ${running ? 'running' : ''}`}>
-      <div className="simulator-canvas" ref={mountRef} />
-      <div className="sim-topbar"><span><Crosshair size={15} /> Operator eye view</span><span>{profile.manufacturer} {profile.model}</span><span className={xrSupported ? 'online' : 'offline'}>{xrSupported ? 'WebXR ready' : 'Desktop first-person'}</span></div>
-      <div className="machine-status"><span>{profile.stance}</span><strong>{activeControl}</strong><i className={presence ? 'engaged' : ''}>{profile.family === 'pallet' && profile.stance.includes('Walk') ? 'Walkie control zone' : presence ? 'Presence engaged / Control to release' : 'Presence released / Control to engage'}</i></div>
+      <div
+        className="simulator-canvas"
+        ref={mountRef}
+        tabIndex={0}
+        role="region"
+        aria-label={`${profile.manufacturer} ${profile.model} first-person simulator controls`}
+        data-testid="simulator-input-surface"
+      />
+      <div className="sim-topbar"><span><Crosshair size={15} /> Operator eye view</span><span>{profile.manufacturer} {profile.model}</span><span className={xrSupported ? 'online' : 'offline'}>{xrSupported ? 'Immersive WebXR available' : 'Desktop first-person'}</span></div>
+      <div className="machine-status"><span>{profile.stance}</span><strong>{activeControl}</strong><i className={presence ? 'engaged' : ''}>{profile.family === 'pallet' && profile.stance.includes('Walk') ? 'Walkie control zone' : presence ? 'Presence engaged / release held control' : 'Presence released / hold Shift or modeled control'}</i></div>
       {/* Thresholds track src/sim/stability.js: below 35% the solver raises a
           major warning, below 18% a critical one, and 0 is the resultant leaving
           the support polygon. The old 55% cut belonged to the tuned scalar this
@@ -1161,12 +2034,12 @@ const Simulator = forwardRef(function Simulator({ profile, onTelemetry, onSafety
       <div className="stability-meter"><span>Stability</span><div><i style={{ height: `${stability}%` }} /></div><b>{stabilityState}</b></div>
       <div className="sim-reticle" aria-hidden="true"><i /><i /></div>
       <div className="sim-hints">
-        <button onClick={() => setGuideOpen((value) => !value)}><Keyboard size={17} /> Controls</button>
+        <button onClick={() => setGuideOpen((value) => !value)} aria-expanded={guideOpen} aria-controls="simulator-controls-guide"><Keyboard size={17} /> Controls</button>
         <button onClick={() => setAudioOn((value) => !value)} aria-label={audioOn ? 'Mute audio' : 'Enable audio'}>{audioOn ? <Volume2 size={17} /> : <Headphones size={17} />}</button>
         <button onClick={() => engineRef.current?.reset()} aria-label="Reset vehicle"><RotateCcw size={17} /></button>
       </div>
-      {guideOpen && <div className="control-guide"><header><Gamepad2 size={18} /><b>{profile.control}</b></header><p><MousePointer2 size={14} /> Drag a visible cab control to manipulate it. A control that moves on two axes responds to both at once, so one drag can blend its functions the way the real part does. Drag empty space, or right-drag, for unrestricted 360-degree inspection. Press Home to center the view.</p><p>Keyboard fallback: Control toggles presence, W/S travel, A/D steer, E/Q lift, R/F reach, T/G tilt, Z/C sideshift, B brake, Space horn.</p><p>VR assessment: reach to the modeled control, hold trigger or pinch, and move it through its physical axis. Hold the deadman control continuously. Where a control has a modifier switch, grab and hold that switch to shift the control to its second function.</p><label className="xr-accessibility"><input type="checkbox" checked={assistiveXR} onChange={(event) => setAssistiveXR(event.target.checked)} /> Enable laser and thumbstick accessibility controls</label><small>{profile.guidance}</small></div>}
-      {!running && <div className="start-overlay"><MousePointer2 size={24} /><div><strong>First-person practical exercise</strong><span>{controlPrompt(profile)}</span></div><button onClick={() => onRunningChange(true)}>Enter operator station</button></div>}
+      {guideOpen && <div className="control-guide" id="simulator-controls-guide"><header><Gamepad2 size={18} /><b>{profile.control}</b></header><p><MousePointer2 size={14} /> Drag a visible cab control to manipulate it. A control that moves on two axes responds to both at once, so one drag can blend its functions the way the real part does. Drag empty space, or right-drag, for unrestricted 360-degree inspection. Press Home to center the view.</p><p>Keyboard fallback while this simulator view is focused: hold Shift for training presence, W/S travel, A/D steer, E/Q lift, R/F reach, T/G tilt, Z/C sideshift, B brake, Space horn.</p><p>VR assessment: reach to the modeled physical control, hold trigger or pinch, and move it through its physical axis. A held controller squeeze is available as an accessibility and training presence proxy, so trigger remains free for a handle and the other hand can hold a modifier. This proxy is not qualification-equivalent evidence of modeled deadman operation.</p><p>Quest utility buttons: press the thumbstick to recenter, press A or X to reset, and hold B or Y to exit VR. These do not replace the standard trigger or pinch control pickup.</p><label className="xr-accessibility"><input type="checkbox" checked={assistiveXR} onChange={(event) => setAssistiveXR(event.target.checked)} /> Enable laser and thumbstick accessibility controls</label><small>{profile.guidance}</small></div>}
+      {!running && <div className="start-overlay"><MousePointer2 size={24} /><div><strong>First-person practical exercise</strong><span>{engineReady ? controlPrompt(profile) : enginePhase === 'failed' ? 'The simulator could not initialize. Review the readiness error before continuing.' : enginePhase.startsWith('xr-') ? 'Completing the immersive session transition...' : 'Loading the equipment model and control bindings...'}</span></div><button disabled={!engineReady} onClick={() => engineRef.current?.startDesktop()}>{engineReady ? 'Enter operator station' : enginePhase === 'failed' ? 'Simulator unavailable' : 'Loading simulator'}</button></div>}
     </section>
   )
 })

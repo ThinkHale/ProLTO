@@ -1,0 +1,46 @@
+{
+  "schemaVersion": 1,
+  "algorithm": "sha256",
+  "assets": {
+    "crown_pe4500": {
+      "file": "crown_pe4500.glb",
+      "bytes": 1544180,
+      "sha256": "9d3d9f12c95c0516a15f96604c0556f3b414aa2a4dc39f34cdb8f9429a53c2ed"
+    },
+    "crown_rr5725": {
+      "file": "crown_rr5725.glb",
+      "bytes": 900204,
+      "sha256": "450a72a30950883cad511629ca5151e17aa5ade22a1be917ffba3ef2aec697ed"
+    },
+    "crown_sc6200": {
+      "file": "crown_sc6200.glb",
+      "bytes": 1477932,
+      "sha256": "af4a457b99657d234039fd97534fe3f85e434bd0196e88da68d8d8dcbc97303f"
+    },
+    "crown_sp1500": {
+      "file": "crown_sp1500.glb",
+      "bytes": 1437700,
+      "sha256": "e9245730a595f0ee105f77642a6f0b2e33225519bec1cca9900c1b309989e794"
+    },
+    "raymond_4460": {
+      "file": "raymond_4460.glb",
+      "bytes": 1518216,
+      "sha256": "26042873e34c54ede579a4866e0babf75ab6405daae4c62df592fd2b891d2d69"
+    },
+    "raymond_5300": {
+      "file": "raymond_5300.glb",
+      "bytes": 1542608,
+      "sha256": "46d4d222652fd1e90175a5484b896cbc027ca49ec4759575959e862dff309d24"
+    },
+    "raymond_7500": {
+      "file": "raymond_7500.glb",
+      "bytes": 1509804,
+      "sha256": "ebf5d547396ab49ac111e0dc7deb27cad50939ffc0d0ae2e75f3cb6c12a99eb7"
+    },
+    "raymond_8210": {
+      "file": "raymond_8210.glb",
+      "bytes": 961676,
+      "sha256": "6a0b66d35de2bcbc7c455ab3c86f0c03d1a42b0f3d9dc680c0b3e1bc14774ec2"
+    }
+  }
+}

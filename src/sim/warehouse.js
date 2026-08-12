@@ -1,15 +1,37 @@
 import * as THREE from 'three'
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js'
-import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js'
 import { surfaceMaterial } from './surfacing.js'
 
-// Facility built to real warehouse dimensions: 12 ft aisle, 42 in deep selective
-// rack on 8 ft beam elevations, 48x40 GMA pallets, 28 ft clear height.
-// Static structure is merged per material and repeated loads are instanced so
-// the scene stays inside a Quest draw-call budget.
+// Facility built from measurable warehouse components: 42 in deep selective
+// rack with 96 in bays and 6 ft beam spacing, 48x40 GMA pallets, and 28 ft
+// clear height.
+// Static structure is merged per material. Repeated load resources are shared
+// so each independently movable pallet keeps its physics identity without
+// duplicating GPU geometry, materials, or canvas textures.
 
 const IN = .0254
 const FT = .3048
+
+// A local, repeatable PRNG keeps facility textures and small placement
+// imperfections identical across reloads, screenshots, desktop sessions, and
+// headset sessions. Ambient randomness made visual QA change every time a
+// profile was selected, even though the simulation state had not changed.
+function seededRandom(seed) {
+  let state = seed >>> 0
+  return () => {
+    state = (Math.imul(state, 1664525) + 1013904223) >>> 0
+    return state / 4294967296
+  }
+}
+
+function hashSeed(value) {
+  let hash = 2166136261
+  for (const character of String(value)) {
+    hash ^= character.charCodeAt(0)
+    hash = Math.imul(hash, 16777619)
+  }
+  return hash >>> 0
+}
 
 function material(color, options = {}, treatment = null) {
   const created = new THREE.MeshStandardMaterial({ color, roughness: .78, metalness: .12, ...options })
@@ -25,11 +47,18 @@ const MATERIALS = {
 }
 
 function boxGeometry(size, position, rotation) {
-  const geometry = new THREE.BoxGeometry(...size)
+  return applyGeometryTransform(new THREE.BoxGeometry(...size), position, rotation)
+}
+
+function transformGeometry(source, position, rotation, scale) {
+  return applyGeometryTransform(source.clone(), position, rotation, scale)
+}
+
+function applyGeometryTransform(geometry, position, rotation, scale) {
   const matrix = new THREE.Matrix4()
   const quaternion = new THREE.Quaternion()
   if (rotation) quaternion.setFromEuler(new THREE.Euler(...rotation))
-  matrix.compose(new THREE.Vector3(...position), quaternion, new THREE.Vector3(1, 1, 1))
+  matrix.compose(new THREE.Vector3(...position), quaternion, new THREE.Vector3(...(scale || [1, 1, 1])))
   geometry.applyMatrix4(matrix)
   return geometry
 }
@@ -44,14 +73,18 @@ function merged(parts, mat, scene, castShadow = true) {
   return mesh
 }
 
+let sharedConcreteMaterial = null
+
 function concreteMaterial() {
+  if (sharedConcreteMaterial) return sharedConcreteMaterial
+  const random = seededRandom(0x434f4e43)
   const canvas = document.createElement('canvas')
   canvas.width = 512
   canvas.height = 512
   const context = canvas.getContext('2d')
   const image = context.createImageData(512, 512)
   for (let index = 0; index < image.data.length; index += 4) {
-    const grain = Math.random() * 26 + Math.random() * 14
+    const grain = random() * 26 + random() * 14
     const blotch = Math.sin(index * .00013) * 7
     image.data[index] = 122 + grain + blotch
     image.data[index + 1] = 126 + grain + blotch
@@ -68,10 +101,10 @@ function concreteMaterial() {
   context.stroke()
   context.fillStyle = 'rgba(150,156,158,.16)'
   for (let index = 0; index < 40; index += 1) {
-    const x = Math.random() * 512
-    const y = Math.random() * 512
+    const x = random() * 512
+    const y = random() * 512
     context.beginPath()
-    context.ellipse(x, y, 30 + Math.random() * 60, 16 + Math.random() * 30, Math.random() * 3, 0, Math.PI * 2)
+    context.ellipse(x, y, 30 + random() * 60, 16 + random() * 30, random() * 3, 0, Math.PI * 2)
     context.fill()
   }
   const texture = new THREE.CanvasTexture(canvas)
@@ -83,13 +116,18 @@ function concreteMaterial() {
   // The canvas map carries large-scale color: joints, burnish, blotching. Relief
   // now comes from the surfacing pass at true world scale instead of a bumpMap
   // reusing this same coarse image, which read as noise rather than aggregate.
-  return surfaceMaterial(
+  sharedConcreteMaterial = surfaceMaterial(
     new THREE.MeshStandardMaterial({ color: 0x9ba0a1, map: texture, roughness: .74, metalness: .02 }),
     'concrete',
   )
+  return sharedConcreteMaterial
 }
 
+let sharedCartonTexture = null
+
 function cartonTexture() {
+  if (sharedCartonTexture) return sharedCartonTexture
+  const random = seededRandom(0x43415254)
   const canvas = document.createElement('canvas')
   canvas.width = 256
   canvas.height = 256
@@ -98,7 +136,7 @@ function cartonTexture() {
   context.fillRect(0, 0, 256, 256)
   const noise = context.getImageData(0, 0, 256, 256)
   for (let index = 0; index < noise.data.length; index += 4) {
-    const variation = (Math.random() - .5) * 22
+    const variation = (random() - .5) * 22
     noise.data[index] += variation
     noise.data[index + 1] += variation
     noise.data[index + 2] += variation
@@ -115,7 +153,8 @@ function cartonTexture() {
   context.fillRect(30, 178, 92, 5)
   const texture = new THREE.CanvasTexture(canvas)
   texture.colorSpace = THREE.SRGBColorSpace
-  return texture
+  sharedCartonTexture = texture
+  return sharedCartonTexture
 }
 
 // 48 x 40 in GMA stringer pallet, 5.5 in tall.
@@ -130,7 +169,10 @@ function cartonTexture() {
 export const PALLET_LATERAL = 40 * IN
 export const PALLET_TRAVEL = 48 * IN
 
+let sharedPalletGeometry = null
+
 function palletGeometry() {
+  if (sharedPalletGeometry) return sharedPalletGeometry
   const lateral = PALLET_LATERAL
   const travel = PALLET_TRAVEL
   const parts = []
@@ -148,13 +190,20 @@ function palletGeometry() {
   ;[-travel / 2 + .09, 0, travel / 2 - .09].forEach((z) => {
     parts.push(boxGeometry([lateral, .7 * IN, .16], [0, .35 * IN, z]))
   })
-  return mergeGeometries(parts, false)
+  sharedPalletGeometry = mergeGeometries(parts, false)
+  return sharedPalletGeometry
 }
 
-function cartonStackGeometry(columns = 2, rows = 2, layers = 2, jitter = .012) {
+const cartonGeometryCache = new Map()
+
+function cartonStackGeometry(seed, columns = 2, rows = 2, layers = 2, jitter = .012) {
   // Case-goods pallet: 24x20x18 in cartons, two per side per layer. Fewer and
   // larger than a brick pile. That is what a real palletized load looks like.
   // Footprint follows the pallet's 40 in lateral by 48 in travel axes.
+  const variant = seed % 4
+  const cacheKey = `${columns}:${rows}:${layers}:${jitter}:${variant}`
+  if (cartonGeometryCache.has(cacheKey)) return cartonGeometryCache.get(cacheKey)
+  const random = seededRandom(0x4c4f4144 ^ variant)
   const parts = []
   const spanX = PALLET_LATERAL - .04
   const spanZ = PALLET_TRAVEL - .04
@@ -164,49 +213,157 @@ function cartonStackGeometry(columns = 2, rows = 2, layers = 2, jitter = .012) {
   for (let layer = 0; layer < layers; layer += 1) {
     for (let row = 0; row < rows; row += 1) {
       for (let column = 0; column < columns; column += 1) {
-        const offsetX = (Math.random() - .5) * jitter
-        const offsetZ = (Math.random() - .5) * jitter
+        const offsetX = (random() - .5) * jitter
+        const offsetZ = (random() - .5) * jitter
         parts.push(boxGeometry(
           [width - .03, height - .02, depth - .03],
           [-spanX / 2 + (column + .5) * width + offsetX, .148 + height * (layer + .5), -spanZ / 2 + (row + .5) * depth + offsetZ],
-          [0, (Math.random() - .5) * .05, 0],
+          [0, (random() - .5) * .05, 0],
         ))
       }
     }
   }
-  return mergeGeometries(parts, false)
+  const geometry = mergeGeometries(parts, false)
+  cartonGeometryCache.set(cacheKey, geometry)
+  return geometry
+}
+
+const cartonMaterialCache = new Map()
+
+function cartonMaterial(tint) {
+  if (cartonMaterialCache.has(tint)) return cartonMaterialCache.get(tint)
+  const created = surfaceMaterial(
+    new THREE.MeshStandardMaterial({ color: tint, map: cartonTexture(), roughness: .93, metalness: 0 }),
+    'cardboard',
+  )
+  cartonMaterialCache.set(tint, created)
+  return created
+}
+
+const LOAD_INSTANCE_CAPACITY = 128
+const loadVisualManagers = new WeakMap()
+let sharedWrapGeometry = null
+let sharedWrapMaterial = null
+
+function wrapGeometry() {
+  if (!sharedWrapGeometry) {
+    sharedWrapGeometry = new THREE.BoxGeometry(PALLET_LATERAL - .02, 1.02, PALLET_TRAVEL - .02)
+  }
+  return sharedWrapGeometry
+}
+
+function wrapMaterial() {
+  if (!sharedWrapMaterial) {
+    sharedWrapMaterial = new THREE.MeshPhysicalMaterial({
+      color: 0xd6e0e0,
+      transparent: true,
+      opacity: .17,
+      roughness: .32,
+      transmission: .55,
+      thickness: .04,
+      depthWrite: false,
+    })
+  }
+  return sharedWrapMaterial
+}
+
+function loadVisualManager(parent) {
+  if (loadVisualManagers.has(parent)) return loadVisualManagers.get(parent)
+  const buckets = new Map()
+  const scratchMatrix = new THREE.Matrix4()
+  const manager = {
+    allocate(specification) {
+      let pages = buckets.get(specification.key)
+      if (!pages) {
+        pages = []
+        buckets.set(specification.key, pages)
+      }
+      let mesh = pages[pages.length - 1]
+      if (!mesh || mesh.count >= LOAD_INSTANCE_CAPACITY) {
+        mesh = new THREE.InstancedMesh(
+          specification.geometry,
+          specification.material,
+          LOAD_INSTANCE_CAPACITY,
+        )
+        mesh.name = `load_instances_${specification.key}_${pages.length + 1}`
+        mesh.count = 0
+        mesh.castShadow = specification.castShadow === true
+        mesh.receiveShadow = specification.receiveShadow === true
+        mesh.frustumCulled = false
+        mesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage)
+        mesh.userData.loadVisualBucket = {
+          kind: specification.kind,
+          key: specification.key,
+        }
+        if (specification.transparent) mesh.renderOrder = 2
+        parent.add(mesh)
+        pages.push(mesh)
+      }
+      const index = mesh.count
+      mesh.count += 1
+      return {
+        kind: specification.kind,
+        mesh,
+        index,
+        localMatrix: specification.localMatrix?.clone() || new THREE.Matrix4(),
+      }
+    },
+    sync(owner) {
+      owner.updateWorldMatrix(true, false)
+      for (const binding of owner.loadVisualBindings || []) {
+        binding.mesh.updateWorldMatrix(true, false)
+        scratchMatrix.copy(binding.mesh.matrixWorld).invert()
+        scratchMatrix.multiply(owner.matrixWorld)
+        scratchMatrix.multiply(binding.localMatrix)
+        binding.mesh.setMatrixAt(binding.index, scratchMatrix)
+        binding.mesh.instanceMatrix.needsUpdate = true
+      }
+    },
+  }
+  loadVisualManagers.set(parent, manager)
+  return manager
 }
 
 function palletLoad(parent, position, tint = 0xb5854f, wrapped = false, options = {}) {
   const group = new THREE.Group()
-  const pallet = new THREE.Mesh(palletGeometry(), MATERIALS.palletWood)
-  pallet.castShadow = true
-  pallet.receiveShadow = true
-  group.add(pallet)
-  const cartons = new THREE.Mesh(
-    cartonStackGeometry(),
-    surfaceMaterial(
-      new THREE.MeshStandardMaterial({ color: tint, map: cartonTexture(), roughness: .93, metalness: 0 }),
-      'cardboard',
-    ),
-  )
-  cartons.castShadow = true
-  cartons.receiveShadow = true
-  group.add(cartons)
+  const manager = loadVisualManager(parent)
+  const variant = hashSeed(options.id || position.join(':')) % 4
+  const tintKey = tint.toString(16).padStart(6, '0')
+  const bindings = [
+    manager.allocate({
+      kind: 'pallet-base',
+      key: 'pallet_base',
+      geometry: palletGeometry(),
+      material: MATERIALS.palletWood,
+      castShadow: true,
+      receiveShadow: true,
+    }),
+    manager.allocate({
+      kind: 'carton-load',
+      key: `cartons_${tintKey}_v${variant}`,
+      geometry: cartonStackGeometry(variant),
+      material: cartonMaterial(tint),
+      castShadow: true,
+      receiveShadow: true,
+    }),
+  ]
   if (wrapped) {
-    const wrap = new THREE.Mesh(
-      new THREE.BoxGeometry(PALLET_LATERAL - .02, 1.02, PALLET_TRAVEL - .02),
-      new THREE.MeshPhysicalMaterial({
-        color: 0xd6e0e0, transparent: true, opacity: .17, roughness: .32,
-        transmission: .55, thickness: .04, depthWrite: false,
-      }),
-    )
-    wrap.position.y = .66
-    group.add(wrap)
+    bindings.push(manager.allocate({
+      kind: 'stretch-wrap',
+      key: 'stretch_wrap',
+      geometry: wrapGeometry(),
+      material: wrapMaterial(),
+      transparent: true,
+      localMatrix: new THREE.Matrix4().makeTranslation(0, .66, 0),
+    }))
   }
   group.position.set(...position)
   group.rotation.y = options.yaw || 0
   group.name = options.id || 'movable_pallet'
+  // Keep live Object3D and Matrix4 references off userData. Three serializes
+  // userData as JSON, so putting bindings there makes scene export circular.
+  group.loadVisualBindings = bindings
+  group.syncLoadVisual = () => manager.sync(group)
   group.userData.physics = {
     kind: 'pallet',
     id: group.name,
@@ -217,6 +374,7 @@ function palletLoad(parent, position, tint = 0xb5854f, wrapped = false, options 
     movable: options.movable !== false,
   }
   parent.add(group)
+  group.syncLoadVisual()
   return group
 }
 
@@ -350,21 +508,25 @@ function buildRackRun(scene, x, zStart, bays, facing) {
   return { loads, slots, colliders }
 }
 
-// Interior play area. The imported facility shell measures 41.2 x 53.2 m with a
-// 14.6 m clear height, so the walls sit well outside the racking rather than
-// hard against it the way the old 22 x 40 m procedural box did.
+// Interior play area of the original procedural building. These are the inside
+// faces of the visible walls, not an unrelated imported model's footprint. The
+// simulator derives its world clamp from this object, so matching it to the
+// rendered shell prevents a truck from driving through a wall into invisible
+// space.
 export const FACILITY = Object.freeze({
-  minX: -18.4, maxX: 18.4, minZ: -20.6, maxZ: 26.4, clearHeight: 14.06,
+  minX: -11.05, maxX: 11.05, minZ: -21.05, maxZ: 19.05, clearHeight: 28 * FT,
 })
 
 function buildStructure(scene) {
-  // Visuals go into a removable group: when public/models/facility.glb loads it
-  // replaces this box, and if it fails to load this stays as the fallback.
   const shell = new THREE.Group()
-  shell.name = 'procedural_shell'
+  shell.name = 'original_procedural_facility'
+  shell.userData.interiorBounds = FACILITY
   scene.add(shell)
-  const clearHeight = 28 * FT
+  const clearHeight = FACILITY.clearHeight
   const wall = .3
+  const width = FACILITY.maxX - FACILITY.minX
+  const depth = FACILITY.maxZ - FACILITY.minZ
+  const centerZ = (FACILITY.minZ + FACILITY.maxZ) / 2
   const colliders = [
     { id: 'west-wall', label: 'west wall', kind: 'wall', minX: FACILITY.minX - wall, maxX: FACILITY.minX, minZ: FACILITY.minZ - wall, maxZ: FACILITY.maxZ + wall },
     { id: 'east-wall', label: 'east wall', kind: 'wall', minX: FACILITY.maxX, maxX: FACILITY.maxX + wall, minZ: FACILITY.minZ - wall, maxZ: FACILITY.maxZ + wall },
@@ -373,13 +535,15 @@ function buildStructure(scene) {
   ]
   const wallMaterial = material(0x9aa1a3, { roughness: .93, metalness: .02 }, 'concrete')
   const wallParts = []
-  ;[-11.2, 11.2].forEach((x) => wallParts.push(boxGeometry([.3, clearHeight, 44], [x, clearHeight / 2, -1])))
-  wallParts.push(boxGeometry([22.7, clearHeight, .3], [0, clearHeight / 2, -21.2]))
-  wallParts.push(boxGeometry([22.7, clearHeight, .3], [0, clearHeight / 2, 19.2]))
+  ;[FACILITY.minX - wall / 2, FACILITY.maxX + wall / 2].forEach((x) => {
+    wallParts.push(boxGeometry([wall, clearHeight, depth + wall * 2], [x, clearHeight / 2, centerZ]))
+  })
+  wallParts.push(boxGeometry([width + wall * 2, clearHeight, wall], [0, clearHeight / 2, FACILITY.minZ - wall / 2]))
+  wallParts.push(boxGeometry([width + wall * 2, clearHeight, wall], [0, clearHeight / 2, FACILITY.maxZ + wall / 2]))
   merged(wallParts, wallMaterial, shell, false)
 
   const deckMaterial = material(0x6e7679, { roughness: .88, metalness: .3 }, 'structuralSteel')
-  const roofParts = [boxGeometry([22.7, .22, 44], [0, clearHeight, -1])]
+  const roofParts = [boxGeometry([width + wall * 2, .22, depth + wall * 2], [0, clearHeight, centerZ])]
   // open-web joists + girders on 8 ft centers, the ceiling operators actually see
   for (let z = -20; z <= 18; z += 8 * FT) {
     roofParts.push(boxGeometry([22, .32, .12], [0, clearHeight - .34, z]))
@@ -388,7 +552,7 @@ function buildStructure(scene) {
       roofParts.push(boxGeometry([1.5, .05, .05], [x, clearHeight - .52, z], [0, 0, step % 2 ? .78 : -.78]))
     }
   }
-  ;[-7.5, 0, 7.5].forEach((x) => roofParts.push(boxGeometry([.34, .5, 42], [x, clearHeight - .95, -1])))
+  ;[-7.5, 0, 7.5].forEach((x) => roofParts.push(boxGeometry([.34, .5, depth + wall], [x, clearHeight - .95, centerZ])))
   merged(roofParts, deckMaterial, shell, false)
 
   const columnParts = []
@@ -460,40 +624,35 @@ function pedestrian(scene, x, z, vestColor) {
   const skin = material(0x9c6a4e, { roughness: .82 })
   const trouser = material(0x2c3a48, { roughness: .9 })
   const vest = new THREE.MeshStandardMaterial({ color: vestColor, roughness: .62, metalness: .02, emissive: vestColor, emissiveIntensity: .12 })
+  const uniform = material(0xdcd6c4, { roughness: .45 })
+  const reflective = material(0xd8dde0, { roughness: .4, metalness: .1 })
 
-  const torso = new THREE.Mesh(new THREE.CapsuleGeometry(.19, .42, 6, 14), vest)
-  torso.position.y = 1.16
-  torso.scale.z = .68
-  group.add(torso)
-  const hips = new THREE.Mesh(new THREE.CapsuleGeometry(.17, .16, 4, 12), trouser)
-  hips.position.y = .86
-  hips.scale.z = .72
-  group.add(hips)
+  const vestParts = [transformGeometry(new THREE.CapsuleGeometry(.19, .42, 6, 14), [0, 1.16, 0], null, [1, 1, .68])]
+  const trouserParts = [transformGeometry(new THREE.CapsuleGeometry(.17, .16, 4, 12), [0, .86, 0], null, [1, 1, .72])]
   ;[-.1, .1].forEach((dx) => {
-    const leg = new THREE.Mesh(new THREE.CapsuleGeometry(.085, .62, 4, 10), trouser)
-    leg.position.set(dx, .48, 0)
-    group.add(leg)
-    const arm = new THREE.Mesh(new THREE.CapsuleGeometry(.062, .46, 4, 10), vest)
-    arm.position.set(dx * 2.4, 1.16, 0)
-    arm.rotation.z = dx * .12
-    group.add(arm)
+    trouserParts.push(transformGeometry(new THREE.CapsuleGeometry(.085, .62, 4, 10), [dx, .48, 0]))
+    vestParts.push(transformGeometry(new THREE.CapsuleGeometry(.062, .46, 4, 10), [dx * 2.4, 1.16, 0], [0, 0, dx * .12]))
   })
-  const head = new THREE.Mesh(new THREE.SphereGeometry(.115, 18, 14), skin)
-  head.position.y = 1.56
-  group.add(head)
-  const hardHat = new THREE.Mesh(new THREE.SphereGeometry(.135, 18, 10, 0, Math.PI * 2, 0, Math.PI / 2), material(0xdcd6c4, { roughness: .45 }))
-  hardHat.position.y = 1.6
-  group.add(hardHat)
-  const brim = new THREE.Mesh(new THREE.CylinderGeometry(.15, .15, .016, 20), material(0xdcd6c4, { roughness: .45 }))
-  brim.position.set(0, 1.6, .03)
-  group.add(brim)
-  ;[1.24, 1.06].forEach((y) => {
-    const stripe = new THREE.Mesh(new THREE.TorusGeometry(.2, .016, 6, 20), material(0xd8dde0, { roughness: .4, metalness: .1 }))
-    stripe.position.y = y
-    stripe.rotation.x = Math.PI / 2
-    stripe.scale.z = .7
-    group.add(stripe)
-  })
+  const head = new THREE.Mesh(transformGeometry(new THREE.SphereGeometry(.115, 18, 14), [0, 1.56, 0]), skin)
+  const hardHat = new THREE.Mesh(mergeGeometries([
+    transformGeometry(new THREE.SphereGeometry(.135, 18, 10, 0, Math.PI * 2, 0, Math.PI / 2), [0, 1.6, 0]),
+    transformGeometry(new THREE.CylinderGeometry(.15, .15, .016, 20), [0, 1.6, .03]),
+  ], false), uniform)
+  const stripeGeometry = mergeGeometries(
+    [1.24, 1.06].map((y) => (
+      transformGeometry(new THREE.TorusGeometry(.2, .016, 6, 20), [0, y, 0], [Math.PI / 2, 0, 0], [1, 1, .7])
+    )),
+    false,
+  )
+  const stripes = new THREE.Mesh(stripeGeometry, reflective)
+  const vestMesh = new THREE.Mesh(mergeGeometries(vestParts, false), vest)
+  const trouserMesh = new THREE.Mesh(mergeGeometries(trouserParts, false), trouser)
+  vestMesh.name = 'pedestrian_vest'
+  trouserMesh.name = 'pedestrian_trousers'
+  head.name = 'pedestrian_head'
+  hardHat.name = 'pedestrian_hard_hat'
+  stripes.name = 'pedestrian_reflective_stripes'
+  group.add(vestMesh, trouserMesh, head, hardHat, stripes)
   group.traverse((object) => { object.castShadow = true })
   group.position.set(x, 0, z)
   // Pedestrians previously had no collider at all -- the truck drove straight
@@ -520,28 +679,37 @@ function buildFixtures(scene) {
   ;[[-2.1, 3.2], [0, 3.2], [2.1, 3.2]].forEach(([x, z]) => {
     const coneGroup = new THREE.Group()
     coneGroup.name = `safety_cone_${cones.length + 1}`
-    const cone = new THREE.Mesh(new THREE.ConeGeometry(.19, .62, 20), material(0xdd5f1c, { roughness: .7 }, 'paint'))
-    cone.position.set(0, .31, 0)
+    const coneGeometry = mergeGeometries([
+      transformGeometry(new THREE.ConeGeometry(.19, .62, 20), [0, .31, 0]),
+      boxGeometry([.34, .03, .34], [0, .015, 0]),
+    ], false)
+    const cone = new THREE.Mesh(coneGeometry, material(0xdd5f1c, { roughness: .7 }, 'paint'))
+    cone.name = 'safety_cone_visual'
     cone.castShadow = true
+    cone.receiveShadow = true
     coneGroup.add(cone)
-    const base = new THREE.Mesh(new THREE.BoxGeometry(.34, .03, .34), material(0xdd5f1c, { roughness: .7 }))
-    base.position.set(0, .015, 0)
-    coneGroup.add(base)
     coneGroup.position.set(x, 0, z)
     coneGroup.userData.physics = { kind: 'cone', radius: .24, tipped: false }
     scene.add(coneGroup)
     cones.push(coneGroup)
   })
 
-  // empty pallet stack and a battery charger against the wall, working-facility cues
+  // Empty pallet stack and a battery charger against the wall, working-facility
+  // cues. The static stack is merged by material instead of spending six main
+  // and six shadow draw calls on six independently immovable meshes.
+  const stackRandom = seededRandom(0x53544143)
+  const stackParts = [[], []]
   for (let index = 0; index < 6; index += 1) {
-    const stack = new THREE.Mesh(palletGeometry(), index % 2 ? MATERIALS.palletWorn : MATERIALS.palletWood)
-    stack.position.set(-9.4, index * .145, 13.4)
-    stack.rotation.y = (Math.random() - .5) * .04
-    stack.castShadow = true
-    stack.receiveShadow = true
-    scene.add(stack)
+    stackParts[index % 2].push(transformGeometry(
+      palletGeometry(),
+      [-9.4, index * .145, 13.4],
+      [0, (stackRandom() - .5) * .04, 0],
+    ))
   }
+  const cleanStack = merged(stackParts[0], MATERIALS.palletWood, scene)
+  const wornStack = merged(stackParts[1], MATERIALS.palletWorn, scene)
+  if (cleanStack) cleanStack.name = 'empty_pallet_stack_clean'
+  if (wornStack) wornStack.name = 'empty_pallet_stack_worn'
   const charger = new THREE.Mesh(new THREE.BoxGeometry(.7, 1.15, .5), material(0x38424a, { roughness: .55, metalness: .35 }, 'structuralSteel'))
   charger.position.set(9.9, .58, 12.5)
   charger.castShadow = true
@@ -558,61 +726,26 @@ function buildFixtures(scene) {
   }
 }
 
-// Third-party facility shell (assets-src/facility.py). It supplies the building
-// envelope only -- the source contains no racking, shelving or pallets -- so the
-// racking, rack slots, loads and every collider below stay procedural and none
-// of the training-critical geometry depends on it. If it fails to load, the
-// procedural shell it replaces stays on screen.
-const facilityLoader = new GLTFLoader()
-
-function loadFacilityShell(scene, fallbackShell) {
-  // Headless verification builds the warehouse to assert collider topology and
-  // has no fetch; it keeps the procedural shell, which is the same fallback a
-  // browser gets if the asset is missing.
-  if (typeof window === 'undefined') return
-  const url = `${import.meta.env?.BASE_URL ?? '/'}models/facility.glb`
-  facilityLoader.load(url, (gltf) => {
-    gltf.scene.traverse((object) => {
-      if (!object.isMesh) return
-      // A 41 x 53 m shell casting shadows would blow the shadow-map budget for
-      // no gain; it receives them instead.
-      object.castShadow = false
-      object.receiveShadow = true
-      // Our own floor carries the aisle markings and the concrete surfacing
-      // pass, so the model's floor is dropped rather than z-fighting with it.
-      if (/^Floor_Object/i.test(object.name)) object.visible = false
-    })
-    // The model's slab sits at exactly y = 0.000 -- the same plane as our floor's
-    // top face -- and its stair trim and door thresholds sit within 2 mm of it.
-    // Coplanar surfaces z-fight, which is what made the floor shimmer. Dropping
-    // the whole shell 3 cm puts every one of those surfaces cleanly underneath
-    // instead of tied with it; walls and columns just start fractionally lower,
-    // which is invisible.
-    gltf.scene.position.y = -.03
-    scene.add(gltf.scene)
-    if (fallbackShell) {
-      scene.remove(fallbackShell)
-      fallbackShell.traverse((object) => { if (object.isMesh) object.geometry.dispose() })
-    }
-  }, undefined, (error) => {
-    console.warn('ProLTO: facility shell unavailable, keeping procedural structure', error)
-  })
-}
-
 export function createWarehouse(scene) {
-  const floor = new THREE.Mesh(new THREE.BoxGeometry(41, .3, 53), concreteMaterial())
-  floor.position.set(0, -.15, 3)
+  const wall = .3
+  const width = FACILITY.maxX - FACILITY.minX
+  const depth = FACILITY.maxZ - FACILITY.minZ
+  const centerZ = (FACILITY.minZ + FACILITY.maxZ) / 2
+  const floor = new THREE.Mesh(new THREE.BoxGeometry(width + wall * 2, .3, depth + wall * 2), concreteMaterial())
+  floor.name = 'facility_floor'
+  floor.position.set(0, -.15, centerZ)
   floor.receiveShadow = true
   scene.add(floor)
 
   const { colliders: structureColliders, shell } = buildStructure(scene)
-  loadFacilityShell(scene, shell)
   buildFloorMarkings(scene)
   const leftRack = buildRackRun(scene, -6.4, -16, 11, 1)
   const rightRack = buildRackRun(scene, 6.4, -16, 11, -1)
   const fixtures = buildFixtures(scene)
 
-  const pallet = palletLoad(scene, [0, 0, 7.2], 0xb5854f, false, { id: 'training-pallet', weight: 2400 })
+  const pallet = palletLoad(scene, [0, 0, 7.2], 0xb5854f, false, {
+    id: 'training-pallet', weight: 2400,
+  })
   const pedestrians = [
     pedestrian(scene, 2.7, -7.6, 0xd9d43f),
     pedestrian(scene, -2.9, 8.2, 0xe07c22),
@@ -624,5 +757,6 @@ export function createWarehouse(scene) {
     cones: fixtures.cones,
     rackSlots: [...leftRack.slots, ...rightRack.slots],
     staticColliders: [...structureColliders, ...leftRack.colliders, ...rightRack.colliders, ...fixtures.colliders],
+    facilityShell: shell,
   }
 }

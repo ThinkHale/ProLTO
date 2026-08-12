@@ -9,8 +9,13 @@
 import assert from 'node:assert/strict'
 import { getChassis, wheelbase } from '../src/data/chassis.js'
 import {
+  acceptedMotion,
+  advanceDriveSpeed,
   advanceSteerAngle,
+  fixedAxleSpeed,
   integrateSteering,
+  PROVISIONAL_LONGITUDINAL_LIMITS,
+  provisionalSteeringSpeedScale,
   steerLimits,
   tailSwingRadius,
   turnRadius,
@@ -103,31 +108,58 @@ const limits = steerLimits(counterbalance)
   near(angle, limits.maxSteer, 1e-9, 'held input must eventually reach full lock')
 }
 
-// REGRESSION: yaw rate must stay bounded at full lock. Driving it from FORWARD
-// speed as v*tan(delta)/L sent tan to infinity near 90 degrees and spun the
-// truck on the spot at a crawl. Driving it from DRIVE WHEEL speed as
-// v*sin(delta)/L bounds it, and forward travel correctly falls away instead.
+// Traction topology is explicit. A counterbalance truck drives through its
+// fixed front axle; reach equipment drives through the steered traction unit.
+// The former uses v*tan(delta)/L, the latter wheelSpeed*sin(delta)/L.
 {
   const wheelSpeed = 2
+  const reachLimits = steerLimits(reach)
+  assert.equal(limits.tractionAxle, 'fixed', 'counterbalance traction must be on the fixed axle')
+  assert.equal(reachLimits.tractionAxle, 'steered', 'reach traction must be on the steered axle')
+  const moderateSteer = 35 * DEG
+  near(fixedAxleSpeed(wheelSpeed, moderateSteer, limits), wheelSpeed, 1e-9, 'fixed-axle traction speed')
+  near(
+    yawRateAt(wheelSpeed, moderateSteer, limits),
+    -wheelSpeed * Math.tan(moderateSteer) / limits.wheelbase,
+    1e-9,
+    'fixed-axle yaw rate',
+  )
+  near(
+    fixedAxleSpeed(wheelSpeed, moderateSteer, reachLimits),
+    wheelSpeed * Math.cos(moderateSteer),
+    1e-9,
+    'steered traction forward component',
+  )
+  near(
+    yawRateAt(wheelSpeed, moderateSteer, reachLimits),
+    -wheelSpeed * Math.sin(moderateSteer) / reachLimits.wheelbase,
+    1e-9,
+    'steered traction yaw rate',
+  )
+
+  // The provisional counterbalance controller curve retains the previous safe
+  // full-lock envelope without pretending the front drive axle steers.
+  const limitedSpeed = wheelSpeed * provisionalSteeringSpeedScale(limits.maxSteer, limits)
+  const locked = integrateSteering({ x: 0, z: 0, heading: 0 }, limitedSpeed, limits.maxSteer, limits, 1 / 60)
+  near(locked.forwardSpeed, limitedSpeed, 1e-9, 'fixed-axle speed must equal the limited drive command')
+  near(
+    Math.abs(locked.yawRate),
+    wheelSpeed * Math.sin(limits.maxSteer) / limits.wheelbase,
+    1e-9,
+    'separate corner-speed control must preserve the bounded steady-state yaw envelope',
+  )
+
+  // Steered traction stays bounded by wheel-path speed all the way to full lock.
   let worst = 0
-  for (let degrees = 0; degrees <= limits.maxSteer / DEG; degrees += 1) {
-    const rate = Math.abs(yawRateAt(wheelSpeed, degrees * DEG, limits))
+  for (let degrees = 0; degrees <= reachLimits.maxSteer / DEG; degrees += 1) {
+    const rate = Math.abs(yawRateAt(wheelSpeed, degrees * DEG, reachLimits))
     worst = Math.max(worst, rate)
   }
-  const ceiling = wheelSpeed / limits.wheelbase
+  const ceiling = wheelSpeed / reachLimits.wheelbase
   assert.ok(worst <= ceiling + 1e-9, `yaw rate ${worst.toFixed(2)} rad/s exceeded the wheel-speed ceiling ${ceiling.toFixed(2)}`)
-  assert.ok(worst * 180 / Math.PI < 100, `full lock at 2 m/s yaws ${(worst * 180 / Math.PI).toFixed(0)} deg/s, which is a spin not a turn`)
-
-  // Forward travel falls off as the cosine of the steer angle, so at full lock
-  // most of the wheel's motion is going into rotation rather than travel.
-  const straight = integrateSteering({ x: 0, z: 0, heading: 0 }, 2, 0, limits, 1 / 60)
-  const locked = integrateSteering({ x: 0, z: 0, heading: 0 }, 2, limits.maxSteer, limits, 1 / 60)
-  near(straight.forwardSpeed, 2, 1e-9, 'straight ahead, forward speed is wheel speed')
-  near(locked.forwardSpeed, 2 * Math.cos(limits.maxSteer), 1e-9, 'at full lock, forward speed is wheelSpeed * cos(delta)')
-  assert.ok(Math.abs(locked.forwardSpeed) < Math.abs(straight.forwardSpeed) * .3, 'forward speed must collapse at full lock')
 
   // A crawl must stay a crawl no matter how hard the wheel is turned.
-  const crawl = integrateSteering({ x: 0, z: 0, heading: 0 }, .25, limits.maxSteer, limits, 1 / 60)
+  const crawl = integrateSteering({ x: 0, z: 0, heading: 0 }, .25, reachLimits.maxSteer, reachLimits, 1 / 60)
   assert.ok(Math.abs(crawl.yawRate) * 180 / Math.PI < 15, `creeping at full lock yaws ${(Math.abs(crawl.yawRate) * 180 / Math.PI).toFixed(1)} deg/s`)
 }
 
@@ -137,6 +169,81 @@ const limits = steerLimits(counterbalance)
   const pallet = steerLimits({ manufacturer: 'Crown', family: 'pallet' })
   assert.ok(pallet.fixedAxleZ < pallet.steerAxleZ, 'pallet truck load wheels must sit forward of the steered wheel')
   assert.ok(limits.fixedAxleZ < limits.steerAxleZ, 'counterbalance drive axle must sit forward of the steered axle')
+}
+
+// Exact arc integration must produce the same pose at desktop and headset frame
+// rates. This is a direct regression for the old-heading Euler chord error.
+{
+  const delta = 48 * DEG
+  const driveSpeed = 1.35
+  const run = (hz) => {
+    let pose = { x: 0, z: 0, heading: 0 }
+    for (let frame = 0; frame < hz; frame += 1) pose = integrateSteering(pose, driveSpeed, delta, limits, 1 / hz)
+    return pose
+  }
+  const reference = run(240)
+  for (const hz of [25, 60, 72, 90, 120]) {
+    const pose = run(hz)
+    near(pose.x, reference.x, 1e-9, `${hz} Hz x must match analytic reference`)
+    near(pose.z, reference.z, 1e-9, `${hz} Hz z must match analytic reference`)
+    near(pose.heading, reference.heading, 1e-9, `${hz} Hz heading must match analytic reference`)
+  }
+
+  const fixedStepRun = (displayHz) => {
+    let pose = { x: 0, z: 0, heading: 0 }
+    let accumulator = 0
+    let simulationSteps = 0
+    for (let frame = 0; frame < displayHz; frame += 1) {
+      accumulator += 1 / displayHz
+      while (accumulator + 1e-10 >= 1 / 90) {
+        pose = integrateSteering(pose, driveSpeed, delta, limits, 1 / 90)
+        accumulator = Math.max(0, accumulator - 1 / 90)
+        simulationSteps += 1
+      }
+    }
+    assert.equal(simulationSteps, 90, `${displayHz} Hz must consume exactly 90 fixed simulation steps per second`)
+    return pose
+  }
+  const fixedReference = fixedStepRun(90)
+  for (const hz of [25, 60, 72, 120, 240]) {
+    const pose = fixedStepRun(hz)
+    near(pose.x, fixedReference.x, 1e-12, `${hz} Hz fixed-step x`)
+    near(pose.z, fixedReference.z, 1e-12, `${hz} Hz fixed-step z`)
+    near(pose.heading, fixedReference.heading, 1e-12, `${hz} Hz fixed-step heading`)
+  }
+
+  const proposed = integrateSteering({ x: 0, z: 0, heading: 0 }, driveSpeed, delta, limits, 1 / 90)
+  const accepted = acceptedMotion({ x: 0, z: 0, heading: 0 }, proposed, limits, 1 / 90)
+  near(accepted.forwardSpeed, proposed.forwardSpeed, 1e-5, 'accepted-pose forward speed')
+  near(accepted.yawRate, proposed.yawRate, 1e-9, 'accepted-pose yaw rate')
+}
+
+// Longitudinal response is bounded in m/s^2 and invariant to render cadence.
+{
+  const dynamics = PROVISIONAL_LONGITUDINAL_LIMITS.counterbalance
+  const target = 4
+  const accelerate = (hz) => {
+    let speed = 0
+    for (let frame = 0; frame < hz; frame += 1) speed = advanceDriveSpeed(speed, target, dynamics, 1 / hz, 0, true)
+    return speed
+  }
+  for (const hz of [25, 60, 72, 90, 120, 240]) {
+    near(accelerate(hz), dynamics.accelMps2, 1e-9, `${hz} Hz bounded acceleration`)
+  }
+
+  let speed = 4
+  let pose = { x: 0, z: 0, heading: 0 }
+  let steps = 0
+  while (speed > 0 && steps < 1000) {
+    speed = advanceDriveSpeed(speed, 0, dynamics, 1 / 90, 1, true)
+    pose = integrateSteering(pose, speed, 0, limits, 1 / 90)
+    steps += 1
+  }
+  near(steps / 90, 4 / dynamics.serviceBrakeMps2, 1 / 90, 'service-brake stopping time')
+  near(-pose.z, 4 * 4 / (2 * dynamics.serviceBrakeMps2), .03, 'service-brake stopping distance')
+
+  const reversal = advanceDriveSpeed(1, -2, dynamics, .1, 0, true)
+  assert.ok(reversal >= 0, 'a direction reversal must brake to zero before applying opposite traction')
 }
 
 // --------------------------------------------------------------- stability ---
@@ -177,6 +284,22 @@ const restingInput = { loadMass: 0, forkHeight: 0, speed: 0, yawRate: 0, turnRad
   })
   assert.equal(result.criticalAxis, 'lateral', 'a fast corner must threaten the lateral edge')
   assert.ok(result.lateralMargin < result.longitudinalMargin, 'lateral margin must be the binding constraint in a corner')
+}
+
+// Reversing flips yaw and signed ground speed together, so the inertial force
+// remains on the same truck-local side for the same steering angle.
+{
+  const forward = solveStability(counterbalance, {
+    ...restingInput, loadMass: 1200, forkHeight: 4, sideshift: -.15,
+    speed: 1.5, yawRate: -.4,
+  })
+  const reverse = solveStability(counterbalance, {
+    ...restingInput, loadMass: 1200, forkHeight: 4, sideshift: -.15,
+    speed: -1.5, yawRate: .4,
+  })
+  assert.ok(forward.signedLateralAccel < 0 && reverse.signedLateralAccel < 0, 'forward and reverse must keep the outward force on the same side')
+  near(forward.resultant.x, reverse.resultant.x, 1e-9, 'reverse turn resultant side')
+  near(forward.lateralMargin, reverse.lateralMargin, 1e-9, 'reverse turn lateral margin')
 }
 
 // Same corner, same load: the three-wheel truck must be less stable laterally

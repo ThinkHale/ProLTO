@@ -148,7 +148,6 @@ function solveCore(profile, input) {
     sideshift = 0,
     speed = 0,
     yawRate = 0,
-    turnRadius = Infinity,
     forwardAccel = 0,
     loadHeight = 1.05,
   } = input
@@ -188,10 +187,13 @@ function solveCore(profile, input) {
 
   // --- Inertial displacement of the resultant -------------------------------
   // Centrifugal force acts outward from the turn; braking throws the CG forward.
-  const lateralAccel = Number.isFinite(turnRadius) && Math.abs(turnRadius) > 1e-6
-    ? (speed * speed) / Math.abs(turnRadius)
-    : 0
-  const lateralShift = Math.sign(yawRate) * (lateralAccel / G) * cg.y
+  // Signed body-lateral inertial acceleration is v * yawRate. Yaw reverses
+  // while backing, but signed ground speed reverses with it, so the product
+  // keeps the force on the physically correct side of the truck. Using only
+  // sign(yawRate) mirrored the critical edge in reverse.
+  const signedLateralAccel = Number.isFinite(speed) && Number.isFinite(yawRate) ? speed * yawRate : 0
+  const lateralAccel = Math.abs(signedLateralAccel)
+  const lateralShift = Math.sign(signedLateralAccel) * (lateralAccel / G) * cg.y
   const longitudinalShift = (forwardAccel / G) * cg.y
   const resultant = { x: cg.x + lateralShift, z: cg.z + longitudinalShift }
 
@@ -215,6 +217,7 @@ function solveCore(profile, input) {
     lateralMargin: Math.max(0, Math.min(1, lateral.margin)),
     longitudinalMargin: Math.max(0, Math.min(1, longitudinal.margin)),
     lateralAccel,
+    signedLateralAccel,
     centerOfGravity: cg,
     resultant,
     combinedMass: totalMass,

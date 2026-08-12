@@ -3,7 +3,7 @@
 Only flat Principled values survive glTF export (procedural node trees do not),
 so every material here is built from exportable channels: base color, metallic,
 roughness, clearcoat (KHR_materials_clearcoat), emission. Realism comes from
-geometry quality plus disciplined physical values — paint is clearcoated and
+geometry quality plus disciplined physical values. Paint is clearcoated and
 tight, structural steel is semi-gloss, rubber is near-matte, plastics sit in
 between. Keep the palette consistent across the fleet.
 
@@ -70,7 +70,7 @@ def safety_orange():
     return pbr('safety_orange', 0xE8930C, roughness=0.4, metallic=0.0, clearcoat=0.35)
 
 def mast_steel():
-    """Rolled mast channel — near-black satin structural steel."""
+    """Rolled mast channel: near-black satin structural steel."""
     return pbr('mast_steel', 0x17191B, roughness=0.42, metallic=0.75)
 
 def frame_black():
@@ -85,7 +85,7 @@ def chrome_rod():
     return pbr('chrome_rod', 0xC8CCCE, roughness=0.08, metallic=1.0)
 
 def steel_forks():
-    """Fork steel — worn tips read lighter; keep mid-dark satin."""
+    """Fork steel. Worn tips read lighter; keep mid-dark satin."""
     return pbr('steel_forks', 0x3A3E41, roughness=0.38, metallic=0.85)
 
 def chain_steel():
@@ -95,11 +95,11 @@ def rubber_tire():
     return pbr('rubber_tire', 0x0E0F10, roughness=0.92, metallic=0.0)
 
 def poly_wheel():
-    """Polyurethane load/drive wheel — deep amber-black, slight sheen."""
+    """Polyurethane load/drive wheel: deep amber-black, slight sheen."""
     return pbr('poly_wheel', 0x241A12, roughness=0.55, metallic=0.0)
 
 def plastic_molded():
-    """Molded compartment plastic — dark warm gray."""
+    """Molded compartment plastic: dark warm gray."""
     return pbr('plastic_molded', 0x24272A, roughness=0.62, metallic=0.0)
 
 def plastic_dark():

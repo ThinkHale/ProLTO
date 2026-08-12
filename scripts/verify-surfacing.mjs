@@ -21,12 +21,19 @@ const {
   __familyTextureForTest,
 } = await import('../src/sim/surfacing.js')
 
+const surfacingSource = readFileSync('src/sim/surfacing.js', 'utf8')
+assert.match(surfacingSource, /#ifdef USE_INSTANCING/, 'surfacing must include dynamic instance transforms')
+assert.match(
+  surfacingSource,
+  /proltoSurfaceMatrix\s*=\s*modelMatrix\s*\*\s*instanceMatrix/,
+  'instanced load normals and floor grime must follow their individual world poses',
+)
+
 // --- every shipped material is accounted for ---------------------------------
-// Fleet only. facility.glb is the third-party building shell: it ships its own
-// textures and is deliberately outside the name-bound surfacing contract.
-const NON_FLEET = new Set(['facility.glb'])
+// The runtime model directory contains the eight fleet vehicles only. Facility
+// geometry is original procedural Three.js content and is verified separately.
 const models = readdirSync('public/models')
-  .filter((name) => name.endsWith('.glb') && !NON_FLEET.has(name))
+  .filter((name) => name.endsWith('.glb'))
 assert.ok(models.length === 8, `expected the full fleet, found ${models.length} models`)
 
 const unmapped = new Map()

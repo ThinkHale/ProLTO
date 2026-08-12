@@ -52,7 +52,7 @@ Steering, stability, and facility collision are documented separately in
 approximates and where the approximation stops being defensible. In summary:
 steering uses steered-axle kinematics referenced to the fixed axle, so tail
 swing is geometric rather than scripted; stability solves a combined center of
-gravity against the truck's real support polygon under the inertial forces
+gravity against the truck's reconstructed support polygon under the inertial forces
 acting that frame; racks are modeled per upright and per beam so bays are open.
 Chassis masses, CG heights, and axle positions are reconstructed working values,
 not data-plate figures, and carry the same validation boundary as the geometry.

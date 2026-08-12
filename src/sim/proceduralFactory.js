@@ -1,7 +1,6 @@
 import * as THREE from 'three'
 import { RoundedBoxGeometry } from 'three/addons/geometries/RoundedBoxGeometry.js'
 
-const dark = 0x172126
 const rubber = 0x0b1013
 const steel = 0x37454b
 const controlBlack = 0x11191d
@@ -66,20 +65,6 @@ function markControl(mesh, action, label, axis = 'vertical', spring = true) {
   mesh.material = mesh.material.clone()
   mesh.userData.baseEmissive = mesh.material.emissive?.getHex?.() || 0
   return mesh
-}
-
-function mastAssembly(root, options = {}) {
-  const mast = new THREE.Group()
-  mast.position.z = options.z ?? -1.18
-  ;[-.57, .57].forEach((x) => box(mast, [.11, options.height ?? 3.1, .14], [x, (options.height ?? 3.1) / 2, 0], dark))
-  box(mast, [1.3, .1, .16], [0, .28, 0], dark)
-  const carriage = new THREE.Group()
-  carriage.position.z = -.12
-  box(carriage, [1.25, .3, .13], [0, .23, 0], steel)
-  ;[-.4, .4].forEach((x) => box(carriage, [.12, .08, options.forkLength ?? 1.65], [x, .04, -.78], steel))
-  mast.add(carriage)
-  root.add(mast)
-  return { mast, carriage }
 }
 
 function addDisplay(parent, position, manufacturer) {
@@ -290,7 +275,7 @@ function buildCrownReach(profile) {
   const steerPivot = new THREE.Group()
   steerPivot.position.set(-.37, 1.02, -.08)
   roundedBox(steerPivot, [.14, .25, .15], [0, .08, 0], 0x151c1f, { roughness: .64, metalness: .06 }, .055)
-  const steeringPad = markControl(ellipsoid(steerPivot, [.14, .055, .11], [0, .22, -.02], 0x222b2e, { roughness: .72, metalness: .02 }), 'steer', 'Crown palm steering tiller', 'horizontal', false)
+  markControl(ellipsoid(steerPivot, [.14, .055, .11], [0, .22, -.02], 0x222b2e, { roughness: .72, metalness: .02 }), 'steer', 'Crown palm steering tiller', 'horizontal', false)
   ellipsoid(steerPivot, [.095, .016, .066], [0, .271, -.02], 0x0a0f11, { roughness: .45, metalness: .08 }, 24)
   controls.add(steerPivot)
 
@@ -318,7 +303,7 @@ function buildCrownReach(profile) {
 
   const brakePedal = markControl(roundedBox(controls, [.25, .045, .23], [-.27, .355, -.12], 0x252b2c, { roughness: .9, metalness: .02 }, .018), 'brake', 'Left brake pedal', 'pedal', true)
   brakePedal.rotation.x = -.12
-  const presencePad = markControl(roundedBox(controls, [.36, .035, .3], [.22, .35, -.045], 0x303b3d, { roughness: .94, metalness: 0 }, .014), 'presence', 'Right operator presence pedal', 'button', false)
+  markControl(roundedBox(controls, [.36, .035, .3], [.22, .35, -.045], 0x303b3d, { roughness: .94, metalness: 0 }, .014), 'presence', 'Right operator presence pedal', 'button', false)
   for (let z = -.16; z < .08; z += .055) box(controls, [.29, .007, .008], [.22, .371, z], 0x111718, { roughness: .9, metalness: 0 })
   roundedBox(controls, [.86, .09, .13], [0, .47, .88], crownOrange, { roughness: .46, metalness: .1 }, .035)
   root.add(controls)
@@ -344,7 +329,7 @@ function buildCrownReach(profile) {
   }
 }
 
-function buildRaymondReach(profile) {
+function buildRaymondReach(_profile) {
   const root = new THREE.Group()
   root.name = 'Raymond 7500 Universal Stance reference-built truck'
   const raymondRed = 0xc93635
@@ -510,7 +495,6 @@ function buildPallet(profile) {
   const crown = profile.manufacturer === 'Crown'
   root.name = crown ? 'Crown PE 4500 reference-built end rider' : 'Raymond 8210 reference-built walkie'
   const paint = crown ? profile.color : 0xc93635
-  const accent = crown ? 0xf0a318 : 0xd53b37
   const paintFinish = { roughness: .31, metalness: .16, clearcoat: .22, clearcoatRoughness: .3 }
   const blackFinish = { roughness: .42, metalness: .56 }
   const bodyDepth = walkie ? .78 : 1.08

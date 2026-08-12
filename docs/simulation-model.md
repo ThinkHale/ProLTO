@@ -91,9 +91,11 @@ the base, and a collider per beam per bay per level bounded to that elevation.
 The bay opening between them is genuinely open, so forks enter a bottom-level
 position and a full-height truck body does not.
 
-Beams do not hard-block a *carried* load — a pallet has to be able to come down
-onto them — but the contact is still recorded, so setting a load down on the rack
-face is visible to the evaluator. Uprights block everything.
+Beam steel blocks the carriage and carried pallet during horizontal entry. A
+narrow top-surface tolerance permits a correctly elevated pallet to settle onto
+two separated support beams without treating the contact skin as penetration.
+Rack placement is rejected when the target slot lacks physical support geometry.
+Uprights block everything.
 
 Contacts are classified and scored by what they mean: an upright strike is
 critical because it closes an aisle and can bring a run down; a beam or stored
@@ -104,19 +106,91 @@ the floor to infinity — the entire rack face was a solid wall, so a trainee co
 never enter a bay or judge an approach. Pedestrians had no collider at all and
 could be driven straight through.
 
-A pallet on the floor is not a bollard. Pressing a truck into one shoves it
-across the concrete, modeled as displacement while in contact rather than as an
-impulse: friction between wood and sealed concrete is high enough that a shoved
-load has no meaningful coast, it stops the instant the truck does, and it never
-quite keeps up. Resistance scales with load — an empty pallet skitters, a
-2400 lb load barely shifts. Racked loads are excluded, because nudging a
-beam-level pallet with the mast is a rack strike, not a shoving match. Pushing
-is scored, since carrying is the correct technique.
+A movable pallet on the floor can be shoved across the concrete, modeled as
+displacement while in contact rather than as an impulse. Each displacement is
+swept and stops at rack steel, walls, pedestrians, or another load. Resistance
+scales with load, so an empty pallet moves farther than a loaded one. Loads marked
+immovable and racked loads remain solid. Pushing is scored, since carrying is the
+correct technique.
 
 **Limits.** Kinematic sweep with a binary search on first contact, not impulse
-resolution. Pushed loads translate but do not rotate, tip, or spill, and loads
-on the forks are rigid — they do not shift or slip. Racks do not deflect or
-fail; a strike is scored, not simulated.
+resolution. Pushed loads translate conservatively but do not rotate, tip, or
+spill, and loads on the forks are rigid. They do not shift or slip. Racks do not
+deflect or fail; a strike is scored, not simulated.
+
+## Hydraulic motion and physical forks
+
+`src/sim/loadPhysics.js`
+
+Lift, reach, sideshift, tilt, carried-load motion, and an order-picker platform
+do not move with the truck root. They therefore use a separate full 3D swept
+configuration resolver, `resolveHydraulicMotion`. A configuration contains:
+
+```js
+{
+  values: { lift, reach, tilt, sideshift },
+  colliders: [{ id, x, z, heading, halfWidth, halfLength, minY, maxY }],
+}
+```
+
+Current and proposed configurations must contain the same unique collider IDs.
+Invalid or incomplete OBBs fail closed. The resolver interpolates horizontal,
+vertical, angular, and size changes at no more than 25 mm per step, then binary
+searches the first blocked interval. It returns `acceptedConfiguration`, the
+accepted fraction, deduplicated contact evidence, and the blocking contacts.
+
+Penetration is compared independently in the horizontal and vertical separating
+directions. A new contact, or any axis becoming deeper, is blocked. Lowering or
+retracting from an existing overlap is accepted when neither axis becomes worse.
+This escape rule is necessary because imported geometry or a corrected collider
+can otherwise trap a machine permanently inside a contact.
+
+The two fork blades are generated from the live fork frame by
+`forkTineCollidersForFrame`. They are solid against rack steel, walls,
+pedestrians, loads, and pallet wood during both hydraulic movement and truck
+travel. A narrow pallet exception applies only when both blades are inside the
+two distinct GMA stringer openings, aligned with the 48 inch travel axis, and
+vertically contained in the fork pocket. One blade, both blades in one opening,
+side entry, stringer intersection, or deck intersection remains blocking.
+
+Hydraulic contact events use the same canonical rack, pedestrian, load, cone,
+and facility classifications as travel contacts. Multiple moving colliders that
+hit one obstacle emit one scoreable event, and held input does not emit another
+event until contact clears.
+
+The selected equipment profile capacity is copied into
+`forkSpecification.maximumLoadWeight` by `forkConfigurationForProfile`, in the
+same pounds unit used by pallet metadata. `engagementEligibility` remains the
+module-boundary hook for a lower live capacity computed from height, load center,
+and reach extension.
+
+### Simulator integration order
+
+For each fixed simulation step:
+
+1. Resolve truck travel first. The load solver automatically transforms its last
+   accepted hydraulic configuration into truck-local sweep bodies, so carriage,
+   platform, carried load, and both tines remain solid during travel.
+2. Snapshot the current hydraulic values and world colliders. Include the
+   carriage or backrest, both results from `forkTineCollidersForFrame`, the
+   carried pallet when present, and the elevated order-picker platform. The
+   order-picker power unit stays in the fixed body collider; its platform must
+   not remain in that floor-fixed envelope.
+3. Compute the proposed values, temporarily apply all rig transforms, update
+   world matrices, synchronize the carried pallet, and capture the proposed
+   colliders with the same IDs.
+4. Call `loadPhysics.resolveHydraulicMotion(current, proposed)`. Copy
+   `result.acceptedConfiguration.values` back to simulation state, apply those
+   accepted transforms, update matrices again, and synchronize the carried load.
+   Do not leave the scene at the rejected proposed transforms.
+5. Build and commit an initial current configuration immediately after truck
+   setup, before the first travel step. `reset()` clears the stored configuration,
+   so reset must commit the rebuilt rest configuration before travel resumes.
+
+Pitch is represented by a conservative yaw-oriented OBB with the full vertical
+extent of the tilted blade. This prevents tunneling without claiming triangle
+mesh contact or tine flex. Rack deflection, mast flex, chain stretch, and load
+slip remain outside this solver.
 
 ## Verification
 

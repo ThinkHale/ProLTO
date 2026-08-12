@@ -1,7 +1,45 @@
-@import url('https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@400;500;600;700&family=Inter:wght@400;500;600;700&display=swap');
+@font-face {
+  font-family: 'Inter Variable';
+  font-style: normal;
+  font-display: swap;
+  font-weight: 100 900;
+  src: url('@fontsource-variable/inter/files/inter-latin-wght-normal.woff2') format('woff2-variations');
+}
+
+@font-face {
+  font-family: 'Barlow Condensed';
+  font-style: normal;
+  font-display: swap;
+  font-weight: 400;
+  src: url('@fontsource/barlow-condensed/files/barlow-condensed-latin-400-normal.woff2') format('woff2');
+}
+
+@font-face {
+  font-family: 'Barlow Condensed';
+  font-style: normal;
+  font-display: swap;
+  font-weight: 500;
+  src: url('@fontsource/barlow-condensed/files/barlow-condensed-latin-500-normal.woff2') format('woff2');
+}
+
+@font-face {
+  font-family: 'Barlow Condensed';
+  font-style: normal;
+  font-display: swap;
+  font-weight: 600;
+  src: url('@fontsource/barlow-condensed/files/barlow-condensed-latin-600-normal.woff2') format('woff2');
+}
+
+@font-face {
+  font-family: 'Barlow Condensed';
+  font-style: normal;
+  font-display: swap;
+  font-weight: 700;
+  src: url('@fontsource/barlow-condensed/files/barlow-condensed-latin-700-normal.woff2') format('woff2');
+}
 
 :root {
-  font-family: Inter, system-ui, sans-serif;
+  font-family: 'Inter Variable', Inter, system-ui, sans-serif;
   color: #eef4f6;
   background: #071219;
   font-synthesis: none;
@@ -53,6 +91,7 @@ button:focus-visible, select:focus-visible, input:focus-visible { outline: 2px s
 .simulator-shell { height: calc(100vh - 280px); min-height: 430px; position: relative; overflow: hidden; border: 1px solid #354852; border-radius: 6px 6px 0 0; background: #111c22; }
 .simulator-canvas, .simulator-canvas canvas { width: 100%; height: 100%; display: block; }
 .simulator-canvas canvas { touch-action: none; }
+.simulator-canvas:focus-visible { outline: 2px solid var(--amber); outline-offset: -3px; }
 .sim-topbar { position: absolute; top: 12px; left: 12px; right: 12px; min-height: 34px; padding: 7px 10px; display: flex; align-items: center; gap: 18px; background: rgba(5, 14, 19, .78); border: 1px solid rgba(132, 157, 169, .35); backdrop-filter: blur(10px); font-size: 11px; pointer-events: none; }
 .sim-topbar span { display: flex; align-items: center; gap: 6px; }
 .sim-topbar span:nth-child(2) { margin-left: auto; color: #c8d4d9; }
@@ -86,6 +125,7 @@ button:focus-visible, select:focus-visible, input:focus-visible { outline: 2px s
 .start-overlay strong { font-family: 'Barlow Condensed'; font-size: 16px; }
 .start-overlay span { color: #9dafb7; font-size: 10px; }
 .start-overlay button { margin-left: auto; border: 0; background: var(--amber); color: #111a1e; font-weight: 700; padding: 10px 13px; cursor: pointer; }
+.start-overlay button:disabled { cursor: wait; opacity: .62; }
 
 .telemetry-bar { height: 74px; display: grid; grid-template-columns: repeat(4, 1fr); border: 1px solid #354852; border-top: 0; background: #0a171e; }
 .telemetry-bar > div { min-width: 0; display: flex; align-items: center; gap: 10px; padding: 10px 14px; border-right: 1px solid #2a3d46; }
@@ -99,8 +139,12 @@ button:focus-visible, select:focus-visible, input:focus-visible { outline: 2px s
 .launch-bar > div:first-child span { flex-basis: 100%; font-family: 'Barlow Condensed'; font-size: 15px; }
 .launch-bar b { display: flex; align-items: center; gap: 5px; color: #9eb0b8; font-size: 9px; font-weight: 500; }
 .launch-bar b i { width: 6px; height: 6px; background: var(--teal); border-radius: 50%; }
+.launch-bar b.pending i { background: var(--amber); }
+.launch-bar b.failed i { background: #f06d67; }
+.launch-bar .readiness-error { flex-basis: 100%; margin: 0; color: #ffc2be; font-size: 10px; line-height: 1.4; }
 .launch-bar > div:last-child { display: flex; gap: 7px; }
 .launch-bar button { height: 43px; display: flex; align-items: center; gap: 8px; border-radius: 4px; padding: 0 15px; cursor: pointer; white-space: nowrap; font-family: 'Barlow Condensed'; font-size: 16px; font-weight: 600; }
+.launch-bar button:disabled { cursor: not-allowed; filter: saturate(.25); opacity: .52; }
 .vr-button { color: #11181b; background: var(--amber); border: 1px solid var(--amber); }
 .desktop-button, .reset-button { background: #17252d; border: 1px solid #5a6970; }
 .reset-button { padding: 0 12px !important; }

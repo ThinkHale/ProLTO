@@ -11,6 +11,8 @@
 // else, the bay opening between them is genuinely open, and a person is
 // something you can hit.
 import assert from 'node:assert/strict'
+import { existsSync, readFileSync, readdirSync } from 'node:fs'
+import { join } from 'node:path'
 
 // createWarehouse paints its concrete and carton maps on a 2D canvas. Stub just
 // enough of it to run headless, matching scripts/verify-rig-binding.mjs.
@@ -27,14 +29,211 @@ globalThis.document = globalThis.document || {
 globalThis.self = globalThis.self || globalThis
 
 const THREE = await import('three')
-const { createWarehouse } = await import('../src/sim/warehouse.js')
-const { obbIntersectsAabb, obbIntersectsCircle, sweepPose } = await import('../src/sim/loadPhysics.js')
+const { FACILITY, createWarehouse } = await import('../src/sim/warehouse.js')
+const {
+  WarehouseLoadPhysics,
+  obbIntersectsAabb,
+  obbIntersectsCircle,
+  sweepPose,
+} = await import('../src/sim/loadPhysics.js')
+
+// The retired stock shell cannot ship or return through an unnoticed runtime
+// reference. Constructing the old filename keeps this verifier from being the
+// only literal reference to the asset it is intended to prohibit.
+const retiredAsset = ['facility', '.glb'].join('')
+assert.equal(existsSync(join('public', 'models', retiredAsset)), false, `${retiredAsset} must not ship`)
+
+function sourceFiles(directory) {
+  return readdirSync(directory, { withFileTypes: true }).flatMap((entry) => {
+    const path = join(directory, entry.name)
+    if (entry.isDirectory()) return sourceFiles(path)
+    return /\.(?:js|jsx|css)$/.test(entry.name) ? [path] : []
+  })
+}
+
+for (const path of sourceFiles('src')) {
+  const source = readFileSync(path, 'utf8')
+  assert.equal(source.includes(retiredAsset), false, `${path} must not reference the retired facility asset`)
+}
+const warehouseSource = readFileSync(join('src', 'sim', 'warehouse.js'), 'utf8')
+assert.doesNotMatch(warehouseSource, /GLTFLoader/, 'the original facility must not need a glTF network loader')
+assert.doesNotMatch(warehouseSource, /Math[.]random\s*\(/, 'facility visuals must be deterministic')
 
 const scene = new THREE.Scene()
 const warehouse = createWarehouse(scene)
 const colliders = warehouse.staticColliders
 const uprights = colliders.filter((entry) => entry.kind === 'rack-upright')
 const beams = colliders.filter((entry) => entry.kind === 'rack-beam')
+
+// The visible wall shell, floor, simulation clamp, and collision planes must
+// describe the same interior. The retired asset temporarily made all four use
+// different dimensions, allowing the truck to enter invisible space.
+const near = (actual, expected, label) => {
+  assert.ok(Math.abs(actual - expected) < 1e-4, `${label}: expected ${expected}, got ${actual}`)
+}
+const walls = Object.fromEntries(colliders.filter((entry) => entry.kind === 'wall').map((entry) => [entry.id, entry]))
+assert.deepEqual(Object.keys(walls).sort(), ['east-wall', 'north-wall', 'south-wall', 'west-wall'])
+near(walls['west-wall'].maxX, FACILITY.minX, 'west wall interior face')
+near(walls['east-wall'].minX, FACILITY.maxX, 'east wall interior face')
+near(walls['north-wall'].maxZ, FACILITY.minZ, 'north wall interior face')
+near(walls['south-wall'].minZ, FACILITY.maxZ, 'south wall interior face')
+assert.equal(warehouse.facilityShell?.name, 'original_procedural_facility', 'the original procedural shell must be active')
+assert.equal(warehouse.facilityShell.userData.interiorBounds, FACILITY, 'the visual shell must use the canonical bounds')
+const shellBounds = new THREE.Box3().setFromObject(warehouse.facilityShell)
+near(shellBounds.min.x, FACILITY.minX - .3, 'visible west wall exterior')
+near(shellBounds.max.x, FACILITY.maxX + .3, 'visible east wall exterior')
+near(shellBounds.min.z, FACILITY.minZ - .3, 'visible north wall exterior')
+near(shellBounds.max.z, FACILITY.maxZ + .3, 'visible south wall exterior')
+
+// Draw-budget regression: physics keeps one lightweight proxy per pallet, while
+// visible pallet bases, cartons, and transparent wraps are dynamic instances.
+let meshCount = 0
+let shadowCasterCount = 0
+const loadBuckets = []
+scene.traverse((object) => {
+  if (!object.isMesh) return
+  meshCount += 1
+  if (object.castShadow) shadowCasterCount += 1
+  if (object.isInstancedMesh && object.userData.loadVisualBucket) loadBuckets.push(object)
+})
+const bucketsOfKind = (kind) => loadBuckets.filter((mesh) => mesh.userData.loadVisualBucket.kind === kind)
+const instanceCount = (buckets) => buckets.reduce((sum, mesh) => sum + mesh.count, 0)
+const palletBuckets = bucketsOfKind('pallet-base')
+const cartonBuckets = bucketsOfKind('carton-load')
+const wrapBuckets = bucketsOfKind('stretch-wrap')
+const wrappedPallets = warehouse.pallets.filter((proxy) => (
+  proxy.loadVisualBindings.some((binding) => binding.kind === 'stretch-wrap')
+))
+assert.equal(instanceCount(palletBuckets), warehouse.pallets.length, 'every physical pallet needs one instanced pallet base')
+assert.equal(instanceCount(cartonBuckets), warehouse.pallets.length, 'every physical pallet needs one instanced carton load')
+assert.equal(instanceCount(wrapBuckets), wrappedPallets.length, 'every wrapped pallet needs one transparent wrap instance')
+assert.ok(new Set(cartonBuckets.map((mesh) => mesh.geometry)).size <= 4, 'carton stacks must use four deterministic geometry variants at most')
+assert.ok(new Set(cartonBuckets.map((mesh) => mesh.material)).size <= 4, 'carton stacks must share four tint materials at most')
+assert.equal(new Set(cartonBuckets.map((mesh) => mesh.material.map)).size, 1, 'carton stacks must share one canvas texture')
+assert.ok(loadBuckets.every((mesh) => mesh.frustumCulled === false), 'dynamic load instances must not disappear behind stale bounds')
+assert.ok(warehouse.pallets.every((proxy) => (
+  proxy.children.length === 0
+  && typeof proxy.syncLoadVisual === 'function'
+  && proxy.loadVisualBindings.length >= 2
+  && proxy.userData.loadVisualBindings === undefined
+)), 'every load must be a mesh-free physics proxy with visual bindings')
+assert.equal(wrapBuckets.length, 1, 'all stretch wrap must share one transparent bucket')
+assert.equal(wrapBuckets[0].material.transparent, true, 'stretch wrap must remain transparent')
+near(wrapBuckets[0].material.opacity, .17, 'stretch wrap opacity')
+near(wrapBuckets[0].material.transmission, .55, 'stretch wrap transmission')
+assert.equal(wrapBuckets[0].material.depthWrite, false, 'stretch wrap must not write opaque depth')
+assert.ok(meshCount <= 52, `facility mesh budget regressed to ${meshCount}`)
+assert.ok(shadowCasterCount <= 42, `facility shadow-caster budget regressed to ${shadowCasterCount}`)
+assert.equal(new Set(colliders.map((entry) => entry.id)).size, colliders.length, 'facility collider IDs must be unique')
+assert.equal(new Set(warehouse.pallets.map((entry) => entry.name)).size, warehouse.pallets.length, 'pallet IDs must be unique')
+
+const geometrySignature = (root, name) => {
+  const mesh = root.getObjectByName(name)
+  assert.ok(mesh?.geometry?.attributes?.position, `${name} must have position geometry`)
+  return Array.from(mesh.geometry.attributes.position.array, (value) => Number(value.toFixed(6)))
+}
+const palletSignature = (created) => created.pallets.map((entry) => ({
+  id: entry.name,
+  position: entry.position.toArray(),
+  yaw: entry.rotation.y,
+  bindings: entry.loadVisualBindings.map((binding) => {
+    const matrix = new THREE.Matrix4()
+    binding.mesh.getMatrixAt(binding.index, matrix)
+    return {
+      kind: binding.kind,
+      key: binding.mesh.userData.loadVisualBucket.key,
+      matrix: matrix.elements.map((value) => Number(value.toFixed(6))),
+      geometry: binding.kind === 'carton-load'
+        ? Array.from(binding.mesh.geometry.attributes.position.array, (value) => Number(value.toFixed(6)))
+        : null,
+    }
+  }),
+}))
+const secondScene = new THREE.Scene()
+const secondWarehouse = createWarehouse(secondScene)
+assert.deepEqual(secondWarehouse.staticColliders, warehouse.staticColliders, 'facility colliders must reproduce exactly')
+assert.deepEqual(secondWarehouse.rackSlots, warehouse.rackSlots, 'rack slots must reproduce exactly')
+assert.deepEqual(palletSignature(secondWarehouse), palletSignature(warehouse), 'pallet visuals must reproduce exactly')
+for (const name of ['empty_pallet_stack_clean', 'empty_pallet_stack_worn']) {
+  assert.deepEqual(geometrySignature(secondScene, name), geometrySignature(scene, name), `${name} must reproduce exactly`)
+}
+
+const assertVisualsFollowProxy = (proxy, label) => {
+  proxy.updateWorldMatrix(true, false)
+  for (const binding of proxy.loadVisualBindings) {
+    binding.mesh.updateWorldMatrix(true, false)
+    const instance = new THREE.Matrix4()
+    binding.mesh.getMatrixAt(binding.index, instance)
+    const actual = new THREE.Matrix4().multiplyMatrices(binding.mesh.matrixWorld, instance)
+    const expected = proxy.matrixWorld.clone().multiply(binding.localMatrix)
+    actual.elements.forEach((value, index) => near(value, expected.elements[index], `${label} ${binding.kind} matrix ${index}`))
+  }
+}
+warehouse.pallets.forEach((proxy) => assertVisualsFollowProxy(proxy, `${proxy.name} initial`))
+
+// Exercise the actual instanced warehouse proxy through every load solver pose
+// path. This is stronger than checking callback counts: the GPU instance matrix
+// itself must match the physics-owned proxy after push, carry, settle, and reset.
+const trainingProxy = warehouse.pallet
+const visualFork = new THREE.Group()
+scene.add(visualFork)
+const visualPhysics = new WarehouseLoadPhysics({
+  forkFrame: visualFork,
+  pallets: [trainingProxy],
+  truckColliders: [],
+})
+const trainingBody = visualPhysics.pallets[0]
+const pushed = visualPhysics.pushBlockingPallets(
+  { fraction: .5, blockingContacts: [{ obstacle: { palletId: trainingBody.id } }] },
+  { x: 0, z: 9.2, heading: 0 },
+  { x: 0, z: 8.2, heading: 0 },
+)
+assert.equal(pushed.moved, true, 'the visual-sync test pallet must be pushed')
+assertVisualsFollowProxy(trainingProxy, 'training pallet pushed')
+
+visualFork.position.copy(trainingProxy.getWorldPosition(new THREE.Vector3()))
+scene.updateMatrixWorld(true)
+assert.equal(visualPhysics.attachPallet(trainingBody, {}, { eligible: true }), true, 'the training proxy must attach')
+assertVisualsFollowProxy(trainingProxy, 'training pallet attached')
+visualFork.position.x += .35
+visualFork.position.y += .8
+visualFork.rotation.y = .22
+scene.updateMatrixWorld(true)
+visualPhysics.syncCarriedPallet()
+assertVisualsFollowProxy(trainingProxy, 'training pallet carried')
+assert.equal(visualPhysics.releaseCarried({ force: true }), true, 'the carried training proxy must settle')
+assertVisualsFollowProxy(trainingProxy, 'training pallet floor settled')
+
+visualFork.position.copy(trainingProxy.getWorldPosition(new THREE.Vector3()))
+visualFork.rotation.y = trainingProxy.rotation.y
+scene.updateMatrixWorld(true)
+assert.equal(visualPhysics.attachPallet(trainingBody, {}, { eligible: true }), true, 'the training proxy must reattach')
+const visualSlot = { id: 'visual-slot', x: -1.2, y: 1.8, z: 5.4, yaw: Math.PI / 2 }
+assert.equal(visualPhysics.settleCarriedPallet(visualSlot, {
+  eligible: true,
+  supportY: 1.83,
+  beamIds: ['visual-support-a', 'visual-support-b'],
+}), true, 'the training proxy must settle into a rack slot')
+assertVisualsFollowProxy(trainingProxy, 'training pallet rack settled')
+visualPhysics.reset()
+assertVisualsFollowProxy(trainingProxy, 'training pallet reset')
+near(trainingProxy.position.y, 0, 'training reset height')
+near(trainingProxy.position.z, 7.2, 'training reset position')
+
+const wrappedProxy = wrappedPallets[0]
+const wrappedPhysics = new WarehouseLoadPhysics({ forkFrame: visualFork, pallets: [wrappedProxy] })
+const wrappedBody = wrappedPhysics.pallets[0]
+visualFork.position.copy(wrappedProxy.getWorldPosition(new THREE.Vector3()))
+visualFork.rotation.y = wrappedProxy.rotation.y
+scene.updateMatrixWorld(true)
+assert.equal(wrappedPhysics.attachPallet(wrappedBody, {}, { eligible: true }), true, 'a wrapped racked proxy must attach')
+visualFork.position.y += .4
+visualFork.position.z += .25
+scene.updateMatrixWorld(true)
+wrappedPhysics.syncCarriedPallet()
+assertVisualsFollowProxy(wrappedProxy, 'wrapped pallet carried')
+wrappedPhysics.reset()
+assertVisualsFollowProxy(wrappedProxy, 'wrapped pallet reset to rack')
 
 assert.ok(uprights.length >= 40, `expected a collider per rack frame, got ${uprights.length}`)
 assert.ok(beams.length >= 100, `expected a collider per beam per bay per level, got ${beams.length}`)
@@ -111,9 +310,8 @@ const forkEnvelope = (z) => ({ x: rackCenterX, z, halfWidth: .35, halfLength: .5
   )
 }
 
-// A carried load must be able to come DOWN onto a beam without the beam
-// hard-stopping the truck -- but the contact still has to be reported, or the
-// evaluator never sees the load being dragged across the rack face.
+// A carried load may settle onto a beam top, but it may not pass horizontally
+// through the steel from below. Both contacts remain evaluator-visible.
 {
   const beam = {
     id: 'test-beam', kind: 'rack-beam', blocksCarriedLoads: false,
@@ -122,12 +320,21 @@ const forkEnvelope = (z) => ({ x: rackCenterX, z, halfWidth: .35, halfLength: .5
   const result = sweepPose(
     { x: 0, z: 2, heading: 0 },
     { x: 0, z: 0, heading: 0 },
+    [{ id: 'carried:load', halfWidth: .6, halfLength: .5, offsetX: 0, offsetZ: 0, minY: 1.9, maxY: 2.8 }],
+    [beam],
+  )
+  assert.equal(result.blocked, false, 'a carried load on the beam top must be allowed to settle')
+  assert.equal(result.contacts.length, 1, 'the beam contact must still be recorded')
+  assert.equal(result.contacts[0].blocking, false, 'that contact must be marked non-blocking')
+  assert.equal(result.contacts[0].supportContact, true, 'the contact must be marked as beam support')
+
+  const lowLoadResult = sweepPose(
+    { x: 0, z: 2, heading: 0 },
+    { x: 0, z: 0, heading: 0 },
     [{ id: 'carried:load', halfWidth: .6, halfLength: .5, offsetX: 0, offsetZ: 0, minY: 1.75, maxY: 2.8 }],
     [beam],
   )
-  assert.equal(result.blocked, false, 'a carried load must pass through a beam it is being set onto')
-  assert.equal(result.contacts.length, 1, 'the beam contact must still be recorded')
-  assert.equal(result.contacts[0].blocking, false, 'that contact must be marked non-blocking')
+  assert.equal(lowLoadResult.blocked, true, 'a carried load below the beam top must not pass through steel')
 
   const truckResult = sweepPose(
     { x: 0, z: 2, heading: 0 },
@@ -150,4 +357,8 @@ const forkEnvelope = (z) => ({ x: rackCenterX, z, halfWidth: .35, halfLength: .5
   assert.equal(far.blockingContacts[0].obstacle.id, 'beam')
 }
 
-console.log(`PASS facility: ${uprights.length} frame colliders, ${beams.length} beam colliders, open bays, solid pedestrians`)
+console.log(
+  `PASS facility: ${uprights.length} frame colliders, ${beams.length} beam colliders, ` +
+  `${meshCount} meshes, ${shadowCasterCount} shadow casters, ` +
+  `${loadBuckets.length} load buckets / ${instanceCount(loadBuckets)} instances, open bays, solid pedestrians`,
+)

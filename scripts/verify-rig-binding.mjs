@@ -18,13 +18,15 @@ globalThis.self = globalThis.self || globalThis
 
 const { GLTFLoader } = await import('three/addons/loaders/GLTFLoader.js')
 const { controlMeshes, __mapRigForTest } = await import('../src/sim/vehicleFactory.js')
+const { getEquipment } = await import('../src/data/equipment.js')
 
 // What each profile's operator must physically be able to command, and the
-// pivots the animation loop writes to. Both reach trucks are asserted in the
-// detail the practical assessment depends on.
+// pivots the animation loop writes to. Every shipped truck is exercised through
+// the production mapper. The two reach trucks also assert their more involved
+// multi-axis control contracts.
 const EXPECT = {
   crown_rr5725: {
-    profile: { manufacturer: 'Crown', family: 'reach', stance: 'Variable side stance', model: 'RR 5725-45' },
+    profile: getEquipment('Crown', 'reach'),
     actions: ['steer', 'travel', 'lift', 'reach', 'tilt', 'sideshift', 'horn', 'brake', 'presence', 'belly'],
     pivots: ['steerPivot', 'travelPivot', 'liftPivot', 'reachPivot', 'tiltPivot', 'carriage', 'reachGroup', 'driveWheel'],
     modifiers: 1,
@@ -39,7 +41,7 @@ const EXPECT = {
     nesting: [['rig_liftPivot', 'rig_travelPivot'], ['rig_reachPivot', 'rig_tiltPivot'], ['rig_tiltPivot', 'rig_liftPivot']],
   },
   raymond_7500: {
-    profile: { manufacturer: 'Raymond', family: 'reach', stance: 'Universal stance', model: '7500' },
+    profile: getEquipment('Raymond', 'reach'),
     actions: ['steer', 'travel', 'lift', 'reach', 'tilt', 'sideshift', 'horn', 'presence'],
     pivots: ['steerPivot', 'travelPivot', 'liftPivot', 'reachPivot', 'tiltPivot', 'sideshiftPivot', 'secondaryTravelPivot', 'carriage', 'reachGroup', 'driveWheel'],
     modifiers: 0,
@@ -47,6 +49,44 @@ const EXPECT = {
     dualAxis: {},
     inverted: [],
     nesting: [],
+  },
+  crown_sp1500: {
+    profile: getEquipment('Crown', 'order-picker'),
+    actions: ['steer', 'travel', 'lift', 'horn', 'presence'],
+    pivots: ['steerPivot', 'travelPivot', 'carriage', 'platform'],
+    modifiers: 0, dualAxis: {}, inverted: [], nesting: [],
+  },
+  raymond_5300: {
+    profile: getEquipment('Raymond', 'order-picker'),
+    actions: ['steer', 'travel', 'lift', 'horn', 'presence'],
+    pivots: ['steerPivot', 'travelPivot', 'carriage', 'platform'],
+    modifiers: 0, dualAxis: {}, inverted: [], nesting: [],
+  },
+  crown_pe4500: {
+    profile: getEquipment('Crown', 'pallet'),
+    actions: ['steer', 'travel', 'lift', 'horn', 'belly', 'presence'],
+    pivots: ['tillerPivot', 'headGroup', 'carriage'],
+    modifiers: 0, dualAxis: {}, inverted: [], nesting: [],
+  },
+  raymond_8210: {
+    profile: getEquipment('Raymond', 'pallet'),
+    actions: ['steer', 'travel', 'lift', 'horn', 'belly'],
+    pivots: ['tillerPivot', 'headGroup', 'carriage'],
+    modifiers: 0, dualAxis: {}, inverted: [], nesting: [],
+  },
+  crown_sc6200: {
+    profile: getEquipment('Crown', 'counterbalance'),
+    actions: ['steer', 'travel', 'brake', 'lift', 'tilt', 'sideshift', 'horn', 'presence'],
+    pivots: ['wheelPivot', 'carriage'],
+    arrays: { levers: 3 },
+    modifiers: 0, dualAxis: {}, inverted: [], nesting: [],
+  },
+  raymond_4460: {
+    profile: getEquipment('Raymond', 'counterbalance'),
+    actions: ['steer', 'travel', 'brake', 'lift', 'tilt', 'sideshift', 'horn', 'presence'],
+    pivots: ['wheelPivot', 'carriage'],
+    arrays: { levers: 3 },
+    modifiers: 0, dualAxis: {}, inverted: [], nesting: [],
   },
 }
 
@@ -76,6 +116,11 @@ for (const [truck, expect] of Object.entries(EXPECT)) {
 
   if (rig) {
     expect.pivots.forEach((pivot) => { if (!rig[pivot]) problems.push(`rig.${pivot} did not bind`) })
+    Object.entries(expect.arrays || {}).forEach(([key, minimum]) => {
+      if (!Array.isArray(rig[key]) || rig[key].length < minimum) {
+        problems.push(`rig.${key} bound ${rig[key]?.length || 0}, expected at least ${minimum}`)
+      }
+    })
 
     const commandable = new Set()
     let modifiers = 0

@@ -20,14 +20,33 @@ const PROFILES = [
   ['pallet', 'Pallet Truck', 'Crown'], ['pallet', 'Pallet Truck', 'Raymond'],
   ['counterbalance', 'Sit-down Counterbalance', 'Crown'], ['counterbalance', 'Sit-down Counterbalance', 'Raymond'],
 ]
+const ASSET_OR_INIT_FAILURE = /procedural fallback|MODEL_(?:LOAD|PARSE|PROFILE|IDENTITY|RIG)|asset readiness failure|simulator init failed/iu
+const isTruckModelRequest = (requestUrl) => /\/models\/(?:crown|raymond)_[^/?]+\.glb(?:[?#]|$)/iu.test(requestUrl)
 
 await mkdir(outdir, { recursive: true })
-const browser = await chromium.launch({ args: ['--use-angle=d3d11', '--enable-unsafe-swiftshader'] })
+const launchArgs = process.platform === 'win32'
+  ? ['--use-angle=d3d11', '--enable-unsafe-swiftshader']
+  : ['--enable-unsafe-swiftshader']
+const browser = await chromium.launch({ args: launchArgs })
 const page = await browser.newPage({ viewport: { width: 1440, height: 900 } })
 const failures = []
+const recordFailure = (kind, detail) => failures.push(`${kind}: ${detail}`)
 page.on('console', (message) => {
   const text = message.text()
-  if (text.includes('falling back') || message.type() === 'error') failures.push(text)
+  if (message.type() === 'error' || ASSET_OR_INIT_FAILURE.test(text)) {
+    recordFailure(`console ${message.type()}`, text)
+  }
+})
+page.on('pageerror', (error) => recordFailure('pageerror', error.message))
+page.on('requestfailed', (request) => {
+  if (isTruckModelRequest(request.url())) {
+    recordFailure('model request failed', `${request.url()} (${request.failure()?.errorText || 'unknown error'})`)
+  }
+})
+page.on('response', (response) => {
+  if (isTruckModelRequest(response.url()) && !response.ok()) {
+    recordFailure('model response failed', `${response.status()} ${response.url()}`)
+  }
 })
 await page.goto(url, { waitUntil: 'networkidle' })
 
@@ -48,3 +67,4 @@ if (failures.length) {
   console.log('\nPAGE ISSUES:')
   for (const failure of [...new Set(failures)]) console.log(' -', failure)
 }
+process.exit(failures.length ? 1 : 0)

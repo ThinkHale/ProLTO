@@ -55,7 +55,7 @@ function hasAnimatingParent(object) {
 const loader = new GLTFLoader()
 const only = process.argv[2]
 const files = readdirSync('public/models')
-  .filter((name) => name.endsWith('.glb') && name !== 'facility.glb')
+  .filter((name) => name.endsWith('.glb'))
   .filter((name) => !only || name.includes(only))
 
 let findings = 0

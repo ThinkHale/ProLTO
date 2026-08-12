@@ -29,6 +29,16 @@ import { getChassis, wheelbase } from '../data/chassis.js'
 const DEG = Math.PI / 180
 const MIN_ROLLING_SPEED = .02
 
+// Conservative training defaults in SI units. Public manuals do not publish
+// the complete loaded acceleration and stopping curves for every configured
+// serial range, so these values remain explicitly provisional until measured.
+export const PROVISIONAL_LONGITUDINAL_LIMITS = Object.freeze({
+  reach: Object.freeze({ accelMps2: 2, coastDecelMps2: 1.15, serviceBrakeMps2: 3.6 }),
+  'order-picker': Object.freeze({ accelMps2: 1.8, coastDecelMps2: 1.05, serviceBrakeMps2: 3.4 }),
+  pallet: Object.freeze({ accelMps2: 2.2, coastDecelMps2: 1.25, serviceBrakeMps2: 3.8 }),
+  counterbalance: Object.freeze({ accelMps2: 2, coastDecelMps2: 1.1, serviceBrakeMps2: 3.6 }),
+})
+
 export function steerLimits(profile) {
   const chassis = getChassis(profile)
   return {
@@ -37,6 +47,7 @@ export function steerLimits(profile) {
     wheelbase: wheelbase(chassis),
     fixedAxleZ: chassis.fixedAxleZ,
     steerAxleZ: chassis.steerAxleZ,
+    tractionAxle: chassis.tractionAxle || 'steered',
   }
 }
 
@@ -57,27 +68,38 @@ export function turnRadius(steerAngle, limits) {
   return limits.wheelbase / tangent
 }
 
-// Yaw rate from DRIVE WHEEL speed. Using sin rather than tan is what bounds it:
-// at full lock this is wheelSpeed / L, where tan would have gone to infinity.
-export function yawRate(wheelSpeed, steerAngle, limits) {
-  return -(wheelSpeed / limits.wheelbase) * Math.sin(steerAngle)
+// Speed at the fixed axle, which is also the truck's body-forward ground speed.
+// A steered traction wheel contributes only its body-aligned component. A
+// counterbalance truck drives through its fixed front axle, so no cosine belongs
+// in the kinematics for that topology.
+export function fixedAxleSpeed(driveSpeed, steerAngle, limits) {
+  return limits.tractionAxle === 'fixed' ? driveSpeed : driveSpeed * Math.cos(steerAngle)
+}
+
+// Yaw follows the same bicycle geometry for both traction layouts, referenced
+// to whichever speed the motor actually controls.
+export function yawRate(driveSpeed, steerAngle, limits) {
+  if (limits.tractionAxle === 'fixed') {
+    return -(driveSpeed / limits.wheelbase) * Math.tan(steerAngle)
+  }
+  return -(driveSpeed / limits.wheelbase) * Math.sin(steerAngle)
+}
+
+// Counterbalance controllers reduce travel command during hard steering. The
+// exact curve is serial- and option-specific; cosine preserves the previous
+// safe steady-state envelope while keeping it separate from axle geometry. It
+// must be replaced with measured controller data before replica certification.
+export function provisionalSteeringSpeedScale(steerAngle, limits) {
+  return limits.tractionAxle === 'fixed' ? Math.max(1e-3, Math.abs(Math.cos(steerAngle))) : 1
 }
 
 // Integrate one step. Returns the new root pose plus the diagnostics the
 // stability solver and the event rules need.
 //
-// `speed` is DRIVE WHEEL speed, not the truck's forward speed. That distinction
-// is what keeps a hard-steered truck from spinning absurdly fast: the motor
-// controls how fast the wheel turns, and the geometry decides how much of that
-// becomes forward travel versus rotation.
-//
-//     forward = wheelSpeed * cos(delta)      -> falls to zero at full lock
-//     psi_dot = wheelSpeed * sin(delta) / L  -> bounded by the wheel's own speed
-//
-// Their ratio is still tan(delta)/L, so the turn radius is unchanged, but
-// forward speed now drops as the wheel is turned. Real trucks behave exactly
-// this way, and driving `psi_dot = v * tan(delta) / L` off the FORWARD speed
-// instead made tan blow up near full lock and spun the truck on the spot.
+// `speed` is traction speed. On a steered traction unit it is wheel-path speed;
+// on a counterbalance truck it is fixed-axle ground speed. Both reduce to the
+// same turn radius, but keeping the reference explicit prevents drivetrain
+// geometry from being silently changed by a controller tuning value.
 export function integrateSteering(pose, speed, steerAngle, limits, dt) {
   const heading = pose.heading || 0
   if (Math.abs(speed) < MIN_ROLLING_SPEED) {
@@ -89,19 +111,29 @@ export function integrateSteering(pose, speed, steerAngle, limits, dt) {
     }
   }
 
-  const forwardSpeed = speed * Math.cos(steerAngle)
+  const forwardSpeed = fixedAxleSpeed(speed, steerAngle, limits)
   const cosine = Math.cos(heading)
   const sine = Math.sin(heading)
   // Fixed axle midpoint in world space (same local->world basis as loadPhysics).
   const fixedX = pose.x + sine * limits.fixedAxleZ
   const fixedZ = pose.z + cosine * limits.fixedAxleZ
 
-  // A body-aligned axle cannot slip sideways, so its velocity is pure forward.
-  const advancedX = fixedX - sine * forwardSpeed * dt
-  const advancedZ = fixedZ - cosine * forwardSpeed * dt
-
   const rate = yawRate(speed, steerAngle, limits)
-  const newHeading = Math.atan2(Math.sin(heading + rate * dt), Math.cos(heading + rate * dt))
+  const rawHeading = heading + rate * dt
+  const newHeading = Math.atan2(Math.sin(rawHeading), Math.cos(rawHeading))
+
+  // Integrate the fixed axle along the exact circular arc. Advancing along the
+  // old heading and rotating afterward introduced a frame-rate-dependent chord
+  // error that made 72 Hz VR and 60 Hz desktop follow different paths.
+  let advancedX
+  let advancedZ
+  if (Math.abs(rate) < 1e-8) {
+    advancedX = fixedX - sine * forwardSpeed * dt
+    advancedZ = fixedZ - cosine * forwardSpeed * dt
+  } else {
+    advancedX = fixedX + (forwardSpeed / rate) * (Math.cos(rawHeading) - cosine)
+    advancedZ = fixedZ - (forwardSpeed / rate) * (Math.sin(rawHeading) - sine)
+  }
 
   // Rebuild the root from the advanced fixed axle and the new heading. Every
   // point aft of the fixed axle now sits somewhere it was not, which IS the
@@ -116,6 +148,46 @@ export function integrateSteering(pose, speed, steerAngle, limits, dt) {
     forwardSpeed,
     radius: turnRadius(steerAngle, limits),
   }
+}
+
+// Unit-correct bounded longitudinal response. The caller supplies explicit
+// m/s^2 limits instead of an exponential damping lambda whose effective force
+// changed with target speed. Direction reversals brake to zero before applying
+// traction in the opposite direction.
+export function advanceDriveSpeed(currentSpeed, targetSpeed, limits, dt, brakeInput = 0, travelCommanded = true) {
+  if (!(dt > 0)) return currentSpeed
+  const brake = THREE.MathUtils.clamp(brakeInput, 0, 1)
+  const coast = Math.max(0, limits.coastDecelMps2 || 0)
+  const service = Math.max(coast, limits.serviceBrakeMps2 || coast)
+  const acceleration = Math.max(0, limits.accelMps2 || 0)
+  const moveToward = (target, rate) => currentSpeed + THREE.MathUtils.clamp(target - currentSpeed, -rate * dt, rate * dt)
+
+  if (brake > 0) return moveToward(0, THREE.MathUtils.lerp(coast, service, brake))
+  if (!travelCommanded || Math.abs(targetSpeed) < 1e-6) return moveToward(0, coast)
+  if (currentSpeed * targetSpeed < 0) return moveToward(0, service)
+  if (Math.abs(targetSpeed) < Math.abs(currentSpeed)) return moveToward(targetSpeed, coast)
+  return moveToward(targetSpeed, acceleration)
+}
+
+// Diagnostics reconstructed from the pose the collision sweep actually
+// accepted. This prevents telemetry and stability from reporting the rejected
+// full-speed proposal after a partial sweep or hard stop.
+export function acceptedMotion(from, to, limits, dt) {
+  if (!(dt > 0)) return { forwardSpeed: 0, yawRate: 0, radius: Infinity }
+  const fromHeading = from.heading || 0
+  const toHeading = to.heading || 0
+  const headingDelta = Math.atan2(Math.sin(toHeading - fromHeading), Math.cos(toHeading - fromHeading))
+  const fromFixedX = from.x + Math.sin(fromHeading) * limits.fixedAxleZ
+  const fromFixedZ = from.z + Math.cos(fromHeading) * limits.fixedAxleZ
+  const toFixedX = to.x + Math.sin(toHeading) * limits.fixedAxleZ
+  const toFixedZ = to.z + Math.cos(toHeading) * limits.fixedAxleZ
+  const middleHeading = fromHeading + headingDelta * .5
+  const dx = toFixedX - fromFixedX
+  const dz = toFixedZ - fromFixedZ
+  const forwardSpeed = (-Math.sin(middleHeading) * dx - Math.cos(middleHeading) * dz) / dt
+  const acceptedYawRate = headingDelta / dt
+  const radius = Math.abs(acceptedYawRate) > 1e-7 ? -forwardSpeed / acceptedYawRate : Infinity
+  return { forwardSpeed, yawRate: acceptedYawRate, radius }
 }
 
 // How far the steered end sweeps outside the path of the fixed axle. This is

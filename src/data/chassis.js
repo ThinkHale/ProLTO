@@ -17,7 +17,7 @@
 //   Crown SC 6200   wheelbase 60.9 in, fork 36 in, capacity 4000 lb @ 24 in
 //   Crown RR 5725   service weight 2.74 t, wheelbase 59.6-64.0 in, fork 36 in
 //   Crown SP 1500   wheelbase 51-52 in, service 6845 lb + 1520 lb battery
-//   Crown PE 4500   capacity 8000 lb, wheelbase consistent with 48 in forks
+//   Crown PE 4500-60 capacity 6000 lb, wheelbase consistent with 48 in forks
 //
 // RECONSTRUCTED estimates for everything else -- CG heights and positions, all
 // Raymond masses, steer rates -- derived from footprint drawings and turning
@@ -41,6 +41,10 @@ export const CHASSIS = {
     // RR 5725-45: straddle reach truck. Load wheels ride at the outrigger tips,
     // the steered drive wheel sits under the power unit behind the operator.
     fixedAxleZ: -.62, steerAxleZ: .93, trackWidth: .84,
+    // The single traction wheel steers with the rear drive unit. Motor speed is
+    // therefore wheel-path speed; its component along the truck falls with
+    // steering angle while yaw remains bounded at full lock.
+    tractionAxle: 'steered',
     maxSteerDeg: 88, steerRateDegPerSec: 165,
     // Service weight 2.74 t published (was a 4210 kg estimate, 54% heavy,
     // which inflated every stability margin). Wheelbase 59.6-64.0 in confirms
@@ -60,6 +64,7 @@ export const CHASSIS = {
   },
   'Raymond:reach': {
     fixedAxleZ: -.6, steerAxleZ: .95, trackWidth: .86,
+    tractionAxle: 'steered',
     maxSteerDeg: 88, steerRateDegPerSec: 170,
     serviceWeight: 4080, cgFromFixedAxleZ: .6, cgHeight: .73,
     support: 'straddle',
@@ -75,6 +80,7 @@ export const CHASSIS = {
     // Wheelbase 51-52 in = 1.308 m published; the 1.88 m estimate was 0.57 m
     // long, which made the platform far more longitudinally stable than it is.
     fixedAxleZ: -.78, steerAxleZ: .528, trackWidth: .74,
+    tractionAxle: 'steered',
     maxSteerDeg: 86, steerRateDegPerSec: 150,
     // 6845 lb service + 1520 lb battery = 3794 kg published.
     serviceWeight: 3794, cgFromFixedAxleZ: .74, cgHeight: .68,
@@ -89,6 +95,7 @@ export const CHASSIS = {
   },
   'Raymond:order-picker': {
     fixedAxleZ: -.76, steerAxleZ: 1.06, trackWidth: .73,
+    tractionAxle: 'steered',
     maxSteerDeg: 86, steerRateDegPerSec: 150,
     serviceWeight: 2640, cgFromFixedAxleZ: .72, cgHeight: .67,
     support: 'straddle',
@@ -103,11 +110,12 @@ export const CHASSIS = {
     // PE 4500 end-control rider: the steered drive wheel is under the operator
     // at the aft end, so the POWER UNIT is what swings, not a counterweight.
     fixedAxleZ: -.94, steerAxleZ: .5, trackWidth: .52,
+    tractionAxle: 'steered',
     maxSteerDeg: 90, steerRateDegPerSec: 210,
     serviceWeight: 726, cgFromFixedAxleZ: 1.02, cgHeight: .42,
     support: 'tricycle',
     fixedHalfWidth: .3, driveHalfWidth: .17,
-    ratedLoadCenter: 24 * IN, ratedCapacity: 3629, ratedHeight: 9 * IN,
+    ratedLoadCenter: 24 * IN, ratedCapacity: 2722, ratedHeight: 9 * IN,
     heightDerate: 0, reachDerate: 0, maxReachExtension: 0,
     // On a pallet truck the load wheels are at the FORK TIPS, so the load sits
     // BETWEEN the axles rather than cantilevered ahead of them the way it is on
@@ -120,6 +128,7 @@ export const CHASSIS = {
   'Raymond:pallet': {
     // 8210 walkie: same topology, shorter and lighter, tiller-steered.
     fixedAxleZ: -.86, steerAxleZ: .42, trackWidth: .48,
+    tractionAxle: 'steered',
     maxSteerDeg: 90, steerRateDegPerSec: 230,
     serviceWeight: 458, cgFromFixedAxleZ: .92, cgHeight: .38,
     support: 'tricycle',
@@ -137,6 +146,10 @@ export const CHASSIS = {
     // was a reconstructed estimate and was 0.197 m short, which made the truck
     // turn tighter than the real machine can.
     fixedAxleZ: -.16, steerAxleZ: 1.387, trackWidth: .93,
+    // The front drive axle is fixed and body-aligned; the rear axle only
+    // steers. Keep traction topology explicit so this truck is not integrated
+    // as though its motor were mounted in the steered wheel.
+    tractionAxle: 'fixed',
     maxSteerDeg: 78, steerRateDegPerSec: 120,
     serviceWeight: 3420, cgFromFixedAxleZ: .69, cgHeight: .58,
     // Four-wheel counterbalance trucks are still a TRIANGLE: the rear axle
@@ -155,6 +168,7 @@ export const CHASSIS = {
     // 4460 three-wheel: a real triangle in hardware. Tighter turning, and
     // markedly less lateral margin than the four-wheel truck.
     fixedAxleZ: -.18, steerAxleZ: 1.24, trackWidth: .9,
+    tractionAxle: 'fixed',
     maxSteerDeg: 88, steerRateDegPerSec: 130,
     serviceWeight: 3260, cgFromFixedAxleZ: .72, cgHeight: .56,
     support: 'triangle',

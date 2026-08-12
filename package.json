@@ -3,28 +3,35 @@
   "private": true,
   "version": "0.1.0",
   "type": "module",
+  "engines": {
+    "node": ">=22.12.0"
+  },
   "scripts": {
     "dev": "vite --host 0.0.0.0",
     "build": "vite build",
     "preview": "vite preview --host 0.0.0.0",
-    "check": "eslint src",
-    "verify": "npm run check && node scripts/verify-models.mjs && node scripts/verify-rig-binding.mjs && node scripts/verify-physics.mjs && node scripts/verify-dynamics.mjs && node scripts/verify-facility.mjs && node scripts/verify-surfacing.mjs && npm run build",
+    "check": "eslint src scripts vite.config.js",
+    "verify": "npm run check && node scripts/verify-input-safety.mjs && node scripts/verify-xr-lifecycle.mjs && node scripts/verify-models.mjs && node scripts/verify-rig-binding.mjs && node scripts/verify-vehicle-loading.mjs && node scripts/verify-wheel-articulation.mjs && node scripts/verify-physics.mjs && node scripts/verify-dynamics.mjs && node scripts/verify-facility.mjs && node scripts/verify-surfacing.mjs && npm run build && node scripts/verify-release.mjs",
+    "verify:desktop-input": "node scripts/verify-desktop-input.mjs",
+    "verify:browser": "node scripts/verify-desktop-input.mjs && node scripts/smoke-drive.mjs qa/smoke",
     "dev:vr": "vite --mode vr --host 0.0.0.0",
     "preview:vr": "vite build && vite preview --mode vr --host 0.0.0.0"
   },
   "dependencies": {
-    "@vitejs/plugin-react": "latest",
-    "lucide-react": "latest",
-    "react": "latest",
-    "react-dom": "latest",
-    "three": "latest",
-    "vite": "latest"
+    "@fontsource-variable/inter": "5.3.0",
+    "@fontsource/barlow-condensed": "5.3.0",
+    "lucide-react": "1.31.0",
+    "react": "19.2.8",
+    "react-dom": "19.2.8",
+    "three": "0.185.1"
   },
   "devDependencies": {
-    "@vitejs/plugin-basic-ssl": "^2.3.0",
-    "eslint": "latest",
-    "eslint-plugin-react-hooks": "latest",
-    "eslint-plugin-react-refresh": "latest",
-    "playwright": "^1.62.1"
+    "@vitejs/plugin-basic-ssl": "2.3.0",
+    "@vitejs/plugin-react": "6.0.5",
+    "eslint": "10.8.1",
+    "eslint-plugin-react-hooks": "7.1.1",
+    "eslint-plugin-react-refresh": "0.5.4",
+    "playwright": "1.62.1",
+    "vite": "8.2.1"
   }
 }

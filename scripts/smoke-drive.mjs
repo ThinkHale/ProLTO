@@ -1,8 +1,8 @@
-// Runtime smoke test: load every profile, drive it, and assert the new steering,
-// stability, and surfacing wiring runs in a real WebGL context without throwing.
-// The kinematics MATH is proven by scripts/verify-dynamics.mjs; this proves the
-// wiring, the shader compile, and that the scene stays alive under input.
+// Runtime smoke test: load every profile, drive, turn, lift, pick a load, and
+// assert that stability and surfacing wiring run in a real WebGL context without
+// throwing. Pixel fidelity still requires the separate visual acceptance pass.
 import { chromium } from 'playwright'
+import { mkdirSync } from 'node:fs'
 
 const FAMILY_LABEL = {
   reach: 'Reach Truck',
@@ -10,18 +10,38 @@ const FAMILY_LABEL = {
   pallet: 'Pallet Truck',
   counterbalance: 'Sit-down Counterbalance',
 }
-const url = 'http://localhost:4173'
-const outDir = process.argv[2] || '.'
-const browser = await chromium.launch({ args: ['--use-angle=d3d11', '--enable-unsafe-swiftshader'] })
+const url = process.env.PROLTO_SMOKE_URL || 'http://127.0.0.1:4173'
+const outDir = process.env.PROLTO_SMOKE_OUTPUT || process.argv[2] || '.'
+const launchArgs = process.platform === 'win32'
+  ? ['--use-angle=d3d11', '--enable-unsafe-swiftshader']
+  : ['--enable-unsafe-swiftshader']
+const ASSET_OR_INIT_FAILURE = /procedural fallback|MODEL_(?:LOAD|PARSE|PROFILE|IDENTITY|RIG)|asset readiness failure|simulator init failed/iu
+// Physical tine colliders require the blades to be inside the pallet opening,
+// not scraping along the floor through the bottom boards. High-lift trucks need
+// only a brief feather; low-lift pallet trucks move more slowly.
+const PRE_APPROACH_LIFT_MS = {
+  counterbalance: 20,
+  reach: 30,
+  'order-picker': 20,
+  pallet: 220,
+}
+const isTruckModelRequest = (requestUrl) => /\/models\/(?:crown|raymond)_[^/?]+\.glb(?:[?#]|$)/iu.test(requestUrl)
+mkdirSync(outDir, { recursive: true })
+const browser = await chromium.launch({ args: launchArgs })
 let failures = 0
 
 const readTelemetry = async (page) => {
-  const text = await page.locator('.telemetry-bar').innerText()
+  const telemetry = page.locator('.telemetry-bar')
+  const text = await telemetry.innerText()
+  const pose = await telemetry.evaluate((node) => ({
+    heading: Number(node.dataset.heading),
+    steerAngle: Number(node.dataset.steerAngle),
+  }))
   const number = (label) => {
     const match = text.match(new RegExp(`${label}\\s*([-\\d.,]+)`, 'i'))
     return match ? Number(match[1].replace(/,/g, '')) : null
   }
-  return { speed: number('Speed'), fork: number('Fork height'), load: number('Load'), stability: number('Stability') }
+  return { speed: number('Speed'), fork: number('Fork height'), load: number('Load'), stability: number('Stability'), ...pose }
 }
 
 for (const [family, manufacturer] of [
@@ -32,13 +52,23 @@ for (const [family, manufacturer] of [
 ]) {
   const page = await browser.newPage({ viewport: { width: 1280, height: 800 } })
   const errors = []
+  let modelResponses = 0
   page.on('console', (m) => {
-    if (m.type() !== 'error') return
     const text = m.text()
     if (/X4122|cannot be represented accurately/.test(text)) return // benign ANGLE/HLSL notes
-    errors.push(text)
+    if (m.type() === 'error' || ASSET_OR_INIT_FAILURE.test(text)) errors.push(`console ${m.type()}: ${text}`)
   })
   page.on('pageerror', (e) => errors.push(`pageerror: ${e.message}`))
+  page.on('requestfailed', (request) => {
+    if (isTruckModelRequest(request.url())) {
+      errors.push(`model request failed: ${request.url()} (${request.failure()?.errorText || 'unknown error'})`)
+    }
+  })
+  page.on('response', (response) => {
+    if (!isTruckModelRequest(response.url())) return
+    if (!response.ok()) errors.push(`model response failed: ${response.status()} ${response.url()}`)
+    else modelResponses += 1
+  })
 
   await page.goto(url, { waitUntil: 'networkidle' })
   await page.getByRole('button', { name: FAMILY_LABEL[family] }).click()
@@ -49,11 +79,15 @@ for (const [family, manufacturer] of [
 
   const idle = await readTelemetry(page)
 
-  await page.keyboard.down('ControlLeft')   // operator presence
+  await page.keyboard.down('ShiftLeft')   // operator presence
   await page.waitForTimeout(150)
+  await page.keyboard.down('KeyE')
+  await page.waitForTimeout(PRE_APPROACH_LIFT_MS[family])
+  await page.keyboard.up('KeyE')
+  await page.waitForTimeout(80)
   // Drive straight at the training pallet sitting square in the aisle ahead.
-  // Fork travel now bottoms out with the blades on the floor and the pallet is
-  // oriented for a head-on approach, so this should engage without maneuvering.
+  // The pallet is oriented for a head-on approach and the tines have been
+  // feathered into the physical GMA pocket above its bottom boards.
   await page.keyboard.down('KeyW')
   await page.waitForTimeout(2600)
   await page.keyboard.up('KeyW')
@@ -78,25 +112,32 @@ for (const [family, manufacturer] of [
   await page.keyboard.up('KeyE')
   await page.waitForTimeout(300)
   const lifted = await readTelemetry(page)
-  await page.keyboard.up('ControlLeft')
+  await page.keyboard.up('ShiftLeft')
 
   await page.locator('.simulator-shell').screenshot({ path: `${outDir}/${manufacturer.toLowerCase()}-${family}.png` })
 
   const drove = rolling.speed > .4
+  const headingChange = Math.abs(Math.atan2(
+    Math.sin(turning.heading - rolling.heading),
+    Math.cos(turning.heading - rolling.heading),
+  ))
+  const turned = headingChange > .005 && Math.abs(turning.steerAngle) > 1
   const engaged = picked.load > 0
+  const raised = Math.max(picked.fork, lifted.fork) > idle.fork + 1
   const stabilitySane = [idle, rolling, turning, lifted].every((t) => t.stability >= 0 && t.stability <= 100)
-  const ok = drove && engaged && stabilitySane && errors.length === 0
+  if (!modelResponses) errors.push('no successful truck GLB response observed')
+  const ok = drove && turned && engaged && raised && stabilitySane && errors.length === 0
   if (!ok) failures += 1
   console.log(
     `${ok ? 'PASS ' : 'FAIL '} ${manufacturer.padEnd(8)} ${family.padEnd(15)} ` +
-    `speed=${rolling.speed}mph load=${picked.load}lb fork=${lifted.fork}in ` +
+    `speed=${rolling.speed}mph turn=${(headingChange * 180 / Math.PI).toFixed(1)}deg load=${picked.load}lb fork=${Math.max(picked.fork, lifted.fork)}in ` +
     `stability idle=${idle.stability}% turning=${turning.stability}% lifted=${lifted.stability}%` +
-    `${engaged ? '' : '  <-- NO PICKUP'}` +
+    `${engaged ? '' : '  <-- NO PICKUP'}${raised ? '' : '  <-- NO LIFT'}${turned ? '' : '  <-- NO TURN'}` +
     (errors.length ? `\n      ERRORS: ${errors.slice(0, 3).join(' | ')}` : ''),
   )
   await page.close()
 }
 
 await browser.close()
-console.log(failures ? `\n${failures} profile(s) FAILED` : '\nAll 8 profiles drove, lifted, and rendered cleanly')
+console.log(failures ? `\n${failures} profile(s) FAILED` : '\nAll 8 profiles drove, turned, lifted, picked, and passed the WebGL smoke test')
 process.exit(failures ? 1 : 0)

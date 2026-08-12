@@ -184,7 +184,7 @@ def loft_shell(name, sections, mat=None, parent=None, cap_start=True, cap_end=Tr
 
 def tube(name, points, radius, mat=None, parent=None, resolution=16, corner_radius=0.06,
          cyclic=False):
-    """Round-tube swept along a polyline with filleted corners — guard posts,
+    """Round-tube swept along a polyline with filleted corners: guard posts,
     tiller loops, grab bars, hose runs."""
     curve = bpy.data.curves.new(name, 'CURVE')
     curve.dimensions = '3D'
@@ -195,7 +195,7 @@ def tube(name, points, radius, mat=None, parent=None, resolution=16, corner_radi
     spline.bezier_points.add(len(points) - 1)
     for index, (bp, pt) in enumerate(zip(spline.bezier_points, points)):
         bp.co = Vector(pt)
-        # interior points get a small AUTO fillet, ends stay VECTOR-straight —
+        # interior points get a small AUTO fillet, ends stay VECTOR-straight;
         # welded-tube elbows, not banana bows
         interior = 0 < index < len(points) - 1
         bp.handle_left_type = bp.handle_right_type = 'AUTO' if (interior and corner_radius) else 'VECTOR'
@@ -217,7 +217,7 @@ def tube(name, points, radius, mat=None, parent=None, resolution=16, corner_radi
 
 
 def lathe(name, profile, mat=None, parent=None, segments=48, loc=(0, 0, 0), rot=(0, 0, 0)):
-    """Spin an (r, z) profile around Z — knobs, hubs, cylinder bodies, couplers."""
+    """Spin an (r, z) profile around Z for knobs, hubs, cylinder bodies, and couplers."""
     bm = bmesh.new()
     verts = [bm.verts.new((r, 0, z)) for r, z in profile]
     edges = [bm.edges.new((verts[i], verts[i + 1])) for i in range(len(verts) - 1)]

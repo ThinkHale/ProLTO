@@ -410,8 +410,15 @@ function injectSurfacing(material, treatmentName) {
         `#include <begin_vertex>
         vSurfObj = transformed;
         vSurfNObj = normalize(objectNormal);
-        vSurfN = normalize(mat3(modelMatrix) * objectNormal);
-        vSurfY = (modelMatrix * vec4(transformed, 1.0)).y;`,
+        mat4 proltoSurfaceMatrix = modelMatrix;
+        #ifdef USE_INSTANCING
+          // Facility load visuals use dynamic InstancedMesh buckets. Their
+          // world normal and height must include the per-load instance pose,
+          // while vSurfObj deliberately remains local so the grain stays fixed.
+          proltoSurfaceMatrix = modelMatrix * instanceMatrix;
+        #endif
+        vSurfN = normalize(mat3(proltoSurfaceMatrix) * objectNormal);
+        vSurfY = (proltoSurfaceMatrix * vec4(transformed, 1.0)).y;`,
       )
     shader.fragmentShader = shader.fragmentShader
       .replace('#include <common>', `#include <common>\n${TRIPLANAR_CHUNK}`)

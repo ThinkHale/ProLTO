@@ -3,10 +3,11 @@ dist/
 .DS_Store
 *.log
 tmp/
+qa/smoke/
+output/
 __pycache__/
 *.pyc
 
-# Third-party source art (606 MB). Processed into public/models/facility.glb
-# by assets-src/facility.py; only the processed asset is committed.
+# Local third-party reference art is excluded from source control and is never
+# compiled into the original procedural runtime facility.
 Warehouse Model/
-.DS_Store

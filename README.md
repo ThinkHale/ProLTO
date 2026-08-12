@@ -18,7 +18,10 @@ Open the local URL in a desktop browser. WebXR immersive sessions require HTTPS 
 - Home: recenter the desktop operator view
 - VR trigger or hand pinch: reach to, grab, and move the modeled physical control through its constrained axis
 - VR presence control: hold the modeled deadman pedal or presence control continuously
-- Control key: toggle operator presence in desktop accessibility mode
+- VR squeeze: hold the accessibility and training presence proxy while trigger remains available for modeled controls
+- Quest thumbstick press: recenter the XR reference space
+- Quest A or X: reset the vehicle; hold B or Y for 1.25 seconds to exit VR
+- Shift key: hold operator presence while the focused desktop simulator is active
 - W / S or arrow up / down: travel
 - A / D or arrow left / right: steer
 - E / Q: lift / lower
@@ -30,6 +33,18 @@ Open the local URL in a desktop browser. WebXR immersive sessions require HTTPS 
 
 Laser selection and thumbstick driving are disabled during the practical assessment. They can be enabled explicitly in the control guide as an accessibility fallback. The default VR interaction uses near-hand pickup, controller or hand models, local mechanism axes, neutral detent haptics, and spring return.
 
+The squeeze presence proxy exists to make two-controller practice feasible when foot tracking is unavailable. It is not qualification-equivalent evidence that an operator used the modeled physical deadman control. Controller visuals, hand-joint spheres, fonts, equipment models, and environment lighting assets are all served locally. The simulator does not depend on a runtime CDN.
+
+The current Quest render tier is provisional pending headset GPU captures on each supported model. It uses a 0.82 XR framebuffer scale, 0.8 fixed foveation where the runtime supports it, 1024 pixel shadows, and no fork-camera scene pass during immersion. Desktop rendering restores the 2048 pixel shadow tier after XR exits.
+
+Keyboard vehicle controls are scoped to the labeled simulator surface. Buttons, form fields, knowledge-assessment answers, and other editable or interactive UI retain native keyboard behavior, including Space button activation. Window blur, hidden-document state, lost pointer capture, operator-station exit, XR visibility loss, tracking loss, reset, and XR session cleanup release all operational inputs.
+
+Run the focused desktop input regression against an already running production preview with:
+
+```powershell
+npm run verify:desktop-input
+```
+
 ## Vehicle behavior and stability
 
 Steering uses steered-axle kinematics: one axle is fixed and the other steers, so
@@ -39,8 +54,8 @@ truck, and platform swing on an end-control pallet truck are consequences of tha
 geometry rather than scripted effects.
 
 Stability solves the combined center of gravity of truck, load, and elevated
-operator against the truck's real support polygon — a triangle for counterbalance
-trucks, because the rear axle pivots on a center trunnion — displaced by the
+operator against the truck's reconstructed support polygon, a triangle for counterbalance
+trucks because the rear axle pivots on a center trunnion, displaced by the
 centrifugal and braking forces acting at that moment. Rated capacity derates with
 load center, lift height, and pantograph extension, so a load that is legal on
 the floor can become an overload at height.
@@ -54,17 +69,21 @@ The practical area uses swept truck collision envelopes, solid walls, columns, f
 
 ## Equipment behavior
 
-- Crown RR 5725-45 36V and Raymond 7500 Universal Stance reach trucks: fixed pilot configurations with separate side-stance and universal-stance compartments, manufacturer-specific steering and travel mechanisms, presence controls, open-view masts, outriggers, and reach carriages.
-- Crown SP 1500 and Raymond 5300 order pickers: distinct power units and operator enclosures, opposing hand controls, deadman pedals, elevating platforms and viewpoints, and lift-height-dependent travel speed.
-- Crown PE 4500 and Raymond 8210 pallet trucks: end-control rider and walkie configurations with distinct power units, operator positions, articulated tillers, travel controls, lift rockers, emergency reverse switches, forks, and load wheels.
-- Crown SC 6200 manual-lever and Raymond 4460 legacy counterbalance trucks: fixed cockpit configurations with four-wheel and three-wheel chassis, seated cabs, steering wheels, pedals, mechanical hydraulic levers, rear steering, mast tilt, sideshift, and counterweight swing.
+Every truck below is labeled and loaded as a reference-only, unverified configuration. Exact mast codes, serial ranges, installed options, data plates, and physical validation remain production gates.
+
+- Crown RR 5725-45 36V and Raymond 7500 Universal Stance reach trucks: reference configurations with separate side-stance and universal-stance compartments, manufacturer-specific steering and travel mechanisms, presence controls, open-view masts, outriggers, and reach carriages.
+- Crown SP 1500 fixed-fork and intended Raymond 5300 three-stage, 240 in, 3000 lb order picker reference configurations: distinct power units and operator enclosures, opposing hand controls, deadman pedals, elevating platforms and viewpoints, and lift-height-dependent travel speed. The Crown auxiliary-lift variant is not modeled. The current Raymond GLB also lacks its required third mast stage and staged lift sequencing, so it is not an exact visual replica of that configuration.
+- Crown PE 4500-60, 6000 lb and Raymond 8210 pallet trucks: standard end-control rider and walkie reference configurations with distinct power units, operator positions, articulated tillers, travel controls, lift rockers, emergency reverse switches, forks, and load wheels. Crown QuickPick and QuickCoast are excluded.
+- Crown SC 6200 manual-lever and Raymond 4460 legacy counterbalance trucks: reference cockpit configurations with four-wheel and three-wheel chassis, seated cabs, steering wheels, pedals, mechanical hydraulic levers, rear steering, mast tilt, sideshift, and counterweight swing.
 
 ## Equipment assets
 
 Trucks are authored as parametric Blender models under [assets-src/](assets-src/) and
-shipped as articulated glTF binaries in [public/models/](public/models/). The simulator
-binds to named rig nodes for mast, carriage, reach, platform, control, and wheel
-motion, and reads control metadata from glTF `extras`. See
+shipped as rig-ready glTF binaries in [public/models/](public/models/). The simulator
+binds to named rig nodes for carriage, reach, platform, and control motion, and
+reads control metadata from glTF `extras`. Wheel steering and roll now use measured
+asset pivots and accepted vehicle poses. Nested mast-stage, chain, cylinder, and
+pantograph articulation remains a production-readiness task. See
 [the asset pipeline](docs/asset-pipeline.md) for the build commands, the rig
 contract, and the visual QA loops.
 

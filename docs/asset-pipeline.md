@@ -1,7 +1,7 @@
 # Equipment asset pipeline
 
 ProLTO's trucks are authored as parametric Blender models and shipped to the
-browser as articulated glTF binaries. This replaced the earlier approach of
+browser as rig-ready glTF binaries. This replaced the earlier approach of
 assembling trucks from Three.js primitives at runtime, which could not produce
 the surface quality or hardware density operators recognize.
 
@@ -107,14 +107,15 @@ Verify all exports before committing them:
 npm run verify
 ```
 
-That runs, in order: ESLint; `verify-models.mjs` (rig nodes, actions, signed
-control scales, motion axes, camera height, no QA geometry); `verify-rig-binding.mjs`
-(the simulator's own binding code against the real GLBs); `verify-physics.mjs`
-(collision sweep, fork engagement, rigid carry, rack placement); `verify-dynamics.mjs`
-(steered-axle kinematics, tail swing, stability triangle, capacity derating);
-`verify-facility.mjs` (rack bay openness, beam elevations, solid pedestrians);
-`verify-surfacing.mjs` (material treatment coverage and bake signal); then the
-production build.
+That runs, in order: ESLint; input fail-safe checks; `verify-models.mjs` (rig
+nodes, actions, signed control scales, motion axes, camera height, no QA
+geometry, and binary hashes); real-GLB rig binding and load-failure checks;
+wheel-articulation checks; `verify-physics.mjs` (collision sweep, fork
+engagement, rigid carry, rack placement); `verify-dynamics.mjs` (steered-axle
+kinematics, tail swing, stability triangle, capacity derating);
+`verify-facility.mjs` (rack bay openness, beam elevations, solid pedestrians,
+determinism, and render budgets); `verify-surfacing.mjs` (material treatment
+coverage and bake signal); the production build; and the release-artifact gate.
 
 Those are all headless. Shader compilation and the wired-up simulation loop need
 a real WebGL context, so they are covered separately by a browser smoke test
@@ -122,68 +123,56 @@ against a running server:
 
 ```bash
 npm run preview
-node scripts/smoke-drive.mjs qa/app
+npm run verify:browser
 ```
 
-It loads all eight profiles, drives and lifts each one, captures an operator-eye
-screenshot, and fails on any console or page error.
+It verifies desktop input isolation and fail-safe release behavior, then loads
+all eight profiles, drives and lifts each one, captures an operator-eye
+screenshot in `qa/smoke/`, and fails on any console or page error.
 
-## Runtime loading and fallback
+## Runtime loading and readiness
 
 `createVehicleRig(profile)` is asynchronous. It loads the GLB for the selected
-manufacturer and family, maps the rig nodes, and attaches control metadata. If
-the asset is missing or fails to parse, it logs a warning and falls back to the
-original procedural rig in `src/sim/proceduralFactory.js`, so a bad or absent
-asset degrades the visuals without breaking the assessment.
+manufacturer and family, validates the GLB root identity against the selected
+reference profile, verifies required rig nodes and control actions, maps the rig,
+and attaches control metadata. A missing, malformed, mismatched, or incomplete
+asset blocks simulator readiness in normal operation. The original procedural rig
+is available only when a developer explicitly sets
+`VITE_ALLOW_PROCEDURAL_FALLBACK=true` in a development build. Browser smoke and
+fleet capture scripts treat any procedural fallback as a failure.
 
 ## Facility shell
 
-The building envelope is a third-party warehouse interior converted by
-`assets-src/facility.py`:
+The complete facility is original procedural Three.js geometry in
+`src/sim/warehouse.js`. No third-party building model, converter, or facility
+binary ships with the application, and facility startup performs no model
+request. This removes both the unverified stock-asset release risk and the
+previous 20.7 MB startup transfer.
 
-```bash
-"$BLENDER" -b -P assets-src/facility.py
-```
+`FACILITY` is the single source of truth for the visible inside wall faces,
+wall colliders, floor size, clear height, and the simulator world clamp. The
+original shell has a 22.1 x 40.1 m interior and 28 ft clear height. Training
+geometry remains procedural and measurable: 96 in rack bays, 42 in rack depth,
+beam elevations at 6, 12, and 18 ft, 48x40 GMA pallets, open-web joists,
+high-bay fixtures, floor markings, cones, and solid pedestrians.
 
-Source art lives in `Warehouse Model/` and is **gitignored** — 606 MB of FBX,
-OBJ and 2K/4K textures. Only the processed `public/models/facility.glb` is
-committed.
+Static structure is merged by material. Independently movable pallets keep
+separate mesh-free physics proxies and collision identifiers. Their pallet
+bases, four deterministic carton geometry variants, four tint materials, and
+transparent stretch wrap render through dynamic instanced buckets. A visual
+sync callback updates the affected instance after push, attach, carry, settle,
+and reset operations. Static empty pallets are merged by material, and each
+safety cone's body and base share one merged mesh to remove unnecessary main
+and shadow draw calls.
 
-| | source | shipped |
-| --- | --- | --- |
-| Triangles | 4,100,052 | 291,980 (7%) |
-| Draw calls | 299 | 22 |
-| Textures | 84 PNG @ 2K/4K, 94 MB | 32 @ 1K, 25 MB total GLB |
-| Footprint | — | 41.2 x 53.2 m, 14.6 m clear |
+Facility texture noise, carton offsets, and empty-pallet rotation use a local
+seeded generator. Rebuilding the warehouse therefore produces the same visual
+scene for desktop screenshots, automated tests, and VR sessions.
 
-The source contains **no racking, shelving or pallets** — it is purely a
-building envelope. That is what makes it safe to adopt: racking, rack slots,
-loads and every collider stay procedural in `src/sim/warehouse.js`, so nothing
-the assessment scores depends on the imported art. `FACILITY` in that file is
-the single source of truth for the interior bounds, and `WORLD` in the simulator
-is derived from it so the two cannot drift apart.
-
-The decimation ratios look brutal because 86% of the source is decorative:
-hanging lamps and their covers alone were 42% (~46,000 triangles per fixture,
-14 m overhead) and the wall cladding spent another 30% modelling corrugations
-that a normal map represents for free. The structure an operator actually
-judges is tiny — the walls are 1,090 quads, the columns 6,666 — so the
-decorative families are crushed and the structural ones are left at full
-density.
-
-Materials are converted rather than translated: the source is
-specular-glossiness and three.js is metallic-roughness, so the gloss/spec maps
-are dropped, base colour and normal are kept, and roughness becomes a constant
-that the surfacing pass modulates — the same treatment the fleet gets.
-
-If the GLB is missing or fails to load, `createWarehouse` keeps the procedural
-shell it would otherwise remove, so the exercise still runs.
-
-**Cost.** The shell adds ~292k triangles. Desktop frame time stays vsync-locked
-at 16.7 ms median, but p95 moved from 17.7 to 22.6 ms, so there is now real
-frame-time pressure and a Quest build will need more: the remaining levers are
-the lamps (51k), trusses (50k) and roof deck (62k), plus meshopt/Draco for load
-time and KTX2 for texture memory.
+`scripts/verify-facility.mjs` rejects any reintroduced facility binary or
+runtime reference. It also verifies visible and collision bounds, rack
+topology, collider identifiers, shared load resources, solid pedestrians,
+determinism, and mesh and shadow-caster budgets.
 
 ## Surface detail
 
@@ -215,11 +204,15 @@ redundant and should be retired rather than layered on top.
 
 ## Lighting
 
-The simulator lights the scene with an image-based environment
-(`public/env/warehouse_1k.hdr`, CC0 from Poly Haven) processed through
-`PMREMGenerator`, plus a shadow-casting key light that follows the truck. PBR
-paint with a clearcoat layer needs an environment to reflect; without one the
-bodywork reads as flat plastic regardless of mesh quality.
+The simulator lights the scene with Poly Haven's
+[Empty Warehouse 01](https://polyhaven.com/a/empty_warehouse_01) by Sergej
+Majboroda, released under CC0. The shipped 1K HDR is renamed to
+`public/env/warehouse_1k.hdr` and processed through `PMREMGenerator`. Its MD5 is
+`ab2931b0191b050b97b1e08ab67b0fb0` and its SHA-256 is
+`9b3d611cadc32c3a0c7e084ce5611c0650293881c4a041e7fa13748fe0dc6451`.
+A shadow-casting key light follows the truck. PBR paint with a clearcoat layer
+needs an environment to reflect; without one the bodywork reads as flat plastic
+regardless of mesh quality.
 
 ## Visual QA
 

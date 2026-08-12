@@ -1,21 +1,129 @@
 import * as THREE from 'three'
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js'
+import { MODEL_CONTRACTS } from '../data/modelContracts.js'
+import { fetchArrayBuffer } from './assetFetch.js'
 import { createVehicleRig as createProceduralRig } from './proceduralFactory.js'
+import { createWheelArticulation } from './wheelArticulation.js'
 
 // Blender-authored fleet assets (assets-src/trucks/*.py -> public/models/*.glb).
 // Node names + ctrl_* extras are the contract; see assets-src/lib/rig.py.
-const ASSETS = {
-  'Crown:reach': 'crown_rr5725',
-  'Raymond:reach': 'raymond_7500',
-  'Crown:order-picker': 'crown_sp1500',
-  'Raymond:order-picker': 'raymond_5300',
-  'Crown:pallet': 'crown_pe4500',
-  'Raymond:pallet': 'raymond_8210',
-  'Crown:counterbalance': 'crown_sc6200',
-  'Raymond:counterbalance': 'raymond_4460',
+const loader = new GLTFLoader()
+const MODEL_LOAD_TIMEOUT_MS = 15000
+
+async function loadGltfAsset(url, options = {}) {
+  const buffer = await fetchArrayBuffer(url, {
+    signal: options.signal,
+    timeoutMs: options.timeoutMs ?? MODEL_LOAD_TIMEOUT_MS,
+  })
+  const resourcePath = url.slice(0, url.lastIndexOf('/') + 1)
+  return loader.parseAsync(buffer, resourcePath)
 }
 
-const loader = new GLTFLoader()
+export class AssetReadinessError extends Error {
+  constructor(code, message, options = {}) {
+    super(message, options)
+    this.name = 'AssetReadinessError'
+    this.code = code
+    this.assetId = options.assetId || null
+  }
+}
+
+function equipmentKey(profile) {
+  return `${profile?.manufacturer || 'unknown'}:${profile?.family || 'unknown'}`
+}
+
+function profileContract(profile) {
+  const assetId = profile?.assetId
+  const contract = assetId ? MODEL_CONTRACTS[assetId] : null
+  if (!assetId || !contract) {
+    throw new AssetReadinessError(
+      'MODEL_PROFILE_INVALID',
+      `${equipmentKey(profile)} has no recognized assetId`,
+      { assetId },
+    )
+  }
+  if (contract.profileKey !== equipmentKey(profile)) {
+    throw new AssetReadinessError(
+      'MODEL_PROFILE_INVALID',
+      `${assetId} belongs to ${contract.profileKey}, not ${equipmentKey(profile)}`,
+      { assetId },
+    )
+  }
+  if (!profile.assetSpec || typeof profile.assetSpec !== 'string') {
+    throw new AssetReadinessError(
+      'MODEL_PROFILE_INVALID',
+      `${equipmentKey(profile)} has no expected assetSpec`,
+      { assetId },
+    )
+  }
+  return contract
+}
+
+function commandableActions(index) {
+  const actions = new Set()
+  index.forEach((object) => {
+    const extras = object.userData
+    if (!extras?.ctrl_action) return
+    actions.add(extras.ctrl_action)
+    if (extras.ctrl_action2) actions.add(extras.ctrl_action2)
+    if (extras.ctrl_shift2) actions.add(extras.ctrl_shift2)
+  })
+  return actions
+}
+
+function validateVehicleAsset(index, profile, duplicateNames = []) {
+  const contract = profileContract(profile)
+  const assetId = profile.assetId
+  const rigProblems = []
+  if (duplicateNames.length) rigProblems.push(`duplicate node names: ${duplicateNames.join(', ')}`)
+  contract.nodes.forEach((name) => {
+    if (!index.has(name)) rigProblems.push(`missing required node ${name}`)
+  })
+  Object.entries(contract.indexedNodes || {}).forEach(([prefix, count]) => {
+    for (let indexValue = 0; indexValue < count; indexValue += 1) {
+      const name = `${prefix}${indexValue}`
+      if (!index.has(name)) rigProblems.push(`missing required articulated node ${name}`)
+    }
+  })
+  const actions = commandableActions(index)
+  contract.controls.forEach((action) => {
+    if (!actions.has(action)) rigProblems.push(`no control commands ${action}`)
+  })
+
+  const root = index.get('rig_root')
+  const actualSpec = root?.userData?.spec ?? null
+  const actualConfigurationId = root?.userData?.control_configuration ?? null
+  const expectedConfigurationId = profile.configurationId ?? null
+  const identityProblems = []
+  if (actualSpec !== profile.assetSpec) {
+    identityProblems.push(`spec is ${JSON.stringify(actualSpec)}, expected ${JSON.stringify(profile.assetSpec)}`)
+  }
+  if (actualConfigurationId !== expectedConfigurationId) {
+    identityProblems.push(
+      `control configuration is ${JSON.stringify(actualConfigurationId)}, expected ${JSON.stringify(expectedConfigurationId)}`,
+    )
+  }
+
+  if (identityProblems.length || rigProblems.length) {
+    const problems = [...identityProblems, ...rigProblems]
+    throw new AssetReadinessError(
+      identityProblems.length ? 'MODEL_IDENTITY_MISMATCH' : 'MODEL_RIG_INVALID',
+      `${assetId} failed readiness: ${problems.join('; ')}`,
+      { assetId },
+    )
+  }
+
+  return Object.freeze({
+    assetId,
+    assetSpec: actualSpec,
+    configurationId: actualConfigurationId,
+    validationStatus: profile.validationStatus,
+  })
+}
+
+function allowsProceduralFallback(env) {
+  return env?.DEV === true && env?.VITE_ALLOW_PROCEDURAL_FALLBACK === 'true'
+}
 
 function telemetryTexture(manufacturer) {
   const crown = manufacturer === 'Crown'
@@ -91,7 +199,7 @@ function collectIndexed(index, prefix) {
   return found
 }
 
-const FORK_BLADE = /^forks?_[LR]$/
+const FORK_BLADE = /^(?:forks?_[LR]|fork_[01])$/
 // Must match the screen mesh name built by parts.cage_display.
 export const FORKCAM_DISPLAY = 'forkcam_display'
 
@@ -150,9 +258,23 @@ function castsUsefulShadow(mesh) {
 }
 
 function mapRig(gltfScene, profile) {
+  if (!gltfScene?.traverse) {
+    throw new AssetReadinessError(
+      'MODEL_PARSE_FAILED',
+      `${profile?.assetId || equipmentKey(profile)} did not contain a glTF scene`,
+      { assetId: profile?.assetId },
+    )
+  }
   const index = new Map()
+  const duplicateNames = []
   gltfScene.traverse((object) => {
+    if (!object.name) return
+    if (index.has(object.name)) duplicateNames.push(object.name)
     index.set(object.name, object)
+  })
+  const assetIdentity = validateVehicleAsset(index, profile, duplicateNames)
+
+  gltfScene.traverse((object) => {
     attachControlMetadata(object)
     if (object.isMesh) {
       object.castShadow = castsUsefulShadow(object)
@@ -204,31 +326,92 @@ function mapRig(gltfScene, profile) {
     gates: collectIndexed(index, 'rig_gate_'),
     family: profile.family,
     walkie,
-    specification: `${profile.manufacturer} ${profile.model}`,
+    assetSource: 'gltf',
+    assetIdentity,
+    specification: assetIdentity.assetSpec,
     // reach trucks tilt at the fork carriage; counterbalance tilts the mast
     tiltGroup: profile.family === 'reach' ? carriage : profile.family === 'counterbalance' ? mast : null,
   }
   if (!rig.loadWheels.length) rig.loadWheels = null
   if (!rig.levers.length) rig.levers = null
   rig.forkMetrics = measureForks(gltfScene)
-  return recordRests(rig)
+  if (!rig.forkMetrics) {
+    throw new AssetReadinessError(
+      'MODEL_RIG_INVALID',
+      `${profile.assetId} has no measurable fork pair`,
+      { assetId: profile.assetId },
+    )
+  }
+  recordRests(rig)
+  try {
+    rig.wheelArticulation = createWheelArticulation(rig)
+  } catch (error) {
+    throw new AssetReadinessError(
+      'MODEL_RIG_INVALID',
+      `${profile.assetId} wheel articulation failed readiness: ${error?.message || error}`,
+      { assetId: profile.assetId, cause: error },
+    )
+  }
+  return rig
 }
 
-export async function createVehicleRig(profile) {
-  const asset = ASSETS[`${profile.manufacturer}:${profile.family}`]
-  const url = `${import.meta.env.BASE_URL}models/${asset}.glb`
+async function loadVehicleRig(profile, options = {}) {
+  const env = options.env ?? import.meta.env
+  const loadAsset = options.loadAsset || ((url) => loadGltfAsset(url, options))
+  const asset = profile?.assetId
+  const baseUrl = env?.BASE_URL ?? import.meta.env?.BASE_URL ?? '/'
+  let url = `${baseUrl}models/${asset}.glb`
   try {
-    const gltf = await loader.loadAsync(url)
+    const contract = profileContract(profile)
+    if (!/^[a-f0-9]{12}$/u.test(contract.contentRevision || '')) {
+      throw new AssetReadinessError(
+        'MODEL_PROFILE_INVALID',
+        `${asset} has no valid content revision`,
+        { assetId: asset },
+      )
+    }
+    url += `?v=${contract.contentRevision}`
+    const gltf = await loadAsset(url)
     return mapRig(gltf.scene, profile)
   } catch (error) {
-    console.warn(`ProLTO: falling back to procedural rig for ${asset}:`, error)
-    return recordRests(createProceduralRig(profile))
+    const readinessError = error instanceof AssetReadinessError
+      ? error
+      : new AssetReadinessError(
+          'MODEL_LOAD_FAILED',
+          `${asset || equipmentKey(profile)} could not load ${url}: ${error?.message || error}`,
+          { assetId: asset, cause: error },
+        )
+    if (!allowsProceduralFallback(env)) {
+      console.error(`ProLTO asset readiness failure [${readinessError.code}]: ${readinessError.message}`)
+      throw readinessError
+    }
+    console.warn(
+      `ProLTO DEVELOPMENT ONLY procedural fallback [${readinessError.code}] for ${asset}: ${readinessError.message}`,
+    )
+    const rig = recordRests(createProceduralRig(profile))
+    rig.assetSource = 'procedural-development'
+    rig.assetIdentity = Object.freeze({
+      assetId: asset,
+      assetSpec: null,
+      configurationId: null,
+      validationStatus: 'development-fallback',
+      fallbackCause: readinessError.code,
+    })
+    rig.specification = `Development fallback for ${profile.manufacturer} ${profile.model}`
+    return rig
   }
+}
+
+export function createVehicleRig(profile, options = {}) {
+  return loadVehicleRig(profile, options)
 }
 
 // Exposed so scripts/verify-rig-binding.mjs can assert the real mapping against
 // the real exports without standing up a browser and a WebGL context.
 export const __mapRigForTest = mapRig
+export const __loadVehicleRigForTest = loadVehicleRig
+export const __validateVehicleAssetForTest = validateVehicleAsset
+export const __allowsProceduralFallbackForTest = allowsProceduralFallback
 
 export function controlMeshes(rig) {
   const result = []

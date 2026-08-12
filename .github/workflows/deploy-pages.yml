@@ -1,24 +1,26 @@
 name: Deploy ProLTO to GitHub Pages
 
 on:
+  pull_request:
+    branches:
+      - agent/initial-webxr-prototype
   push:
     branches:
-      - main
       - agent/initial-webxr-prototype
   workflow_dispatch:
 
 permissions:
   contents: read
-  pages: write
-  id-token: write
 
 concurrency:
-  group: pages
+  group: pages-${{ github.event_name == 'pull_request' && github.ref || 'deployment' }}
   cancel-in-progress: true
 
 jobs:
   build:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -26,20 +28,49 @@ jobs:
           node-version: 22
           cache: npm
       - run: npm ci
-      - run: npm run build
-      - uses: actions/configure-pages@v5
+      - run: npm audit --audit-level=high
+      - run: npm run verify
+      - run: npx playwright install --with-deps chromium
+      - name: Run fleet browser smoke test
+        shell: bash
+        run: |
+          npm run preview -- --host 127.0.0.1 &
+          preview_pid=$!
+          trap 'kill "$preview_pid"' EXIT
+          for attempt in {1..30}; do
+            if curl --fail --silent http://127.0.0.1:4173/ >/dev/null; then
+              break
+            fi
+            sleep 1
+          done
+          npm run verify:browser
+      - name: Upload browser failure evidence
+        if: failure()
+        uses: actions/upload-artifact@v4
         with:
-          enablement: true
+          name: browser-smoke-evidence
+          path: |
+            qa/smoke
+            output/playwright
+          if-no-files-found: ignore
+      - uses: actions/configure-pages@v5
+        if: github.ref == 'refs/heads/agent/initial-webxr-prototype' && github.event_name != 'pull_request'
       - uses: actions/upload-pages-artifact@v3
+        if: github.ref == 'refs/heads/agent/initial-webxr-prototype' && github.event_name != 'pull_request'
         with:
           path: dist
 
   deploy:
+    if: github.ref == 'refs/heads/agent/initial-webxr-prototype' && github.event_name != 'pull_request'
     environment:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
     runs-on: ubuntu-latest
     needs: build
+    permissions:
+      contents: read
+      pages: write
+      id-token: write
     steps:
       - name: Deploy
         id: deployment

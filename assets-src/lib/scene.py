@@ -2,7 +2,7 @@
 
 Coordinate convention (Blender, before glTF Y-up conversion):
   +Y = forks-forward, -Y = operator side, +Z = up, +X = truck right.
-The glTF exporter maps this to three.js as: forks -Z, up +Y — matching the
+The glTF exporter maps this to three.js as forks -Z and up +Y, matching the
 Simulator, which drives the truck with forks pointing toward -Z.
 All dimensions are meters (1 Blender unit = 1 three.js unit).
 """
