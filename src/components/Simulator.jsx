@@ -78,6 +78,9 @@ const MAX_SIMULATION_STEPS_PER_FRAME = 18
 const SIMULATION_TIME_EPSILON = 1e-10
 const DESKTOP_PIXEL_RATIO_CAP = 1.7
 const DESKTOP_SHADOW_MAP_SIZE = 2048
+// Budget for CPU rasterisers: quarter the fragments and shrink the shadow pass.
+const SOFTWARE_PIXEL_RATIO = .5
+const SOFTWARE_SHADOW_MAP_SIZE = 512
 const ENVIRONMENT_CONTENT_REVISION = '9b3d611cadc3'
 const ENVIRONMENT_LOAD_TIMEOUT_MS = 15000
 // Provisional until a GPU capture is completed on each supported Quest model.
@@ -491,7 +494,22 @@ const Simulator = forwardRef(function Simulator({ profile, onTelemetry, onSafety
       setLifecycle('failed', { message: 'WebGL renderer unavailable', error: error.message })
       return
     }
-    renderer.setPixelRatio(Math.min(window.devicePixelRatio, DESKTOP_PIXEL_RATIO_CAP))
+    // Software rasterisers -- SwiftShader on a CI runner, llvmpipe on a headless
+    // Linux box, WARP on Windows -- render every pixel on the CPU. At full
+    // desktop quality that measured ~1.7 s PER FRAME, which blocks the main
+    // thread hard enough to starve input dispatch: the browser smoke test's
+    // click queued behind requestAnimationFrame and timed out. Detect it and
+    // fall back to a budget the CPU can actually hold, which also makes the app
+    // usable for anyone without a GPU rather than merely unblocking CI.
+    const glContext = renderer.getContext()
+    const debugRendererInfo = glContext.getExtension('WEBGL_debug_renderer_info')
+    const glRendererName = debugRendererInfo
+      ? String(glContext.getParameter(debugRendererInfo.UNMASKED_RENDERER_WEBGL) || '')
+      : ''
+    const softwareRasterised = /swiftshader|llvmpipe|softpipe|basic render|warp/iu.test(glRendererName)
+    renderer.setPixelRatio(softwareRasterised
+      ? SOFTWARE_PIXEL_RATIO
+      : Math.min(window.devicePixelRatio, DESKTOP_PIXEL_RATIO_CAP))
     renderer.setSize(mount.clientWidth, mount.clientHeight)
     renderer.shadowMap.enabled = true
     renderer.shadowMap.type = THREE.PCFShadowMap
@@ -557,7 +575,10 @@ const Simulator = forwardRef(function Simulator({ profile, onTelemetry, onSafety
     const sun = new THREE.DirectionalLight(0xfff4e2, 2.6)
     sun.position.set(-6, 13, 7)
     sun.castShadow = true
-    sun.shadow.mapSize.set(DESKTOP_SHADOW_MAP_SIZE, DESKTOP_SHADOW_MAP_SIZE)
+    sun.shadow.mapSize.set(
+      softwareRasterised ? SOFTWARE_SHADOW_MAP_SIZE : DESKTOP_SHADOW_MAP_SIZE,
+      softwareRasterised ? SOFTWARE_SHADOW_MAP_SIZE : DESKTOP_SHADOW_MAP_SIZE,
+    )
     sun.shadow.camera.left = -9
     sun.shadow.camera.right = 9
     sun.shadow.camera.top = 9
@@ -637,7 +658,11 @@ const Simulator = forwardRef(function Simulator({ profile, onTelemetry, onSafety
     let forkCamera = null
     let forkCamTarget = null
     let forkCamTick = 0
-    if (rig.forkCam && rig.forkCamDisplay) {
+    // The fork camera is a whole second scene pass. On a CPU rasteriser that
+    // roughly doubles an already unaffordable frame, so it is dropped there and
+    // the monitor simply stays dark rather than costing the operator the
+    // framerate they need to steer.
+    if (rig.forkCam && rig.forkCamDisplay && !softwareRasterised) {
       forkCamTarget = new THREE.WebGLRenderTarget(320, 200, {
         minFilter: THREE.LinearFilter, magFilter: THREE.LinearFilter, depthBuffer: true,
       })
