@@ -23,7 +23,16 @@ import {
 import { solveStability, stabilityWarning } from '../sim/stability.js'
 import { applyFleetSurfacing } from '../sim/surfacing.js'
 import { contactAssessment } from '../sim/safetyEvents.js'
-import { applyModifierTransition, desktopPresenceHeld, isBellyControlActive, isNativeInteractiveTarget, removePointerDrag } from '../sim/inputSafety.js'
+import {
+  applyModifierTransition,
+  controlReturnsToNeutral,
+  desktopPresenceHeld,
+  isBellyControlActive,
+  isNativeInteractiveTarget,
+  removePointerDrag,
+  releaseManualControl,
+  setCommandSource,
+} from '../sim/inputSafety.js'
 import { fetchArrayBuffer } from '../sim/assetFetch.js'
 import {
   finishXRStartup,
@@ -613,6 +622,7 @@ const Simulator = forwardRef(function Simulator({ profile, onTelemetry, onSafety
     const dynamics = DYNAMICS[profile.family]
     const requiresPresence = profile.family !== 'pallet' || !rig.walkie
     const manual = { ...ZERO }
+    const manualSources = new Map()
     const steering = steerLimits(profile)
     // How far the blades sit above the floor at their authored rest. Fork travel
     // is rescaled by this so state.fork is height ABOVE THE FLOOR: zero means
@@ -871,21 +881,30 @@ const Simulator = forwardRef(function Simulator({ profile, onTelemetry, onSafety
     }
     const exitXR = async () => {
       engine.xrRequestCancelled = true
+      if (engine.xrEndRequest) return engine.xrEndRequest
       const session = activeXRSession || renderer.xr.getSession()
       if (!session) {
         if (engine.xrRequest) setLifecycle('xr-ending', { message: 'Cancelling immersive request' })
         return Boolean(engine.xrRequest)
       }
-      setLifecycle('xr-ending', { message: 'Ending immersive session' })
-      clearInteractions('Exiting VR, controls released')
+      const request = (async () => {
+        setLifecycle('xr-ending', { message: 'Ending immersive session' })
+        clearInteractions('Exiting VR, controls released')
+        try {
+          await session.end()
+        } catch (error) {
+          setLifecycle('xr-running', { message: 'Immersive session is still running', error: error.message })
+          updateXRPanel('Exit failed. Use the headset system menu')
+          throw error
+        }
+        return true
+      })()
+      engine.xrEndRequest = request
       try {
-        await session.end()
-      } catch (error) {
-        setLifecycle('xr-running', { message: 'Immersive session is still running', error: error.message })
-        updateXRPanel('Exit failed. Use the headset system menu')
-        throw error
+        return await request
+      } finally {
+        if (engine.xrEndRequest === request) engine.xrEndRequest = null
       }
-      return true
     }
     const engine = {
       renderer,
@@ -898,6 +917,7 @@ const Simulator = forwardRef(function Simulator({ profile, onTelemetry, onSafety
       exitXR,
       ready: false,
       xrRequest: null,
+      xrEndRequest: null,
       xrRequestCancelled: false,
       isDisposed: () => disposed,
       activeXRSession: () => activeXRSession,
@@ -1190,28 +1210,29 @@ const Simulator = forwardRef(function Simulator({ profile, onTelemetry, onSafety
       renderer.domElement.style.cursor = object ? 'grab' : 'crosshair'
       if (object?.material?.emissive) object.material.emissive.setHex(0x6b4700)
     }
-    const releaseControl = (object) => {
+    const setManualCommand = (source, control, action, value) => {
+      manual[action] = controlReturnsToNeutral(control)
+        ? setCommandSource(manualSources, source, action, value)
+        : value
+    }
+    const releaseControl = (object, source = null) => {
       if (!object) return
       const control = object.userData.control
       if (!control) return
-      const springs = control.spring || ['horn', 'belly', 'brake'].includes(control.action)
-      if (springs) {
-        manual[control.action] = 0
-        // A spring-centred part returns on BOTH of its axes at once.
-        if (control.action2) manual[control.action2] = 0
-        if (control.shift2) manual[control.shift2] = 0
-      }
+      releaseManualControl(manual, manualSources, source, control)
       if (control.action === 'horn') {
-        state.horn = false
-        stopHorn()
+        state.horn = manual.horn > .2 || state.keys.has('Space')
+        if (!state.horn) stopHorn()
       }
     }
     const setModifierHeld = (held) => {
-      state.modifierHeld = applyModifierTransition(
-        manual,
-        [...state.pointerDrags.values(), ...state.xrDrags.values()],
-        held,
-      )
+      const activeDrags = [...state.pointerDrags.values(), ...state.xrDrags.values()]
+      state.modifierHeld = applyModifierTransition(manual, activeDrags, held)
+      for (const drag of activeDrags) {
+        const control = drag.object?.userData?.control
+        if (!control?.shift2) continue
+        setManualCommand(drag, control, held ? control.action2 : control.shift2, 0)
+      }
     }
     const endXRInteraction = (controller, label) => {
       const drag = state.xrDrags.get(controller)
@@ -1222,8 +1243,8 @@ const Simulator = forwardRef(function Simulator({ profile, onTelemetry, onSafety
         if (label) setActiveControl(label)
         return
       }
-      if (!drag.presenceOnly) releaseControl(drag.object)
       state.xrDrags.delete(controller)
+      if (!drag.presenceOnly) releaseControl(drag.object, drag)
       if (drag.presenceOnly) {
         refreshXRPresence(label || `${drag.object.userData.control.label} released`)
       } else if (label) setActiveControl(label)
@@ -1249,6 +1270,7 @@ const Simulator = forwardRef(function Simulator({ profile, onTelemetry, onSafety
       state.pointerDrags.forEach((drag) => { if (!drag.presenceOnly && !drag.modifierOnly) releaseControl(drag.object) })
       state.pointerDrags.clear()
       state.lookDrags.clear()
+      manualSources.clear()
       state.modifierHeld = false
       state.keys.clear()
       Object.assign(manual, ZERO)
@@ -1303,16 +1325,17 @@ const Simulator = forwardRef(function Simulator({ profile, onTelemetry, onSafety
         }
         const scale = control.scale ?? 1
         const second = secondaryAction(control)
-        state.pointerDrags.set(event.pointerId, {
+        const drag = {
           object, x: event.clientX, y: event.clientY,
           start: (manual[control.action] || 0) * scale,
           start2: second ? (manual[second] || 0) * scale : 0,
           action2: second,
-        })
+        }
+        state.pointerDrags.set(event.pointerId, drag)
         renderer.domElement.setPointerCapture(event.pointerId)
         setActiveControl(control.label)
         if (['button', 'pedal'].includes(control.axis)) {
-          manual[control.action] = scale
+          setManualCommand(drag, control, control.action, scale)
           if (control.action === 'horn') { state.horn = true; soundHorn() }
           if (control.action === 'belly') fireEvent('belly-switch', 'Entry Bar safety switch contacted', 'major', 8, 1500)
         }
@@ -1334,16 +1357,16 @@ const Simulator = forwardRef(function Simulator({ profile, onTelemetry, onSafety
         const control = object.userData.control
         const scale = control.scale ?? 1
         const origin = pointerDrag
-        manual[control.action] = clampInput(start + axisDelta(control.motion, event, origin)) * scale
+        setManualCommand(pointerDrag, control, control.action, clampInput(start + axisDelta(control.motion, event, origin)) * scale)
         // The secondary axis is live in the same drag, so an operator can blend
         // travel with lift, or tilt with reach, exactly as the real part allows.
         const live = secondaryAction(control)
         if (live && control.motion2) {
           // Only one function owns the shifted axis at a time: engaging the
           // back switch mid-drag must not leave reach commanded behind it.
-          if (live !== action2 && action2) manual[action2] = 0
-          if (live === control.action2 && control.shift2) manual[control.shift2] = 0
-          manual[live] = clampInput(start2 + axisDelta(control.motion2, event, origin)) * scale
+          if (live !== action2 && action2) setManualCommand(pointerDrag, control, action2, 0)
+          if (live === control.action2 && control.shift2) setManualCommand(pointerDrag, control, control.shift2, 0)
+          setManualCommand(pointerDrag, control, live, clampInput(start2 + axisDelta(control.motion2, event, origin)) * scale)
         }
       } else if (lookDrag) {
         const yaw = lookDrag.yaw - (event.clientX - lookDrag.x) * .004
@@ -1353,7 +1376,7 @@ const Simulator = forwardRef(function Simulator({ profile, onTelemetry, onSafety
     }
     const endPointerInteraction = (event, releaseCapture = true, label = null) => {
       const pointerDrag = removePointerDrag(state.pointerDrags, event.pointerId)
-      if (pointerDrag && !pointerDrag.presenceOnly && !pointerDrag.modifierOnly) releaseControl(pointerDrag.object)
+      if (pointerDrag && !pointerDrag.presenceOnly && !pointerDrag.modifierOnly) releaseControl(pointerDrag.object, pointerDrag)
       state.lookDrags.delete(event.pointerId)
       setModifierHeld([...state.pointerDrags.values(), ...state.xrDrags.values()].some((drag) => drag.modifierOnly))
       if (pointerDrag?.presenceOnly) refreshDesktopPresence(label || 'Modeled desktop presence control released')
@@ -1492,7 +1515,7 @@ const Simulator = forwardRef(function Simulator({ profile, onTelemetry, onSafety
         }
         const frame = object.parent || rig.root
         const localStart = frame.worldToLocal(origin.clone())
-        state.xrDrags.set(controller, {
+        const drag = {
           object,
           frame,
           pose: pose.node,
@@ -1503,10 +1526,11 @@ const Simulator = forwardRef(function Simulator({ profile, onTelemetry, onSafety
           start2: (manual[secondaryAction(object.userData.control)] || 0) * (object.userData.control.scale ?? 1),
           source: event.data,
           lastDetent: 0,
-        })
+        }
+        state.xrDrags.set(controller, drag)
         setActiveControl(object.userData.control.label)
         if (['button', 'pedal'].includes(object.userData.control.axis)) {
-          manual[object.userData.control.action] = object.userData.control.scale ?? 1
+          setManualCommand(drag, object.userData.control, object.userData.control.action, object.userData.control.scale ?? 1)
           if (object.userData.control.action === 'horn') { state.horn = true; soundHorn() }
           if (object.userData.control.action === 'belly') fireEvent('belly-switch', 'Emergency reverse or Entry Bar switch contacted', 'major', 8, 1500)
         }
@@ -1644,12 +1668,12 @@ const Simulator = forwardRef(function Simulator({ profile, onTelemetry, onSafety
         }
         const scale = control.scale ?? 1
         const value = clampInput(drag.start + localDelta(control.motion))
-        manual[control.action] = value * scale
+        setManualCommand(drag, control, control.action, value * scale)
         const second = secondaryAction(control)
         if (second && control.motion2) {
-          if (second !== control.action2 && control.action2) manual[control.action2] = 0
-          if (second === control.action2 && control.shift2) manual[control.shift2] = 0
-          manual[second] = clampInput(drag.start2 + localDelta(control.motion2)) * scale
+          if (second !== control.action2 && control.action2) setManualCommand(drag, control, control.action2, 0)
+          if (second === control.action2 && control.shift2) setManualCommand(drag, control, control.shift2, 0)
+          setManualCommand(drag, control, second, clampInput(drag.start2 + localDelta(control.motion2)) * scale)
         }
         // Neutral is a firmer detent than the intermediate ones, so the hand
         // can find centre without looking. Detent count comes from the asset.

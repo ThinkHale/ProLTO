@@ -31,7 +31,7 @@ psi_dot = v * tan(delta) / L
 ```
 
 the fixed axle midpoint advances along the body's forward axis, and the rest of
-the truck follows from the new heading. Tail swing is not scripted — it falls out
+the truck follows from the new heading. Tail swing is not scripted; it falls out
 of the geometry, which is why `tailSwingRadius()` can be reported to the trainee
 as a real number. Steering is rate-limited to the truck's hydraulic slew rate, so
 full lock is not reachable in one frame.
@@ -51,14 +51,14 @@ and ramps are not modeled.
 
 1. Build the **support polygon** from the chassis. A four-wheel counterbalance
    truck is still a *triangle*, because its rear axle pivots on a center
-   trunnion — that single fact is why forklifts tip sideways. Straddle trucks get
+   trunnion. That single fact is why forklifts tip sideways. Straddle trucks get
    a quadrilateral from the outriggers; pallet trucks a tricycle.
 2. Combine truck, load, and (for order pickers) the elevated operator into one
    center of gravity. Load position follows fork height, reach extension, tilt,
    and sideshift.
-3. Displace that CG by the inertial forces acting this frame — centrifugal from
+3. Displace that CG by the inertial forces acting this frame: centrifugal from
    the turn radius the steering model already solved, longitudinal from braking
-   and acceleration — to get where the resultant meets the floor.
+   and acceleration, to get where the resultant meets the floor.
 4. Report the normalized margin to the nearest polygon edge, and **which** edge,
    so warnings can name the actual failure mode.
 
@@ -102,7 +102,7 @@ critical because it closes an aisle and can bring a run down; a beam or stored
 load is major; a cone is minor. Pedestrians are solid and critical.
 
 **What this replaced.** One box collider per rack run, spanning every bay from
-the floor to infinity — the entire rack face was a solid wall, so a trainee could
+the floor to infinity. The entire rack face was a solid wall, so a trainee could
 never enter a bay or judge an approach. Pedestrians had no collider at all and
 could be driven straight through.
 

@@ -178,14 +178,14 @@ determinism, and mesh and shadow-caster budgets.
 
 ## Surface detail
 
-The exported GLBs carry **no image textures at all** — `materials.py` notes that
+The exported GLBs carry **no image textures at all**. `materials.py` notes that
 procedural node trees do not survive glTF export, and nothing was baked in their
 place. Uniform roughness across a whole vehicle is the strongest "this is CG"
 signal there is, ahead of polygon count.
 
 `src/sim/surfacing.js` closes that gap at runtime rather than in the asset. It
-bakes one packed RGBA detail map per surface family — slope in RG from a real
-height field, roughness modulation in B, a grime mask in A — and samples it with
+bakes one packed RGBA detail map per surface family: slope in RG from a real
+height field, roughness modulation in B, and a grime mask in A. It samples it with
 a **triplanar projection in object space**. Two constraints drove that choice:
 
 - Only about 17% of primitives carry `TEXCOORD_0`, so conventional mapping would
@@ -199,7 +199,7 @@ long as names are stable. `scripts/verify-surfacing.mjs` asserts every material
 in every shipped model is explicitly mapped or explicitly excluded, so renaming
 one in `materials.py` fails the build instead of silently degrading to a guess.
 Emissive clusters, indicator lenses, and the segment bars are excluded by name
-and by pattern — grime on a backlit display reads as broken, not real.
+and by pattern. Grime on a backlit display reads as broken, not real.
 
 If the fleet is ever re-exported with UV layouts and baked maps, this becomes
 redundant and should be retired rather than layered on top.

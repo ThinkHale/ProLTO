@@ -1,6 +1,16 @@
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
-import { applyModifierTransition, desktopPresenceHeld, isBellyControlActive, isNativeInteractiveTarget, removePointerDrag } from '../src/sim/inputSafety.js'
+import {
+  applyModifierTransition,
+  controlReturnsToNeutral,
+  desktopPresenceHeld,
+  isBellyControlActive,
+  isNativeInteractiveTarget,
+  removeCommandSource,
+  removePointerDrag,
+  releaseManualControl,
+  setCommandSource,
+} from '../src/sim/inputSafety.js'
 
 assert.equal(isBellyControlActive(1), true, 'positive emergency reverse travel must activate')
 assert.equal(isBellyControlActive(-1), true, 'Raymond 8210 negative-scale emergency reverse must activate')
@@ -29,6 +39,31 @@ assert.equal(manual.reach, 0, 'pressing the modifier must clear reach even when 
 manual.sideshift = -.7
 assert.equal(applyModifierTransition(manual, [dualAxisControl], false), false)
 assert.equal(manual.sideshift, 0, 'releasing the modifier must clear sideshift even when the held thumb control does not move')
+
+const commandSources = new Map()
+const leftGrip = {}
+const rightGrip = {}
+assert.equal(setCommandSource(commandSources, leftGrip, 'travel', .55), .55)
+assert.equal(setCommandSource(commandSources, rightGrip, 'travel', -.8), -.8, 'the strongest held duplicate control owns the shared command')
+assert.equal(removeCommandSource(commandSources, rightGrip).get('travel'), .55, 'releasing one duplicate control must restore the still-held command')
+assert.equal(removeCommandSource(commandSources, leftGrip).get('travel'), 0, 'the command must neutralize after its final owner releases')
+
+const latchedManual = { steer: .63 }
+assert.equal(controlReturnsToNeutral({ action: 'steer', spring: false }), false)
+assert.equal(releaseManualControl(latchedManual, new Map(), {}, { action: 'steer', spring: false }), false)
+assert.equal(latchedManual.steer, .63, 'releasing a non-spring steering control must preserve its authored latch position')
+
+const springManual = { travel: -.8, lift: .4, sideshift: -.3 }
+const springSources = new Map()
+const heldGrip = {}
+const releasedGrip = {}
+const dualSpring = { action: 'travel', action2: 'lift', shift2: 'sideshift', spring: true }
+setCommandSource(springSources, heldGrip, 'travel', .55)
+setCommandSource(springSources, releasedGrip, 'travel', -.8)
+assert.equal(releaseManualControl(springManual, springSources, releasedGrip, dualSpring), true)
+assert.equal(springManual.travel, .55, 'a remaining duplicate spring control must retain ownership after its peer releases')
+assert.equal(releaseManualControl(springManual, springSources, heldGrip, dualSpring), true)
+assert.equal(springManual.travel, 0, 'the final spring-control owner must return its command to neutral')
 
 const simulatorSource = readFileSync(new URL('../src/components/Simulator.jsx', import.meta.url), 'utf8')
 assert.doesNotMatch(simulatorSource, /XRControllerModelFactory/u, 'runtime controller models must not use the CDN-backed factory')
