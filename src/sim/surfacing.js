@@ -467,7 +467,22 @@ function injectSurfacing(material, treatmentName) {
 
 const surfaced = new WeakSet()
 
+// Surfacing is a visual refinement, and it is expensive twice over: baking the
+// detail maps is tens of millions of noise evaluations on the main thread at
+// load, and the triplanar shader costs three extra texture fetches on every
+// fragment of every truck and wall thereafter. A CPU rasteriser cannot afford
+// either -- it is the dominant per-frame cost under SwiftShader -- so the
+// Simulator switches it off when it detects one and the fleet renders with its
+// authored flat materials instead. Set BEFORE any material is created.
+let surfacingEnabled = true
+
+export function setSurfacingEnabled(enabled) {
+  surfacingEnabled = enabled !== false
+  return surfacingEnabled
+}
+
 export function surfaceMaterial(material, explicitTreatment) {
+  if (!surfacingEnabled) return material
   if (!material || surfaced.has(material)) return material
   if (!material.isMeshStandardMaterial && !material.isMeshPhysicalMaterial) return material
   const treatment = explicitTreatment || inferTreatment(material)

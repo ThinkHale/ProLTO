@@ -21,7 +21,7 @@ import {
   tailSwingRadius,
 } from '../sim/vehicleDynamics.js'
 import { solveStability, stabilityWarning } from '../sim/stability.js'
-import { applyFleetSurfacing } from '../sim/surfacing.js'
+import { applyFleetSurfacing, setSurfacingEnabled } from '../sim/surfacing.js'
 import { contactAssessment } from '../sim/safetyEvents.js'
 import {
   applyModifierTransition,
@@ -335,6 +335,24 @@ function hdrTextureFromBuffer(buffer) {
   return texture
 }
 
+const SOFTWARE_RENDERER_PATTERN = /swiftshader|llvmpipe|softpipe|basic render|warp/iu
+
+// Probed on a throwaway context so the answer is available BEFORE the real
+// renderer is constructed, since antialias is a constructor-time decision.
+function detectSoftwareRasteriser() {
+  try {
+    const probeCanvas = document.createElement('canvas')
+    const probe = probeCanvas.getContext('webgl2') || probeCanvas.getContext('webgl')
+    if (!probe) return false
+    const info = probe.getExtension('WEBGL_debug_renderer_info')
+    const name = info ? String(probe.getParameter(info.UNMASKED_RENDERER_WEBGL) || '') : ''
+    probe.getExtension('WEBGL_lose_context')?.loseContext()
+    return SOFTWARE_RENDERER_PATTERN.test(name)
+  } catch {
+    return false
+  }
+}
+
 const Simulator = forwardRef(function Simulator({ profile, onTelemetry, onSafetyEvent, running, onRunningChange, onLifecycleChange }, ref) {
   const mountRef = useRef(null)
   const engineRef = useRef(null)
@@ -486,32 +504,39 @@ const Simulator = forwardRef(function Simulator({ profile, onTelemetry, onSafety
     const defaultViewPitch = view.pitch
     const camera = new THREE.PerspectiveCamera(view.fov, mount.clientWidth / mount.clientHeight, .035, 90)
     camera.rotation.order = 'YXZ'
+    // Software rasterisers -- SwiftShader on a CI runner, llvmpipe on a headless
+    // Linux box, WARP on Windows -- render every pixel on the CPU. At full
+    // desktop quality that measured ~1.7 s PER FRAME, which blocks the main
+    // thread hard enough to starve input dispatch: the browser smoke test's
+    // click queued behind requestAnimationFrame and timed out.
+    //
+    // This has to be probed on a THROWAWAY context, because the two most
+    // expensive settings are fixed at construction: MSAA multiplies fragment
+    // work on a CPU rasteriser and cannot be turned off afterwards.
+    const softwareRasterised = detectSoftwareRasteriser()
     let renderer
     try {
-      renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: 'high-performance' })
+      renderer = new THREE.WebGLRenderer({
+        antialias: !softwareRasterised,
+        powerPreference: 'high-performance',
+      })
     } catch (error) {
       setActiveControl('WebGL renderer unavailable')
       setLifecycle('failed', { message: 'WebGL renderer unavailable', error: error.message })
       return
     }
-    // Software rasterisers -- SwiftShader on a CI runner, llvmpipe on a headless
-    // Linux box, WARP on Windows -- render every pixel on the CPU. At full
-    // desktop quality that measured ~1.7 s PER FRAME, which blocks the main
-    // thread hard enough to starve input dispatch: the browser smoke test's
-    // click queued behind requestAnimationFrame and timed out. Detect it and
-    // fall back to a budget the CPU can actually hold, which also makes the app
-    // usable for anyone without a GPU rather than merely unblocking CI.
-    const glContext = renderer.getContext()
-    const debugRendererInfo = glContext.getExtension('WEBGL_debug_renderer_info')
-    const glRendererName = debugRendererInfo
-      ? String(glContext.getParameter(debugRendererInfo.UNMASKED_RENDERER_WEBGL) || '')
-      : ''
-    const softwareRasterised = /swiftshader|llvmpipe|softpipe|basic render|warp/iu.test(glRendererName)
+    // Must be decided before the warehouse or any truck material is built.
+    // Procedural surfacing is the dominant CPU-rasteriser cost: it bakes ten
+    // 512-square detail maps on the main thread at load, then charges three
+    // extra texture fetches per fragment for the rest of the session.
+    setSurfacingEnabled(!softwareRasterised)
     renderer.setPixelRatio(softwareRasterised
       ? SOFTWARE_PIXEL_RATIO
       : Math.min(window.devicePixelRatio, DESKTOP_PIXEL_RATIO_CAP))
     renderer.setSize(mount.clientWidth, mount.clientHeight)
-    renderer.shadowMap.enabled = true
+    // The shadow pass re-renders every caster each frame; on a CPU rasteriser
+    // that is a second full geometry pass nobody can afford.
+    renderer.shadowMap.enabled = !softwareRasterised
     renderer.shadowMap.type = THREE.PCFShadowMap
     renderer.outputColorSpace = THREE.SRGBColorSpace
     // PBR Neutral preserves saturated manufacturer paint (Raymond red washes out
