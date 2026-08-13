@@ -227,7 +227,7 @@ export default function App() {
         <div className="main-grid">
           <div className="simulator-column">
             <Simulator key={`${profile.assetId}-${simulatorRevision}`} ref={simulatorRef} profile={profile} running={running} onRunningChange={setRunning} onTelemetry={handleTelemetry} onSafetyEvent={handleSafetyEvent} onLifecycleChange={handleLifecycleChange} />
-            <div className="telemetry-bar" data-heading={telemetry.heading ?? 0} data-steer-angle={telemetry.steerAngle ?? 0} data-fork-height={telemetry.fork ?? 0}>
+            <div className="telemetry-bar" data-heading={telemetry.heading ?? 0} data-steer-angle={telemetry.steerAngle ?? 0} data-fork-height={telemetry.fork ?? 0} data-position-z={telemetry.position?.z ?? 0}>
               <div><Gauge /><span>Speed<strong>{telemetry.speed.toFixed(1)} <i>mph</i></strong></span></div>
               <div><FileCheck2 /><span>Fork height<strong>{Math.round(telemetry.fork)} <i>in</i></strong></span></div>
               <div><Cuboid /><span>Load<strong>{Math.round(telemetry.load).toLocaleString()} <i>lb</i></strong></span></div>
