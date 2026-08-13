@@ -38,6 +38,19 @@ const TURN_TARGET_RAD = .18
 
 const readPositionZ = (page) => page.locator('.telemetry-bar').evaluate((node) => Number(node.dataset.positionZ))
 
+// Evidence capture, never an assertion. An ELEMENT screenshot waits for the
+// bounding box to hold still across consecutive animation frames, which a
+// software rasteriser running ~400 ms frames cannot satisfy inside the action
+// timeout. A viewport capture skips that wait, and any failure here is logged
+// rather than failing a run whose real assertions already passed.
+const captureEvidence = async (page, path) => {
+  try {
+    await page.screenshot({ path, timeout: 15000 })
+  } catch (error) {
+    console.log(`      (evidence screenshot skipped: ${error.name})`)
+  }
+}
+
 // Drive until the truck is seated against the load: poll simulated position
 // and stop once it has not advanced for several consecutive samples. Frame
 // rate independent, so it behaves the same on a GPU and on a CPU rasteriser.
@@ -142,7 +155,7 @@ for (const [family, manufacturer] of [
   // scene reaches ready, WebGL renders a frame, and nothing errors -- and the
   // full drive/turn/pick sequence runs wherever there is real hardware.
   if (softwareRendered) {
-    await page.locator('.simulator-shell').screenshot({ path: `${outDir}/${manufacturer.toLowerCase()}-${family}.png` })
+    await captureEvidence(page, `${outDir}/${manufacturer.toLowerCase()}-${family}.png`)
     if (!selectedModelResponses) errors.push(`no successful ${profile.assetId}.glb response observed`)
     const sane = idle.stability >= 0 && idle.stability <= 100
     const ok = sane && errors.length === 0
@@ -209,7 +222,7 @@ for (const [family, manufacturer] of [
   const lifted = await readTelemetry(page)
   await page.keyboard.up('ShiftLeft')
 
-  await page.locator('.simulator-shell').screenshot({ path: `${outDir}/${manufacturer.toLowerCase()}-${family}.png` })
+  await captureEvidence(page, `${outDir}/${manufacturer.toLowerCase()}-${family}.png`)
 
   const drove = rolling.speed > .4
   const headingChange = Math.abs(Math.atan2(

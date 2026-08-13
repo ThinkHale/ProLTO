@@ -11,3 +11,6 @@ __pycache__/
 # Local third-party reference art is excluded from source control and is never
 # compiled into the original procedural runtime facility.
 Warehouse Model/
+
+# scratch output from local software-render debugging
+qa/tmp-sw/
